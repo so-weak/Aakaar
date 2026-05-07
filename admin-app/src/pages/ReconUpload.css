@@ -1,0 +1,219 @@
+.recon-upload {
+  background: #ffffff;
+  border-radius: 8px;
+  padding: 22px 28px 26px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  border: 1px solid #eef0f3;
+}
+
+.recon-title {
+  font-size: 22px;
+  font-weight: 600;
+  color: #1f2937;
+  margin-bottom: 14px;
+}
+
+.recon-tabs {
+  display: flex;
+  gap: 22px;
+  border-bottom: 1px solid #e5e7eb;
+  margin-bottom: 22px;
+}
+
+.recon-tab {
+  font-size: 14px;
+  font-weight: 500;
+  color: #6b7280;
+  padding: 8px 2px 10px;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+
+.recon-tab.active {
+  color: #0a4ea2;
+  border-bottom-color: #0a4ea2;
+  font-weight: 600;
+}
+
+.recon-form {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.recon-row {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.recon-row-2 .recon-field {
+  flex: 1 1 calc(50% - 12px);
+}
+
+.recon-field {
+  display: flex;
+  flex-direction: column;
+  min-width: 220px;
+}
+
+.recon-field-full {
+  flex: 1 1 100%;
+}
+
+.recon-field-grow {
+  flex: 1 1 auto;
+}
+
+.recon-field-browse {
+  flex: 0 0 auto;
+  align-items: flex-start;
+}
+
+.recon-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: #374151;
+  margin-bottom: 6px;
+}
+
+.recon-label .req {
+  color: #d33;
+  margin-left: 2px;
+}
+
+.recon-input {
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  background: #ffffff;
+  outline: none;
+  color: #1f2937;
+  transition: border-color 0.15s;
+}
+
+.recon-input:focus {
+  border-color: #0a4ea2;
+}
+
+.recon-radio-group {
+  display: flex;
+  gap: 60px;
+  align-items: center;
+  height: 40px;
+}
+
+.recon-radio {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: #1f2937;
+  cursor: pointer;
+}
+
+.recon-radio input {
+  accent-color: #0a4ea2;
+  width: 16px;
+  height: 16px;
+}
+
+.recon-browse {
+  height: 38px;
+  padding: 0 18px;
+  border: 1px solid #0a4ea2;
+  border-radius: 4px;
+  background: #ffffff;
+  color: #0a4ea2;
+  font-weight: 500;
+  font-size: 14px;
+}
+
+.recon-browse:hover {
+  background: #eef4fb;
+}
+
+.recon-supported {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.recon-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 6px;
+}
+
+.recon-upload-btn {
+  height: 36px;
+  padding: 0 22px;
+  background: #f3f4f6;
+  color: #6b7280;
+  border-radius: 4px;
+  font-weight: 600;
+  font-size: 13px;
+  border: 1px solid #e5e7eb;
+}
+
+.recon-upload-btn:hover {
+  background: #0a4ea2;
+  color: #ffffff;
+  border-color: #0a4ea2;
+}
+
+.recon-summary {
+  font-size: 12px;
+  color: #6b7280;
+  border-top: 1px dashed #e5e7eb;
+  padding-top: 14px;
+  margin-top: 6px;
+}
+
+.recon-table-wrap {
+  overflow-x: auto;
+}
+
+.recon-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.recon-table th,
+.recon-table td {
+  padding: 10px 14px;
+  text-align: left;
+  border-bottom: 1px solid #eef0f3;
+}
+
+.recon-table thead th {
+  background: #f5f6f8;
+  font-weight: 600;
+  color: #374151;
+}
+
+.recon-status {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.recon-status-uploaded {
+  background: #fdebc6;
+  color: #92400e;
+}
+
+.recon-status-processed {
+  background: #d1fae5;
+  color: #047857;
+}
+
+.recon-status-failed {
+  background: #fee2e2;
+  color: #b91c1c;
+}

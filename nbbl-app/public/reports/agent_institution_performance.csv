@@ -1,0 +1,11 @@
+Agent Institution,Type,Total Transactions,Success Rate (%),Avg TAT (sec),Total Amount (INR),Top Category,Onboarded On
+PayU,COU,28760,98.4,3.2,52340120.50,Electricity,2018-08-12
+PhonePe,COU,32145,98.9,2.8,61245890.75,Mobile Postpaid,2019-01-05
+Google Pay,COU,35012,99.1,2.5,67891450.00,Credit Card,2019-03-22
+Paytm,COU,21567,97.6,3.5,40128990.20,DTH,2018-06-30
+Amazon Pay,COU,12890,98.2,3.0,24156780.10,Insurance,2020-11-15
+HDFC Bank,COU,8765,99.3,2.2,21540320.00,Credit Card,2018-04-01
+ICICI Bank,COU,7651,99.0,2.4,18234567.30,Insurance,2018-04-01
+SBI,COU,6420,98.7,2.8,15678400.00,Electricity,2018-04-01
+Axis Bank,COU,5980,98.9,2.6,14523890.00,Mobile Postpaid,2018-05-12
+Kotak Mahindra Bank,COU,4321,99.0,2.5,9870230.50,LPG,2019-07-22

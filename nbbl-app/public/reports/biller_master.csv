@@ -1,0 +1,16 @@
+Biller ID,Biller Name,Category,State,Coverage,Onboarded On,Status,BOU
+BBPS00001ELE,MSEB Mumbai,Electricity,Maharashtra,Regional,2019-04-12,ACTIVE,NBBL
+BBPS00010GAS,Mahanagar Gas,Gas,Maharashtra,Regional,2019-06-21,ACTIVE,NBBL
+BBPS00021WTR,BWSSB Bengaluru,Water,Karnataka,Regional,2020-01-10,ACTIVE,NBBL
+BBPS00033DTH,Tata Sky,DTH,All India,National,2018-11-05,ACTIVE,NBBL
+BBPS00044BBP,Airtel Postpaid,Mobile Postpaid,All India,National,2018-09-18,ACTIVE,NBBL
+BBPS00057LPG,Indane Gas Booking,LPG,All India,National,2020-07-02,ACTIVE,NBBL
+BBPS00061FAS,FASTag Recharge HDFC,FASTag,All India,National,2021-02-14,ACTIVE,NBBL
+BBPS00073EDU,DPS School Fees,Education,Delhi,Regional,2022-05-30,ACTIVE,NBBL
+BBPS00088INS,LIC Premium,Insurance,All India,National,2019-08-15,ACTIVE,NBBL
+BBPS00091CRD,HDFC Credit Card,Credit Card,All India,National,2020-12-01,ACTIVE,NBBL
+BBPS00102MUN,GHMC Property Tax,Municipal,Telangana,Regional,2023-03-22,ACTIVE,NBBL
+BBPS00115HOS,Apollo Hospitals,Hospital,All India,National,2024-08-09,ACTIVE,NBBL
+BBPS00128SUB,Hotstar Subscription,Subscription,All India,National,2024-10-11,INACTIVE,NBBL
+BBPS00134CAB,Tata Power Mumbai,Electricity,Maharashtra,Regional,2019-04-12,ACTIVE,NBBL
+BBPS00145HOU,DDA Housing,Housing,Delhi,Regional,2023-11-18,ACTIVE,NBBL
