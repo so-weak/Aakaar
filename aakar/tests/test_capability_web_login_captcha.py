@@ -25,6 +25,7 @@ from aakar.shared.registry import build_default_registry
 from aakar.storage import LocalFsObjectStore
 from aakar.vault import LocalVault
 from aakar.workers.browser import FakeBrowserPool, FakeBrowserSession
+from tests._discovery_helpers import discovery_response
 
 
 @pytest.mark.asyncio
@@ -37,6 +38,7 @@ async def test_web_login_pauses_for_captcha_then_submits(tmp_path: Path) -> None
     captcha_png = b"\x89PNG\r\n--captcha-bytes--"
     sess = FakeBrowserSession(
         element_screenshot_responses={"img.captcha": captcha_png},
+        evaluate_responses=discovery_response(),
     )
     pool = FakeBrowserPool(next_sessions=[sess])
 
@@ -107,11 +109,13 @@ async def test_web_login_pauses_for_captcha_then_submits(tmp_path: Path) -> None
     assert len(element_shots) == 1
     assert element_shots[0][1]["selector"] == "img.captcha"
 
-    # Browser was driven in the right order: nav, wait, fill x2, wait_captcha,
-    # screenshot_element, fill_captcha, click, wait_success.
+    # Browser was driven in the right order: nav, evaluate (discovery),
+    # wait, fill x2, wait_captcha, screenshot_element, fill_captcha, click,
+    # wait_success.
     kinds = [c[0] for c in sess.calls]
     assert kinds == [
         "navigate",
+        "evaluate",  # login-form discovery
         "wait_for",  # username field
         "fill",  # username
         "fill",  # password
@@ -156,7 +160,10 @@ async def test_captcha_handler_refuses_without_signals(tmp_path: Path) -> None:
     vault_ref = f"grants/{uuid.uuid4()}"
     vault.put(str(tenant_id), vault_ref, {"username": "u", "password": "p"})
 
-    sess = FakeBrowserSession(element_screenshot_responses={"img.captcha": b"x"})
+    sess = FakeBrowserSession(
+        element_screenshot_responses={"img.captcha": b"x"},
+        evaluate_responses=discovery_response(),
+    )
     pool = FakeBrowserPool(next_sessions=[sess])
 
     actx = ActivityContext(

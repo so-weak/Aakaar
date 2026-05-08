@@ -116,9 +116,12 @@ _RULES = """\
 
 - Use ONLY the refs listed below under "Available capabilities", "Available action primitives", and "Available control nodes". Do not invent refs.
 - NEVER ask for usernames, passwords, OTPs, API keys, or any other secrets. Credentials are stored alongside the capability; the user only chooses an `account_alias` (e.g. "primary"). If the relevant capability isn't granted to this tenant, respond with `kind: "missing"` and tell the user to set up a grant via the admin grants UI (`/admin/grants` for tenant admins, or via the superuser tenant detail page) — do not ask the user to type credentials in chat.
-- DO ask for everything else that's missing. URLs, CSS selectors, which file to upload, what to download, page-specific names of fields, success markers — these are NOT secrets and you must collect them via `kind: "clarify"` if the user's request is incomplete. Ask one specific question per missing input; do not ask multi-part open-ended questions.
+- DO ask for everything else that's missing — but be SURGICAL about it. URLs, which file to upload, what to download, success markers — these are NOT secrets and you must collect them via `kind: "clarify"` if the user's request is incomplete. Ask one specific question per missing input.
+- DO NOT ask the user for CSS selectors of standard login form fields (username, password, submit, captcha image/input). `cap.web_login` discovers these on the live page automatically — leave them unset and the handler figures them out. Only ask for a selector if the request describes something the capability cannot infer (e.g. a non-obvious "first report" link on a post-login page that you'd download via `cap.file_download`).
+- DO NOT ask the user whether the login page has a captcha. `cap.web_login` self-detects image captchas, reCAPTCHA, hCaptcha, and Cloudflare Turnstile, and surfaces them via the run's HITL channel automatically.
 - Reference upstream node outputs with `${node_id.field}` strings (or `${alias.field}` if a node sets `outputs_as`). Do not embed runtime data in the DAG.
 - Use `cap.web_login` for any authenticated browser flow. Chain it to `cap.file_download` / `cap.file_upload` / `browser.*` actions via `${login.session}`. If the user mentions a captcha on the login page, set `cap.web_login`'s `captcha_image_selector` and `captcha_input_selector` inputs — the handler captures the captcha image and pauses for the user via the run's HITL channel. Do NOT use `human.prompt` for captchas; the capability handles it inline. If the user mentions an OTP / MFA step *after* login, compose a `human.prompt` (expects: "otp") between the login node and the next action; for filling that OTP into a form, use `browser.fill_secret` only if the value is in the vault, otherwise use `browser.fill` with the prompt's `${response}`.
+- For `cap.file_download`, when the user describes the target by name (e.g. "Biller Transactions May 2026", "first report", "today's settlement"), set the `target_hint` input to that natural-language string instead of asking the user for a CSS selector or URL. The capability walks the post-login page itself, fuzzy-matches the hint, and pauses HITL only if multiple candidates score equally. Use `trigger_selector`/`url` only when the user gave you a literal selector or URL.
 - Respond with exactly one `kind`:
   - `dag` — a complete, valid DAG you are confident will execute.
   - `clarify` — one or more specific questions to disambiguate the request. Prefer this when in doubt.
@@ -152,8 +155,15 @@ _DAG_SHAPE = """\
 
 - A DAG is `{ "id": "", "version": 0, "nodes": [...], "edges": [...] }`. Leave `id` empty and `version` 0 — the workflow service assigns them on save.
 - Each node: `{ "id", "kind", "ref", "inputs", "outputs_as" }`. `id` is short alphanumeric/underscore. `kind` is `capability`, `action`, or `control` (must match the ref's registered kind).
+- `outputs_as` MUST be a string OR null. It's an OPTIONAL alias for the whole output bundle. Setting `"outputs_as": "session"` lets downstream nodes write `${session.fieldname}` instead of `${node_id.fieldname}`. NEVER put a dict, list, or the output schema here — only a short alias string or null. Most nodes set it to null.
 - Edges: `{ "from": <id>, "to": <id> }`. No cycles. Independent nodes run in parallel.
-- Inputs may carry literal JSON values or `${ref}` strings. A `${ref}` must occupy the entire string value — no embedding in larger strings."""
+- Inputs may carry literal JSON values or `${ref}` strings. A `${ref}` must occupy the entire string value — no embedding in larger strings.
+
+Example node:
+```json
+{"id": "open", "kind": "action", "ref": "browser.open_session", "inputs": {}, "outputs_as": "session"}
+```
+Then a downstream node references it as `"session": "${session.session}"` — NOT by inlining the output schema."""
 
 
 def _capabilities_block(caps: list[CapabilityDefinition]) -> str:

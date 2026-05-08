@@ -13,6 +13,8 @@ export interface SessionClaims {
   role: "superuser" | "tenant_admin" | "tenant_user";
   expires_at: number; // epoch seconds
   email: string; // remembered from login form for the header
+  tenant_slug: string | null;
+  tenant_name: string | null;
 }
 
 interface AuthState {
@@ -37,8 +39,8 @@ function decodeJwtPayload(token: string): Record<string, unknown> | null {
 }
 
 function readPersisted(): { token: string | null; claims: SessionClaims | null } {
-  const token = localStorage.getItem(TOKEN_KEY);
-  const claimsRaw = localStorage.getItem(CLAIMS_KEY);
+  const token = sessionStorage.getItem(TOKEN_KEY);
+  const claimsRaw = sessionStorage.getItem(CLAIMS_KEY);
   if (!token || !claimsRaw) return { token: null, claims: null };
   try {
     const claims = JSON.parse(claimsRaw) as SessionClaims;
@@ -58,17 +60,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = useCallback(() => {
     setToken(null);
     setClaims(null);
-    localStorage.removeItem(TOKEN_KEY);
-    localStorage.removeItem(CLAIMS_KEY);
+    sessionStorage.removeItem(TOKEN_KEY);
+    sessionStorage.removeItem(CLAIMS_KEY);
   }, []);
 
-  // Wire the API client to read this state.
+  // Wire the API client to read the token. We read straight from
+  // sessionStorage rather than closing over the React `token` state — the
+  // `setToken` setter is async (writes apply on the next render), and
+  // login → navigate → first authenticated query can fire before the
+  // closure refreshes, producing a "missing bearer token" 401. Reading
+  // sessionStorage is synchronous and `login()` writes to it before
+  // setToken, so the next request always sees the fresh value.
+  //
+  // We use sessionStorage (not localStorage) so each browser tab holds
+  // its own session — opening Aakar in two tabs lets the operator log
+  // in as different users (e.g. tenant_admin in one, super in another)
+  // without one tab clobbering the other.
   useEffect(() => {
     configureAuth({
-      getToken: () => token,
+      getToken: () => sessionStorage.getItem(TOKEN_KEY),
       onUnauthorized: () => logout(),
     });
-  }, [token, logout]);
+  }, [logout]);
 
   const login = useCallback(
     async (email: string, password: string) => {
@@ -84,9 +97,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           role: (payload.role as SessionClaims["role"]) ?? "tenant_user",
           expires_at: Number(payload.exp ?? 0),
           email,
+          tenant_slug: response.tenant_slug ?? null,
+          tenant_name: response.tenant_name ?? null,
         };
-        localStorage.setItem(TOKEN_KEY, response.access_token);
-        localStorage.setItem(CLAIMS_KEY, JSON.stringify(sessionClaims));
+        sessionStorage.setItem(TOKEN_KEY, response.access_token);
+        sessionStorage.setItem(CLAIMS_KEY, JSON.stringify(sessionClaims));
         setToken(response.access_token);
         setClaims(sessionClaims);
       } finally {

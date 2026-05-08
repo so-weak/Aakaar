@@ -116,6 +116,157 @@ def test_grant_rejects_secret_name_mismatch(
     assert "secret names mismatch" in r.json()["detail"]
 
 
+def test_grant_update_alias_only(deps: AppDependencies, client: TestClient) -> None:
+    _add_test_capability(deps)
+    tenant, _ = seed_tenant_admin(
+        deps, slug="acme", name="Acme", admin_email="a@a.test", admin_password="adminpass1"
+    )
+    token = login(client, email="a@a.test", password="adminpass1")
+    create = client.post(
+        "/admin/grants",
+        headers=auth_headers(token),
+        json={
+            "capability_ref": "cap.test_login",
+            "account_alias": "primary",
+            "secrets": {"username": "u", "password": "p"},
+        },
+    ).json()
+
+    r = client.patch(
+        f"/admin/grants/{create['id']}",
+        headers=auth_headers(token),
+        json={"account_alias": "secondary"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["account_alias"] == "secondary"
+
+    # Secrets untouched.
+    assert deps.vault.fetch(str(tenant.id), f"grants/{create['id']}") == {
+        "username": "u",
+        "password": "p",
+    }
+
+
+def test_grant_update_rotates_secrets(
+    deps: AppDependencies, client: TestClient
+) -> None:
+    _add_test_capability(deps)
+    tenant, _ = seed_tenant_admin(
+        deps, slug="acme", name="Acme", admin_email="a@a.test", admin_password="adminpass1"
+    )
+    token = login(client, email="a@a.test", password="adminpass1")
+    create = client.post(
+        "/admin/grants",
+        headers=auth_headers(token),
+        json={
+            "capability_ref": "cap.test_login",
+            "account_alias": "primary",
+            "secrets": {"username": "u", "password": "p"},
+        },
+    ).json()
+
+    r = client.patch(
+        f"/admin/grants/{create['id']}",
+        headers=auth_headers(token),
+        json={"secrets": {"username": "u2", "password": "p2"}},
+    )
+    assert r.status_code == 200, r.text
+
+    # Vault now holds the new values.
+    assert deps.vault.fetch(str(tenant.id), f"grants/{create['id']}") == {
+        "username": "u2",
+        "password": "p2",
+    }
+    # Response never returns values.
+    assert "u2" not in r.text and "p2" not in r.text
+
+
+def test_grant_update_rejects_partial_secret_rotation(
+    deps: AppDependencies, client: TestClient
+) -> None:
+    _add_test_capability(deps)
+    seed_tenant_admin(
+        deps, slug="acme", name="Acme", admin_email="a@a.test", admin_password="adminpass1"
+    )
+    token = login(client, email="a@a.test", password="adminpass1")
+    create = client.post(
+        "/admin/grants",
+        headers=auth_headers(token),
+        json={
+            "capability_ref": "cap.test_login",
+            "account_alias": "primary",
+            "secrets": {"username": "u", "password": "p"},
+        },
+    ).json()
+
+    r = client.patch(
+        f"/admin/grants/{create['id']}",
+        headers=auth_headers(token),
+        json={"secrets": {"username": "u2"}},  # missing password
+    )
+    assert r.status_code == 400
+    assert "secret names mismatch" in r.json()["detail"]
+
+
+def test_grant_update_alias_collision(
+    deps: AppDependencies, client: TestClient
+) -> None:
+    _add_test_capability(deps)
+    seed_tenant_admin(
+        deps, slug="acme", name="Acme", admin_email="a@a.test", admin_password="adminpass1"
+    )
+    token = login(client, email="a@a.test", password="adminpass1")
+    a = client.post(
+        "/admin/grants",
+        headers=auth_headers(token),
+        json={
+            "capability_ref": "cap.test_login",
+            "account_alias": "primary",
+            "secrets": {"username": "u", "password": "p"},
+        },
+    ).json()
+    client.post(
+        "/admin/grants",
+        headers=auth_headers(token),
+        json={
+            "capability_ref": "cap.test_login",
+            "account_alias": "secondary",
+            "secrets": {"username": "u", "password": "p"},
+        },
+    )
+
+    r = client.patch(
+        f"/admin/grants/{a['id']}",
+        headers=auth_headers(token),
+        json={"account_alias": "secondary"},
+    )
+    assert r.status_code == 409
+
+
+def test_grant_update_requires_at_least_one_field(
+    deps: AppDependencies, client: TestClient
+) -> None:
+    _add_test_capability(deps)
+    seed_tenant_admin(
+        deps, slug="acme", name="Acme", admin_email="a@a.test", admin_password="adminpass1"
+    )
+    token = login(client, email="a@a.test", password="adminpass1")
+    create = client.post(
+        "/admin/grants",
+        headers=auth_headers(token),
+        json={
+            "capability_ref": "cap.test_login",
+            "account_alias": "primary",
+            "secrets": {"username": "u", "password": "p"},
+        },
+    ).json()
+
+    r = client.patch(
+        f"/admin/grants/{create['id']}", headers=auth_headers(token), json={}
+    )
+    assert r.status_code == 400
+
+
 def test_grant_delete(deps: AppDependencies, client: TestClient) -> None:
     _add_test_capability(deps)
     tenant, _ = seed_tenant_admin(

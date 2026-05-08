@@ -24,6 +24,7 @@ from aakar.shared.registry import build_default_registry
 from aakar.storage import LocalFsObjectStore
 from aakar.vault import LocalVault
 from aakar.workers.browser import FakeBrowserPool, FakeBrowserSession
+from tests._discovery_helpers import discovery_response
 
 
 @pytest.mark.asyncio
@@ -37,7 +38,7 @@ async def test_file_upload_full_flow(tmp_path: Path) -> None:
     payload = b"hello,world\n1,2\n"
     obj = object_store.put(str(tenant_id), "stage/upload.csv", payload)
 
-    sess = FakeBrowserSession()
+    sess = FakeBrowserSession(evaluate_responses=discovery_response())
     pool = FakeBrowserPool(next_sessions=[sess])
 
     registry = build_default_registry()
@@ -113,7 +114,7 @@ async def test_file_upload_minimal_no_submit_no_success(tmp_path: Path) -> None:
     object_store = LocalFsObjectStore(tmp_path / "objs")
     obj = object_store.put(str(tenant_id), "stage/x.bin", b"x")
 
-    sess = FakeBrowserSession()
+    sess = FakeBrowserSession(evaluate_responses=discovery_response())
     pool = FakeBrowserPool(next_sessions=[sess])
 
     registry = build_default_registry()
@@ -182,7 +183,7 @@ async def test_file_upload_runtime_rejects_non_managed_uri(tmp_path: Path) -> No
     reference — protects against arbitrary local-file reads through the DAG."""
     from aakar.capabilities.file_upload import handler
 
-    sess = FakeBrowserSession()
+    sess = FakeBrowserSession(evaluate_responses=discovery_response())
     pool = FakeBrowserPool(next_sessions=[sess])
     # Pre-stash the session as if open_session had run.
     from aakar.interpreter.activities.browser import _SessionHolder, _stash_key

@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { superuser as superuserApi } from "@/api";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { PageHeader } from "@/components/PageHeader";
+import { formatISTDate } from "@/lib/datetime";
 
 export function SuperuserTenantsPage() {
   const queryClient = useQueryClient();
@@ -89,7 +90,7 @@ export function SuperuserTenantsPage() {
                     </span>
                   </td>
                   <td className="px-3 py-2.5 text-ink-400">
-                    {new Date(t.created_at).toLocaleDateString()}
+                    {formatISTDate(t.created_at)}
                   </td>
                   <td className="px-3 py-2.5 text-right">
                     {t.status === "active" ? (

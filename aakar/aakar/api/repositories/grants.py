@@ -100,3 +100,65 @@ def delete_grant(
     session.delete(grant)
     session.flush()
     return True
+
+
+def get_grant(
+    session: Session, *, tenant_id: uuid.UUID, grant_id: uuid.UUID
+) -> CapabilityGrant | None:
+    grant = session.get(CapabilityGrant, grant_id)
+    if grant is None or grant.tenant_id != tenant_id:
+        return None
+    return grant
+
+
+def update_grant(
+    session: Session,
+    vault: Vault,
+    *,
+    tenant_id: uuid.UUID,
+    grant_id: uuid.UUID,
+    account_alias: str | None = None,
+    secrets: dict[str, str] | None = None,
+    input_defaults: dict | None = None,
+    enabled: bool | None = None,
+) -> CapabilityGrant | None:
+    """Patch a grant. Each parameter is optional — None means "leave alone".
+
+    Renaming `account_alias` checks for collision against the same
+    (tenant, capability_ref). Rotating `secrets` overwrites the vault
+    bundle (caller is expected to supply the full declared set). Setting
+    `enabled=False` keeps the credential around but hides the capability
+    from the planner via list_granted_refs.
+    """
+    grant = session.get(CapabilityGrant, grant_id)
+    if grant is None or grant.tenant_id != tenant_id:
+        return None
+
+    if account_alias is not None and account_alias != grant.account_alias:
+        clash = session.scalars(
+            select(CapabilityGrant).where(
+                CapabilityGrant.tenant_id == tenant_id,
+                CapabilityGrant.capability_ref == grant.capability_ref,
+                CapabilityGrant.account_alias == account_alias,
+                CapabilityGrant.id != grant_id,
+            )
+        ).first()
+        if clash is not None:
+            raise GrantConflict(
+                f"{grant.capability_ref}:{account_alias} already granted"
+            )
+        grant.account_alias = account_alias
+
+    if secrets is not None and secrets:
+        # `put` overwrites atomically; safe even if a vault entry already
+        # exists. Empty dicts fall through (vault refuses empty bundles).
+        vault.put(str(tenant_id), grant.vault_ref, secrets)
+
+    if input_defaults is not None:
+        grant.input_defaults = input_defaults
+
+    if enabled is not None:
+        grant.enabled = enabled
+
+    session.flush()
+    return grant

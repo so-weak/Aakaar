@@ -46,8 +46,13 @@ class PlaywrightBrowserSession(BrowserSession):
     async def navigate(self, url: str) -> None:
         await self.page.goto(url)
 
-    async def wait_for(self, selector: str, timeout_ms: int = 30000) -> None:
-        await self.page.wait_for_selector(selector, timeout=timeout_ms)
+    async def wait_for(
+        self,
+        selector: str,
+        timeout_ms: int = 30000,
+        state: str = "attached",
+    ) -> None:
+        await self.page.wait_for_selector(selector, timeout=timeout_ms, state=state)
 
     async def fill(self, selector: str, value: str) -> None:
         await self.page.fill(selector, value)
@@ -96,6 +101,9 @@ class PlaywrightBrowserSession(BrowserSession):
 
     async def screenshot_element(self, selector: str) -> bytes:
         return await self.page.locator(selector).screenshot()
+
+    async def evaluate(self, js: str) -> object:
+        return await self.page.evaluate(js)
 
     async def close(self) -> None:
         try:

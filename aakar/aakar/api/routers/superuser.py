@@ -16,11 +16,16 @@ from aakar.api.deps import (
     require_superuser,
 )
 from aakar.api.repositories import grants as grants_repo
+from aakar.api.repositories import runs as runs_repo
 from aakar.api.repositories import tenants as tenants_repo
 from aakar.api.repositories import users as users_repo
+from aakar.api.routers.stats import _build_dashboard
 from aakar.api.schemas import (
+    DashboardStatsResponse,
     GrantCreateRequest,
     GrantResponse,
+    GrantUpdateRequest,
+    RunResponse,
     TenantCreateRequest,
     TenantResponse,
     UserResponse,
@@ -114,6 +119,45 @@ def list_tenant_users(
             created_at=u.created_at,
         )
         for u in users_repo.list_users_for_tenant(session, tenant_id)
+    ]
+
+
+@router.get("/stats/dashboard", response_model=DashboardStatsResponse)
+def get_global_dashboard(
+    session: Annotated[Session, Depends(get_session)],
+) -> DashboardStatsResponse:
+    """Cross-tenant dashboard with per-tenant breakdown."""
+    return _build_dashboard(
+        session,
+        scope="global",
+        tenant_id=None,
+        user_id=None,
+        include_per_tenant=True,
+    )
+
+
+@router.get("/runs", response_model=list[RunResponse])
+def list_all_runs(
+    session: Annotated[Session, Depends(get_session)],
+    active: bool = False,
+) -> list[RunResponse]:
+    """Cross-tenant run list for the operator console. `?active=true`
+    restricts to queued/running/paused runs — the only ones that need
+    a live tile."""
+    return [
+        RunResponse(
+            id=r.id,
+            tenant_id=r.tenant_id,
+            workflow_id=r.workflow_id,
+            workflow_version=r.workflow_version,
+            started_by=r.started_by,
+            status=r.status,
+            started_at=r.started_at,
+            ended_at=r.ended_at,
+            outputs=r.outputs or {},
+            error=r.error,
+        )
+        for r in runs_repo.list_all_runs(session, active_only=active)
     ]
 
 
@@ -233,6 +277,94 @@ def create_tenant_grant(
         input_defaults=grant.input_defaults,
         enabled=grant.enabled,
         created_at=grant.created_at,
+    )
+
+
+@router.patch(
+    "/tenants/{tenant_id}/grants/{grant_id}",
+    response_model=GrantResponse,
+)
+def update_tenant_grant(
+    tenant_id: uuid.UUID,
+    grant_id: uuid.UUID,
+    body: GrantUpdateRequest,
+    session: Annotated[Session, Depends(get_session)],
+    vault: Annotated[Vault, Depends(get_vault)],
+    capability_index: Annotated[CapabilityIndex, Depends(get_capability_index)],
+) -> GrantResponse:
+    """Mirror of PATCH /admin/grants/{id} for any tenant. Same validation
+    rules — secret names, when supplied, must match the capability's
+    declaration."""
+    if tenants_repo.get_tenant(session, tenant_id) is None:
+        raise HTTPException(status_code=404, detail="tenant not found")
+
+    grant = grants_repo.get_grant(session, tenant_id=tenant_id, grant_id=grant_id)
+    if grant is None:
+        raise HTTPException(status_code=404, detail="grant not found")
+
+    if all(
+        v is None for v in (body.account_alias, body.secrets, body.input_defaults, body.enabled)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="supply at least one of `account_alias`, `secrets`, `input_defaults`, or `enabled`",
+        )
+
+    if body.secrets:
+        defn = capability_index.registry.get(grant.capability_ref)
+        if defn is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"capability {grant.capability_ref} no longer in registry",
+            )
+        declared = {s.name for s in getattr(defn, "secrets", ())}
+        supplied = set(body.secrets.keys())
+        if declared != supplied:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"secret names mismatch: capability declares {sorted(declared)}, "
+                    f"got {sorted(supplied)}"
+                ),
+            )
+
+    try:
+        updated = grants_repo.update_grant(
+            session,
+            vault,
+            tenant_id=tenant_id,
+            grant_id=grant_id,
+            account_alias=body.account_alias,
+            secrets=body.secrets,
+            input_defaults=body.input_defaults,
+            enabled=body.enabled,
+        )
+    except grants_repo.GrantConflict as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
+
+    if updated is None:
+        raise HTTPException(status_code=404, detail="grant not found")
+
+    session.commit()
+
+    if body.enabled is not None:
+        granted = grants_repo.list_granted_refs(session, tenant_id)
+        capability_index.reindex_for_tenant(str(tenant_id), granted)
+
+    try:
+        entry = vault.describe(str(tenant_id), updated.vault_ref)
+        secret_names = list(entry.secret_names)
+    except Exception:
+        secret_names = []
+
+    return GrantResponse(
+        id=updated.id,
+        capability_ref=updated.capability_ref,
+        account_alias=updated.account_alias,
+        secret_names=secret_names,
+        input_defaults=updated.input_defaults,
+        enabled=updated.enabled,
+        created_at=updated.created_at,
     )
 
 

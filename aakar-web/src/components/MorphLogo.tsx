@@ -16,7 +16,7 @@ export function MorphLogo({ className = "" }: { className?: string }) {
         <circle cx="50" cy="50" r="31" />
       </g>
       <g className="morph-logo__shape morph-logo__shape--sine">
-        <path d="M12 50 C22 24 34 24 44 50 S66 76 78 50 S92 24 98 42" />
+        <path d="M10 50 C20 22 35 22 50 50 S80 78 90 50" />
       </g>
       <g className="morph-logo__shape morph-logo__shape--arrow">
         <path d="M15 50 H72" />

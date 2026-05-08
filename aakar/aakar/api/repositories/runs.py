@@ -69,14 +69,37 @@ def get_run(session: Session, tenant_id: uuid.UUID, run_id: uuid.UUID) -> Run | 
     return run
 
 
-def list_runs_for_tenant(session: Session, tenant_id: uuid.UUID, limit: int = 100) -> list[Run]:
+_ACTIVE_STATUSES: tuple[str, ...] = (
+    RunStatus.QUEUED,
+    RunStatus.RUNNING,
+    RunStatus.PAUSED,
+)
+
+
+def list_runs_for_tenant(
+    session: Session,
+    tenant_id: uuid.UUID,
+    limit: int = 100,
+    *,
+    active_only: bool = False,
+) -> list[Run]:
+    stmt = select(Run).where(Run.tenant_id == tenant_id)
+    if active_only:
+        stmt = stmt.where(Run.status.in_(_ACTIVE_STATUSES))
     return list(
-        session.scalars(
-            select(Run)
-            .where(Run.tenant_id == tenant_id)
-            .order_by(Run.started_at.desc())
-            .limit(limit)
-        )
+        session.scalars(stmt.order_by(Run.started_at.desc()).limit(limit))
+    )
+
+
+def list_all_runs(
+    session: Session, limit: int = 200, *, active_only: bool = False
+) -> list[Run]:
+    """Cross-tenant run list. Superuser-only at the API layer."""
+    stmt = select(Run)
+    if active_only:
+        stmt = stmt.where(Run.status.in_(_ACTIVE_STATUSES))
+    return list(
+        session.scalars(stmt.order_by(Run.started_at.desc()).limit(limit))
     )
 
 

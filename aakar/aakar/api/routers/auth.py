@@ -18,7 +18,7 @@ from aakar.api.auth import issue_access_token, verify_password
 from aakar.api.config import Settings
 from aakar.api.deps import get_session, get_settings
 from aakar.api.schemas import LoginRequest, LoginResponse
-from aakar.db.models import User, UserStatus
+from aakar.db.models import Tenant, User, UserStatus
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -56,4 +56,17 @@ def login(
         ttl=ttl,
         now=issued,
     )
-    return LoginResponse(access_token=token, expires_at=issued + ttl)
+    tenant_slug: str | None = None
+    tenant_name: str | None = None
+    if user.tenant_id is not None:
+        tenant = session.get(Tenant, user.tenant_id)
+        if tenant is not None:
+            tenant_slug = tenant.slug
+            tenant_name = tenant.name
+
+    return LoginResponse(
+        access_token=token,
+        expires_at=issued + ttl,
+        tenant_slug=tenant_slug,
+        tenant_name=tenant_name,
+    )

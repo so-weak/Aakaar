@@ -75,6 +75,10 @@ class AppDependencies:
     and every capability module is registered into the registry + activities."""
     capability_index: CapabilityIndex = field(init=False)
     planner: PlannerService = field(init=False)
+    agentic_planner: "AgenticPlannerService | None" = field(init=False, default=None)
+    """Tool-driven fallback planner. None when no browser_pool is configured —
+    the agentic loop needs a Playwright session and there's nothing to drive
+    in headless-only deployments."""
     signals: SignalHub = field(init=False)
     executor: Executor = field(init=False)
     orchestrator: RunOrchestrator = field(init=False)
@@ -86,6 +90,15 @@ class AppDependencies:
             vector_store=self.vector_store,
         )
         self.planner = PlannerService(registry=self.registry, llm=self.llm)
+        if self.browser_pool is not None:
+            from aakar.planner.agentic.service import AgenticPlannerService
+
+            self.agentic_planner = AgenticPlannerService(
+                registry=self.registry,
+                llm=self.llm,
+                browser_pool=self.browser_pool,
+                vault=self.vault,
+            )
         if self.activities is None:
             self.activities = build_default_activities()
         if self.autoload_capabilities:
@@ -97,6 +110,7 @@ class AppDependencies:
             activities=self.activities,
             recorder=self.event_recorder,
             signals=self.signals,
+            llm=self.llm,
         )
         self.orchestrator = RunOrchestrator(
             session_factory=self.session_factory,
@@ -140,6 +154,14 @@ def get_registry(deps: Annotated[AppDependencies, Depends(get_deps)]) -> Registr
 
 def get_planner(deps: Annotated[AppDependencies, Depends(get_deps)]) -> PlannerService:
     return deps.planner
+
+
+def get_agentic_planner(
+    deps: Annotated[AppDependencies, Depends(get_deps)],
+):
+    """Returns the agentic planner if configured, else None. Routers branch
+    on the Optional rather than receiving a NotImplemented stub."""
+    return deps.agentic_planner
 
 
 def get_vault(deps: Annotated[AppDependencies, Depends(get_deps)]) -> Vault:

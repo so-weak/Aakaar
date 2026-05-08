@@ -30,7 +30,16 @@ from aakar.api.routers import (
     chat as chat_router,
 )
 from aakar.api.routers import (
+    chat_sessions as chat_sessions_router,
+)
+from aakar.api.routers import (
+    objects as objects_router,
+)
+from aakar.api.routers import (
     runs as runs_router,
+)
+from aakar.api.routers import (
+    stats as stats_router,
 )
 from aakar.api.routers import (
     superuser as superuser_router,
@@ -81,6 +90,9 @@ def create_app(deps: AppDependencies) -> FastAPI:
     app.include_router(workflows_router.router)
     app.include_router(runs_router.router)
     app.include_router(chat_router.router)
+    app.include_router(chat_sessions_router.router)
+    app.include_router(objects_router.router)
+    app.include_router(stats_router.router)
 
     @app.get("/healthz")
     def _healthz() -> dict[str, str]:

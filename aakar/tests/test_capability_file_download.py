@@ -25,6 +25,7 @@ from aakar.shared.registry import build_default_registry
 from aakar.storage import LocalFsObjectStore
 from aakar.vault import LocalVault
 from aakar.workers.browser import FakeBrowserPool, FakeBrowserSession
+from tests._discovery_helpers import discovery_response
 
 
 @pytest.mark.asyncio
@@ -37,6 +38,7 @@ async def test_file_download_via_trigger_selector(tmp_path: Path) -> None:
     payload = b"col_a,col_b\n1,2\n"
     sess = FakeBrowserSession(
         download_responses={"a#latest-report": ("report.csv", payload)},
+        evaluate_responses=discovery_response(),
     )
     pool = FakeBrowserPool(next_sessions=[sess])
 
@@ -109,6 +111,7 @@ async def test_file_download_via_direct_url(tmp_path: Path) -> None:
 
     sess = FakeBrowserSession(
         download_responses={"https://app.payops.test/exports/latest.csv": ("daily.csv", b"x")},
+        evaluate_responses=discovery_response(),
     )
     pool = FakeBrowserPool(next_sessions=[sess])
 

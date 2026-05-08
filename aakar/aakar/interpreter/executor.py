@@ -70,6 +70,11 @@ class LocalExecutor:
     activities: ActivityRegistry
     recorder: EventRecorder
     signals: SignalHub
+    llm: Any = None
+    """Optional LLM client passed through to capability handlers via
+    `ActivityContext.llm`. Capabilities use it for narrow read-only DOM
+    introspection (e.g. login-form discovery tiebreak); it is NOT a route
+    to drive actions."""
 
     async def execute(self, dag: Dag, ctx: RunContext) -> RunOutcome:
         env: dict[str, dict[str, Any]] = {}
@@ -144,7 +149,10 @@ class LocalExecutor:
         # mutable shared bits (session_state, granted_capabilities) are
         # the same dict references — `replace` is shallow.
         per_call_ctx = dataclasses.replace(
-            ctx.activity_ctx, signals=self.signals, node_id=node.id
+            ctx.activity_ctx,
+            signals=self.signals,
+            node_id=node.id,
+            llm=self.llm,
         )
         return await handler(per_call_ctx, inputs)
 

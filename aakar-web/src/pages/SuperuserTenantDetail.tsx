@@ -2,11 +2,14 @@ import { useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Trash2 } from "lucide-react";
+import { ArrowLeft, Pencil, Trash2 } from "lucide-react";
 
 import { capabilities as capabilitiesApi, superuser as superuserApi } from "@/api";
+import type { Grant } from "@/api/types";
 import { ErrorBanner } from "@/components/ErrorBanner";
+import { GrantEditModal } from "@/components/GrantEditModal";
 import { PageHeader } from "@/components/PageHeader";
+import { formatISTDate } from "@/lib/datetime";
 
 export function SuperuserTenantDetailPage() {
   const { id = "" } = useParams<{ id: string }>();
@@ -43,6 +46,7 @@ export function SuperuserTenantDetailPage() {
   const [capRef, setCapRef] = useState("");
   const [alias, setAlias] = useState("primary");
   const [secrets, setSecrets] = useState<Record<string, string>>({});
+  const [editing, setEditing] = useState<Grant | null>(null);
 
   const selectedCap = grantableCaps.find((c) => c.ref === capRef);
 
@@ -125,7 +129,7 @@ export function SuperuserTenantDetailPage() {
                       </span>
                     </td>
                     <td className="px-3 py-2.5 text-ink-400">
-                      {new Date(u.created_at).toLocaleDateString()}
+                      {formatISTDate(u.created_at)}
                     </td>
                   </tr>
                 ))}
@@ -144,7 +148,8 @@ export function SuperuserTenantDetailPage() {
                 <tr>
                   <th className="px-3 py-2 font-medium">Capability</th>
                   <th className="px-3 py-2 font-medium">Alias</th>
-                  <th className="px-3 py-2 font-medium">Secrets</th>
+                  <th className="px-3 py-2 font-medium">Secrets (masked)</th>
+                  <th className="px-3 py-2 font-medium">Status</th>
                   <th className="px-3 py-2 font-medium">Created</th>
                   <th className="px-3 py-2 font-medium" />
                 </tr>
@@ -157,21 +162,44 @@ export function SuperuserTenantDetailPage() {
                     </td>
                     <td className="px-3 py-2.5 text-ink-300">{g.account_alias}</td>
                     <td className="px-3 py-2.5 text-ink-400">
-                      {g.secret_names.join(", ") || "—"}
+                      {g.secret_names.length
+                        ? g.secret_names.map((n) => `${n}: ••••••••`).join("  ·  ")
+                        : "—"}
+                    </td>
+                    <td className="px-3 py-2.5">
+                      <span
+                        className={
+                          g.enabled
+                            ? "badge ring-emerald-400/40 text-emerald-300"
+                            : "badge ring-amber-400/40 text-amber-300"
+                        }
+                      >
+                        {g.enabled ? "enabled" : "paused"}
+                      </span>
                     </td>
                     <td className="px-3 py-2.5 text-ink-400">
-                      {new Date(g.created_at).toLocaleDateString()}
+                      {formatISTDate(g.created_at)}
                     </td>
                     <td className="px-3 py-2.5 text-right">
-                      <button
-                        type="button"
-                        className="btn-ghost text-rose-300 hover:bg-rose-500/10"
-                        onClick={() => remove.mutate(g.id)}
-                        disabled={remove.isPending}
-                        title="Revoke grant"
-                      >
-                        <Trash2 size={14} />
-                      </button>
+                      <div className="flex justify-end gap-1">
+                        <button
+                          type="button"
+                          className="btn-ghost"
+                          onClick={() => setEditing(g)}
+                          title="Edit credential"
+                        >
+                          <Pencil size={14} />
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-ghost text-rose-300 hover:bg-rose-500/10"
+                          onClick={() => remove.mutate(g.id)}
+                          disabled={remove.isPending}
+                          title="Revoke grant"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -262,6 +290,20 @@ export function SuperuserTenantDetailPage() {
           </form>
         </aside>
       </div>
+
+      {editing ? (
+        <GrantEditModal
+          grant={editing}
+          capabilityLabel={editing.capability_ref}
+          onSave={(patch) => superuserApi.updateTenantGrant(id, editing.id, patch)}
+          onClose={() => setEditing(null)}
+          onSuccess={() =>
+            queryClient.invalidateQueries({
+              queryKey: ["superuser", "tenants", id, "grants"],
+            })
+          }
+        />
+      ) : null}
     </div>
   );
 }

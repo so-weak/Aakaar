@@ -7,6 +7,8 @@ import { AdminGrantsPage } from "@/pages/AdminGrants";
 import { AdminUsersPage } from "@/pages/AdminUsers";
 import { CapabilitiesPage } from "@/pages/Capabilities";
 import { ChatPage } from "@/pages/Chat";
+import { DashboardPage } from "@/pages/Dashboard";
+import { LiveProcessesPage } from "@/pages/LiveProcesses";
 import { LoginPage } from "@/pages/Login";
 import { RunDetailPage } from "@/pages/RunDetail";
 import { RunsPage } from "@/pages/Runs";
@@ -30,12 +32,23 @@ export default function App() {
       >
         <Route index element={<HomeRedirect />} />
 
+        <Route path="dashboard" element={<DashboardPage />} />
         <Route path="chat" element={<ChatPage />} />
+        <Route path="chat/:id" element={<ChatPage />} />
         <Route path="workflows" element={<WorkflowsPage />} />
         <Route path="workflows/:id" element={<WorkflowDetailPage />} />
         <Route path="runs" element={<RunsPage />} />
         <Route path="runs/:id" element={<RunDetailPage />} />
         <Route path="capabilities" element={<CapabilitiesPage />} />
+
+        <Route
+          path="live"
+          element={
+            <ProtectedRoute requireRole={["tenant_admin", "superuser"]}>
+              <LiveProcessesPage />
+            </ProtectedRoute>
+          }
+        />
 
         <Route
           path="admin/users"
@@ -88,6 +101,5 @@ export default function App() {
 function HomeRedirect() {
   const { claims } = useAuth();
   if (!claims) return <Navigate to="/login" replace />;
-  if (claims.role === "superuser") return <Navigate to="/superuser/tenants" replace />;
-  return <Navigate to="/chat" replace />;
+  return <Navigate to="/dashboard" replace />;
 }

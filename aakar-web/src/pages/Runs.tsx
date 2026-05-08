@@ -6,6 +6,7 @@ import type { RunStatus } from "@/api/types";
 import { EmptyState } from "@/components/EmptyState";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { PageHeader } from "@/components/PageHeader";
+import { formatISTDateTime } from "@/lib/datetime";
 
 const STATUS_STYLES: Record<RunStatus, { ring: string; text: string; dot: string }> = {
   queued: { ring: "ring-ink-700", text: "text-ink-300", dot: "bg-ink-500" },
@@ -89,10 +90,10 @@ export function RunsPage() {
                       <span className="text-ink-500">v{r.workflow_version}</span>
                     </td>
                     <td className="px-3 py-2.5 text-ink-400">
-                      {new Date(r.started_at).toLocaleString()}
+                      {formatISTDateTime(r.started_at)}
                     </td>
                     <td className="rounded-r-md px-3 py-2.5 text-ink-400">
-                      {r.ended_at ? new Date(r.ended_at).toLocaleString() : "—"}
+                      {r.ended_at ? formatISTDateTime(r.ended_at) : "—"}
                     </td>
                   </tr>
                 );

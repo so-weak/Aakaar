@@ -49,7 +49,16 @@ class BrowserSession(Protocol):
 
     async def navigate(self, url: str) -> None: ...
 
-    async def wait_for(self, selector: str, timeout_ms: int = 30000) -> None: ...
+    async def wait_for(
+        self,
+        selector: str,
+        timeout_ms: int = 30000,
+        state: str = "attached",
+    ) -> None: ...
+    """Wait for `selector` to reach `state` ('attached'/'visible'/'detached'/
+    'hidden'). Default 'attached' matches the historical behavior. Login
+    success-criteria use 'detached' — after a successful submit, the
+    username field should disappear from the DOM."""
 
     async def fill(self, selector: str, value: str) -> None: ...
 
@@ -70,6 +79,11 @@ class BrowserSession(Protocol):
     async def screenshot_element(self, selector: str) -> bytes: ...
     """Bytes of just the element matched by `selector`. Used by HITL flows
     (e.g. captchas) so the user only sees the relevant region."""
+
+    async def evaluate(self, js: str) -> object: ...
+    """Run a JS expression in the page context and return its (JSON-
+    serializable) result. Used by capability self-discovery — e.g. finding
+    the login form structure without forcing the user to provide selectors."""
 
     async def close(self) -> None: ...
 

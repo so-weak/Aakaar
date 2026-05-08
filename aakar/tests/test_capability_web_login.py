@@ -23,6 +23,7 @@ from aakar.shared.registry import Registry, build_default_registry
 from aakar.storage import LocalFsObjectStore
 from aakar.vault import LocalVault
 from aakar.workers.browser import FakeBrowserPool, FakeBrowserSession
+from tests._discovery_helpers import discovery_response
 
 
 def _make_actx(
@@ -121,7 +122,7 @@ async def test_web_login_falls_back_to_username_field_disappearing(tmp_path: Pat
     vault_ref = f"grants/{uuid.uuid4()}"
     vault.put(str(tenant_id), vault_ref, {"username": "u", "password": "p"})
 
-    sess = FakeBrowserSession()
+    sess = FakeBrowserSession(evaluate_responses=discovery_response())
     pool = FakeBrowserPool(next_sessions=[sess])
 
     registry = build_default_registry()
@@ -159,6 +160,8 @@ async def test_web_login_falls_back_to_username_field_disappearing(tmp_path: Pat
     outcome = await executor.execute(dag, ctx)
     assert outcome.status == "succeeded", outcome.error
     waits = [c[1]["selector"] for c in sess.calls if c[0] == "wait_for"]
+    # Auto-discovered username selector is used both before fill and as the
+    # implicit success marker (the field disappears after navigation).
     assert waits == ["input[name='username']", "input[name='username']"]
 
 
@@ -172,7 +175,10 @@ async def test_web_login_releases_session_on_failure(tmp_path: Path) -> None:
     vault.put(str(tenant_id), vault_ref, {"username": "u", "password": "p"})
 
     success_marker = "nav[aria-label='Account']"
-    sess = FakeBrowserSession(wait_failures={success_marker})
+    sess = FakeBrowserSession(
+        wait_failures={success_marker},
+        evaluate_responses=discovery_response(),
+    )
     pool = FakeBrowserPool(next_sessions=[sess])
 
     registry = build_default_registry()

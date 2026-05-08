@@ -54,3 +54,10 @@ class ActivityContext:
     """The DAG node currently being executed. The executor populates this
     via `dataclasses.replace` per dispatch so parallel nodes don't clobber
     each other. Empty string outside an active node."""
+    llm: Any = None
+    """Optional planner LLM client (`aakar.planner.llm.LLMClient`). Wired by
+    the executor so capabilities can ask the model to introspect the page
+    when their deterministic heuristics are ambiguous (e.g. picking a
+    login-form selector among several plausible candidates). Capabilities
+    must NEVER use this for action selection — that violates the spine.
+    Use it only for narrow, read-only judgments on already-fetched data."""

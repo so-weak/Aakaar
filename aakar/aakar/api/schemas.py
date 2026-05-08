@@ -42,6 +42,12 @@ class LoginResponse(BaseModel):
     access_token: str
     token_type: str = "Bearer"
     expires_at: datetime
+    tenant_slug: str | None = None
+    """Tenant slug if the user belongs to one. The frontend uses this to
+    render role labels like 'PayOps user' instead of 'tenant user'."""
+    tenant_name: str | None = None
+    """Tenant display name if the user belongs to one. Same purpose as
+    `tenant_slug` but surfaced where a longer label is preferred."""
 
 
 # ---------- tenants -------------------------------------------------------
@@ -73,6 +79,20 @@ class UserCreateRequest(BaseModel):
     role: str = Field(pattern=r"^(tenant_admin|tenant_user)$")
 
 
+class UserUpdateRequest(BaseModel):
+    """Edit an existing user. All fields optional; supply only what changes.
+
+    Email is intentionally immutable — mutating it would orphan run history
+    and audit references; create a new user instead.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    role: str | None = Field(
+        default=None, pattern=r"^(tenant_admin|tenant_user)$"
+    )
+    password: str | None = Field(default=None, min_length=8, max_length=128)
+
+
 class UserResponse(BaseModel):
     id: uuid.UUID
     tenant_id: uuid.UUID | None
@@ -95,6 +115,24 @@ class GrantCreateRequest(BaseModel):
     account_alias: str = Field(min_length=1, max_length=64, pattern=r"^[a-z][a-z0-9_-]*$")
     secrets: dict[str, str] = Field(default_factory=dict)
     input_defaults: dict[str, Any] = Field(default_factory=dict)
+
+
+class GrantUpdateRequest(BaseModel):
+    """Patch an existing grant. All fields optional — supply only what
+    changes. `secrets`, when supplied, must contain *every* declared
+    secret name for the capability (we don't allow partial rotation;
+    that's a footgun)."""
+
+    model_config = ConfigDict(extra="forbid")
+    account_alias: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=64,
+        pattern=r"^[a-z][a-z0-9_-]*$",
+    )
+    secrets: dict[str, str] | None = None
+    input_defaults: dict[str, Any] | None = None
+    enabled: bool | None = None
 
 
 class GrantResponse(BaseModel):
@@ -311,6 +349,83 @@ class RunRespondRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     node_id: str
     response: str
+
+
+# ---------- dashboard / stats ---------------------------------------------
+
+
+class VolumeBucket(BaseModel):
+    """Run-status counts for a fixed time window."""
+
+    queued: int = 0
+    running: int = 0
+    paused: int = 0
+    succeeded: int = 0
+    failed: int = 0
+    cancelled: int = 0
+
+    @property
+    def total(self) -> int:  # pragma: no cover - convenience
+        return (
+            self.queued
+            + self.running
+            + self.paused
+            + self.succeeded
+            + self.failed
+            + self.cancelled
+        )
+
+
+class CapabilityUsage(BaseModel):
+    capability_ref: str
+    count: int
+    failure_count: int
+
+
+class FailureSummary(BaseModel):
+    run_id: uuid.UUID
+    workflow_id: uuid.UUID
+    workflow_name: str
+    started_at: datetime
+    ended_at: datetime | None = None
+    error_type: str
+    error_message: str
+    tenant_slug: str | None = None
+    """Set only on the superuser/global dashboard so the UI can label
+    cross-tenant rows; null on tenant-scoped dashboards."""
+
+
+class TenantVolume(BaseModel):
+    """Per-tenant breakdown shown on the superuser dashboard."""
+
+    tenant_id: uuid.UUID
+    tenant_slug: str
+    tenant_name: str
+    total: int
+    succeeded: int
+    failed: int
+    success_rate: float | None
+    """succeeded / (succeeded + failed). None if no terminal runs in the window."""
+
+
+class DashboardStatsResponse(BaseModel):
+    """Aggregate insights for the role-aware dashboard.
+
+    `scope`:
+      - "user"   — the caller's own runs only
+      - "tenant" — full tenant view (tenant_admin)
+      - "global" — cross-tenant (superuser)
+    """
+
+    scope: str
+    volume_24h: VolumeBucket
+    volume_7d: VolumeBucket
+    volume_30d: VolumeBucket
+    capability_usage: list[CapabilityUsage] = Field(default_factory=list)
+    active_count: int
+    recent_failures: list[FailureSummary] = Field(default_factory=list)
+    per_tenant: list[TenantVolume] | None = None
+    """Only set when scope == "global"."""
 
 
 # ---------- errors --------------------------------------------------------

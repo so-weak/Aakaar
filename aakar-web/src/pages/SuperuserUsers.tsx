@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { superuser as superuserApi } from "@/api";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { PageHeader } from "@/components/PageHeader";
+import { formatISTDate } from "@/lib/datetime";
 
 export function SuperuserUsersPage() {
   const usersQ = useQuery({
@@ -71,7 +72,7 @@ export function SuperuserUsersPage() {
                     </span>
                   </td>
                   <td className="px-3 py-2.5 text-ink-400">
-                    {new Date(u.created_at).toLocaleDateString()}
+                    {formatISTDate(u.created_at)}
                   </td>
                 </tr>
               );

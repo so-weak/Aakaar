@@ -111,9 +111,18 @@ async def start_run(
 def list_runs(
     user: Annotated[User, Depends(require_tenant_user)],
     session: Annotated[Session, Depends(get_session)],
+    active: bool = False,
 ) -> list[RunResponse]:
+    """List recent runs for the caller's tenant. Pass `?active=true` to
+    restrict to runs in queued/running/paused status — used by the live
+    process console."""
     assert user.tenant_id is not None
-    return [_to_run_response(r) for r in runs_repo.list_runs_for_tenant(session, user.tenant_id)]
+    return [
+        _to_run_response(r)
+        for r in runs_repo.list_runs_for_tenant(
+            session, user.tenant_id, active_only=active
+        )
+    ]
 
 
 @router.get("/runs/{run_id}", response_model=RunDetailResponse)

@@ -33,6 +33,7 @@ class FakeBrowserSession:
     extract_responses: dict[str, str] = field(default_factory=dict)
     download_responses: dict[str, tuple[str, bytes]] = field(default_factory=dict)
     element_screenshot_responses: dict[str, bytes] = field(default_factory=dict)
+    evaluate_responses: dict[str, object] = field(default_factory=dict)
     wait_failures: set[str] = field(default_factory=set)
     closed: bool = False
 
@@ -43,8 +44,17 @@ class FakeBrowserSession:
     async def navigate(self, url: str) -> None:
         self.calls.append(("navigate", {"url": url}))
 
-    async def wait_for(self, selector: str, timeout_ms: int = 30000) -> None:
-        self.calls.append(("wait_for", {"selector": selector, "timeout_ms": timeout_ms}))
+    async def wait_for(
+        self,
+        selector: str,
+        timeout_ms: int = 30000,
+        state: str = "attached",
+    ) -> None:
+        self.calls.append(
+            ("wait_for", {"selector": selector, "timeout_ms": timeout_ms, "state": state})
+        )
+        # Tests can fail attached- and detached-waits independently by
+        # adding `selector` (or `selector#detached`) to wait_failures.
         if selector in self.wait_failures:
             raise TimeoutError(f"wait_for({selector!r}) failed in fake")
 
@@ -81,6 +91,15 @@ class FakeBrowserSession:
     async def screenshot_element(self, selector: str) -> bytes:
         self.calls.append(("screenshot_element", {"selector": selector}))
         return self.element_screenshot_responses.get(selector, b"\x89PNG\r\nfake-element")
+
+    async def evaluate(self, js: str) -> object:
+        self.calls.append(("evaluate", {"js": js}))
+        # Tests pre-load `evaluate_responses` keyed by a marker substring of
+        # the JS payload (so they don't have to match the whole script).
+        for marker, value in self.evaluate_responses.items():
+            if marker in js:
+                return value
+        return None
 
     async def close(self) -> None:
         self.calls.append(("close", {}))

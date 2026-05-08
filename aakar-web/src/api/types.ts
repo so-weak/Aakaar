@@ -36,6 +36,8 @@ export const LoginResponseSchema = z.object({
   access_token: z.string(),
   token_type: z.string(),
   expires_at: z.string(),
+  tenant_slug: z.string().nullable().optional(),
+  tenant_name: z.string().nullable().optional(),
 });
 export type LoginResponse = z.infer<typeof LoginResponseSchema>;
 
@@ -135,6 +137,42 @@ export interface RawChatResponse {
   explanation: string;
 }
 
+// ---------- chat sessions ------------------------------------------------
+
+export interface ChatMessage {
+  id: string;
+  sequence: number;
+  role: "user" | "planner";
+  text: string;
+  payload: RawChatResponse | Record<string, never>;
+  at: string;
+}
+
+export interface ChatSessionSummary {
+  id: string;
+  title: string;
+  workflow_id: string | null;
+  saved_version: number | null;
+  is_dirty: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ChatSession {
+  id: string;
+  tenant_id: string;
+  user_id: string;
+  title: string;
+  workflow_id: string | null;
+  saved_version: number | null;
+  draft_dag: Dag | null;
+  draft_rationale: string;
+  is_dirty: boolean;
+  created_at: string;
+  updated_at: string;
+  messages: ChatMessage[];
+}
+
 // ---------- runs ---------------------------------------------------------
 
 export type RunStatus =
@@ -176,4 +214,55 @@ export interface RunDetail {
   run: Run;
   events: RunEvent[];
   pending_prompts: PendingPrompt[];
+}
+
+// ---------- dashboard / stats -------------------------------------------
+
+export interface VolumeBucket {
+  queued: number;
+  running: number;
+  paused: number;
+  succeeded: number;
+  failed: number;
+  cancelled: number;
+}
+
+export interface CapabilityUsage {
+  capability_ref: string;
+  count: number;
+  failure_count: number;
+}
+
+export interface FailureSummary {
+  run_id: string;
+  workflow_id: string;
+  workflow_name: string;
+  started_at: string;
+  ended_at: string | null;
+  error_type: string;
+  error_message: string;
+  tenant_slug: string | null;
+}
+
+export interface TenantVolume {
+  tenant_id: string;
+  tenant_slug: string;
+  tenant_name: string;
+  total: number;
+  succeeded: number;
+  failed: number;
+  success_rate: number | null;
+}
+
+export type DashboardScope = "user" | "tenant" | "global";
+
+export interface DashboardStats {
+  scope: DashboardScope;
+  volume_24h: VolumeBucket;
+  volume_7d: VolumeBucket;
+  volume_30d: VolumeBucket;
+  capability_usage: CapabilityUsage[];
+  active_count: number;
+  recent_failures: FailureSummary[];
+  per_tenant: TenantVolume[] | null;
 }

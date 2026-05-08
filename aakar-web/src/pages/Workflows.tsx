@@ -6,6 +6,7 @@ import { workflows as workflowsApi } from "@/api";
 import { EmptyState } from "@/components/EmptyState";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { PageHeader } from "@/components/PageHeader";
+import { formatISTDateTime } from "@/lib/datetime";
 
 export function WorkflowsPage() {
   const { data, isLoading, error } = useQuery({
@@ -63,7 +64,7 @@ export function WorkflowsPage() {
                       <div className="mt-3 flex items-center gap-3 font-mono text-[11px] uppercase tracking-wide text-ink-500">
                         <span>v{wf.latest_version}</span>
                         <span className="text-signal-pink">/</span>
-                        <span>{new Date(wf.updated_at).toLocaleString()}</span>
+                        <span>{formatISTDateTime(wf.updated_at)}</span>
                       </div>
                     </div>
                   </div>

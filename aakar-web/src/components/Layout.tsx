@@ -2,6 +2,7 @@ import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
 import {
   Activity,
   KeyRound,
+  LayoutDashboard,
   LogOut,
   MessageSquare,
   Network,
@@ -22,9 +23,11 @@ interface NavItem {
 }
 
 const NAV: NavItem[] = [
+  { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard, visibleTo: ["superuser", "tenant_admin", "tenant_user"] },
   { to: "/chat", label: "Chat", icon: MessageSquare, visibleTo: ["tenant_admin", "tenant_user"] },
   { to: "/workflows", label: "Workflows", icon: Workflow, visibleTo: ["tenant_admin", "tenant_user"] },
   { to: "/runs", label: "Runs", icon: Activity, visibleTo: ["tenant_admin", "tenant_user"] },
+  { to: "/live", label: "Live", icon: Activity, visibleTo: ["tenant_admin", "superuser"] },
   { to: "/capabilities", label: "Capabilities", icon: Network, visibleTo: ["superuser", "tenant_admin", "tenant_user"] },
   { to: "/admin/users", label: "Users", icon: Users, visibleTo: ["tenant_admin"] },
   { to: "/admin/grants", label: "Grants", icon: KeyRound, visibleTo: ["tenant_admin"] },
@@ -85,7 +88,7 @@ export function Layout() {
           <div className="mb-3 rounded-md border border-ink-700 bg-ink-900/70 px-3 py-2.5">
             <div className="truncate text-xs font-semibold text-ink-100">{claims.email}</div>
             <div className="mt-1 font-mono text-[10px] uppercase tracking-[0.18em] text-signal-cyan">
-              {claims.role.replace("_", " ")}
+              {roleLabel(claims)}
             </div>
           </div>
           <button
@@ -110,4 +113,25 @@ export function Layout() {
       </main>
     </div>
   );
+}
+
+/**
+ * Compose the role label shown in the sidebar.
+ *  - superuser              → "superuser"
+ *  - tenant_admin in PayOps → "PayOps admin"
+ *  - tenant_user in PayOps  → "PayOps user"
+ *
+ * Falls back to the raw role if no tenant label is known (e.g. a token
+ * minted before the backend started returning tenant info).
+ */
+function roleLabel(claims: {
+  role: "superuser" | "tenant_admin" | "tenant_user";
+  tenant_name?: string | null;
+  tenant_slug?: string | null;
+}): string {
+  if (claims.role === "superuser") return "superuser";
+  const label = claims.tenant_name || claims.tenant_slug;
+  if (!label) return claims.role.replace("_", " ");
+  const suffix = claims.role === "tenant_admin" ? "admin" : "user";
+  return `${label} ${suffix}`;
 }
