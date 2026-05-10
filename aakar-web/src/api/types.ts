@@ -254,6 +254,16 @@ export interface TenantVolume {
   success_rate: number | null;
 }
 
+export interface DailyVolume {
+  date: string; // ISO yyyy-mm-dd in IST
+  succeeded: number;
+  failed: number;
+  paused: number;
+  running: number;
+  queued: number;
+  cancelled: number;
+}
+
 export type DashboardScope = "user" | "tenant" | "global";
 
 export interface DashboardStats {
@@ -261,6 +271,7 @@ export interface DashboardStats {
   volume_24h: VolumeBucket;
   volume_7d: VolumeBucket;
   volume_30d: VolumeBucket;
+  daily_volume: DailyVolume[];
   capability_usage: CapabilityUsage[];
   active_count: number;
   recent_failures: FailureSummary[];

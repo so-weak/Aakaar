@@ -111,6 +111,7 @@ class AppDependencies:
             recorder=self.event_recorder,
             signals=self.signals,
             llm=self.llm,
+            live_screenshots=self.settings.live_screenshots,
         )
         self.orchestrator = RunOrchestrator(
             session_factory=self.session_factory,

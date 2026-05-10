@@ -31,6 +31,11 @@ class Settings:
     embeddings_dim: int = 16  # only used by FakeEmbeddingsClient; BGE derives its own dim
     browser_pool: str = "playwright"  # "playwright" | "none"
     browser_headless: bool = True
+    live_screenshots: bool = True
+    """Capture a per-node screenshot of the active browser session and
+    emit a `live_screen` event the UI streams into the run view. Disable
+    via AAKAR_LIVE_SCREENSHOTS=false to save object-store space if the
+    live panel isn't needed."""
     cors_allow_origins: list[str] = field(
         default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"]
     )
@@ -84,6 +89,8 @@ def load_settings() -> Settings:
         embeddings_dim=int(os.environ.get("AAKAR_EMBEDDINGS_DIM", "16")),
         browser_pool=os.environ.get("AAKAR_BROWSER_POOL", "playwright").lower(),
         browser_headless=os.environ.get("AAKAR_BROWSER_HEADLESS", "true").lower()
+        not in ("0", "false", "no"),
+        live_screenshots=os.environ.get("AAKAR_LIVE_SCREENSHOTS", "true").lower()
         not in ("0", "false", "no"),
         cors_allow_origins=cors_origins,
     )

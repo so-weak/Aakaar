@@ -408,6 +408,22 @@ class TenantVolume(BaseModel):
     """succeeded / (succeeded + failed). None if no terminal runs in the window."""
 
 
+class DailyVolume(BaseModel):
+    """One IST-day bucket of run counts grouped by terminal/active status.
+
+    The dashboard renders this as a stacked-area chart; the date is
+    yyyy-mm-dd in IST so the chart matches the rest of the UI.
+    """
+
+    date: str  # ISO yyyy-mm-dd in IST
+    succeeded: int = 0
+    failed: int = 0
+    paused: int = 0
+    running: int = 0
+    queued: int = 0
+    cancelled: int = 0
+
+
 class DashboardStatsResponse(BaseModel):
     """Aggregate insights for the role-aware dashboard.
 
@@ -421,6 +437,8 @@ class DashboardStatsResponse(BaseModel):
     volume_24h: VolumeBucket
     volume_7d: VolumeBucket
     volume_30d: VolumeBucket
+    daily_volume: list[DailyVolume] = Field(default_factory=list)
+    """30-day daily run counts (oldest to newest), used for the trend chart."""
     capability_usage: list[CapabilityUsage] = Field(default_factory=list)
     active_count: int
     recent_failures: list[FailureSummary] = Field(default_factory=list)

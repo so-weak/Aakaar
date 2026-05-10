@@ -44,6 +44,51 @@ def _edge(a: str, b: str) -> Edge:
 
 
 @pytest.mark.asyncio
+async def test_live_screenshots_emit_event_per_browser_node(
+    tmp_path: Path,
+) -> None:
+    """With live_screenshots=True, the executor records a LIVE_SCREEN
+    event after every node that touched a browser session, with a URI
+    pointing at a stored screenshot."""
+    sess = FakeBrowserSession()
+    pool = FakeBrowserPool(next_sessions=[sess])
+    ctx = _ctx(tmp_path, pool=pool)
+
+    recorder = InMemoryEventRecorder()
+    executor = LocalExecutor(
+        activities=build_default_activities(),
+        recorder=recorder,
+        signals=SignalHub(),
+        live_screenshots=True,
+    )
+
+    dag = Dag(
+        nodes=[
+            Node(id="open", kind=NodeKind.ACTION, ref="browser.open_session"),
+            Node(
+                id="go",
+                kind=NodeKind.ACTION,
+                ref="browser.navigate",
+                inputs={"session": "${open.session}", "url": "https://x"},
+            ),
+        ],
+        edges=[_edge("open", "go")],
+    )
+    outcome = await executor.execute(dag, ctx)
+    assert outcome.status == "succeeded", outcome.error
+
+    all_events = recorder.events.get(ctx.run_id, [])
+    live_events = [e for e in all_events if e.kind == "live_screen"]
+    # Both nodes touch a session, so both should have produced a live screen.
+    assert len(live_events) == 2
+    for ev in live_events:
+        assert ev.payload["uri"].startswith("aakar://")
+        # The stored bytes are the FakeBrowserSession's PNG header.
+        data = ctx.activity_ctx.object_store.get(ev.payload["uri"])
+        assert data.startswith(b"\x89PNG")
+
+
+@pytest.mark.asyncio
 async def test_open_navigate_close(tmp_path: Path) -> None:
     sess = FakeBrowserSession()
     pool = FakeBrowserPool(next_sessions=[sess])

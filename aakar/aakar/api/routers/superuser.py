@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from aakar.api.deps import (
     get_capability_index,
+    get_orchestrator,
     get_session,
     get_vault,
     require_superuser,
@@ -25,11 +26,20 @@ from aakar.api.schemas import (
     GrantCreateRequest,
     GrantResponse,
     GrantUpdateRequest,
+    PendingPromptResponse,
+    RunDetailResponse,
+    RunEventResponse,
     RunResponse,
     TenantCreateRequest,
     TenantResponse,
     UserResponse,
+    WorkflowResponse,
+    WorkflowVersionResponse,
 )
+from aakar.db.models import Run, RunEvent, Workflow, WorkflowVersion
+from aakar.interpreter import RunOrchestrator
+from aakar.shared.dag.types import Dag
+from sqlalchemy import select as _select
 from aakar.db.models import User, UserRole
 from aakar.planner import CapabilityIndex
 from aakar.vault import Vault
@@ -133,6 +143,108 @@ def get_global_dashboard(
         tenant_id=None,
         user_id=None,
         include_per_tenant=True,
+    )
+
+
+@router.get("/runs/{run_id}", response_model=RunDetailResponse)
+def get_any_run(
+    run_id: uuid.UUID,
+    session: Annotated[Session, Depends(get_session)],
+    orchestrator: Annotated[RunOrchestrator, Depends(get_orchestrator)],
+) -> RunDetailResponse:
+    """Cross-tenant run detail. Mirrors GET /runs/{id} for tenant users
+    but skips the tenant filter so superusers can drill into any run
+    from the operator console."""
+    run = session.get(Run, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    events = [
+        RunEventResponse(
+            sequence=e.sequence,
+            node_id=e.node_id,
+            kind=e.kind,
+            payload=e.payload or {},
+            at=e.at,
+        )
+        for e in session.scalars(
+            _select(RunEvent)
+            .where(RunEvent.run_id == run_id)
+            .order_by(RunEvent.sequence)
+        )
+    ]
+    pending = [
+        PendingPromptResponse(
+            node_id=p.node_id, message=p.message, expects=p.expects
+        )
+        for p in orchestrator.signals.list_pending(run_id)
+    ]
+    return RunDetailResponse(
+        run=RunResponse(
+            id=run.id,
+            tenant_id=run.tenant_id,
+            workflow_id=run.workflow_id,
+            workflow_version=run.workflow_version,
+            started_by=run.started_by,
+            status=run.status,
+            started_at=run.started_at,
+            ended_at=run.ended_at,
+            outputs=run.outputs or {},
+            error=run.error,
+        ),
+        events=events,
+        pending_prompts=pending,
+    )
+
+
+@router.get("/workflows/{workflow_id}", response_model=WorkflowResponse)
+def get_any_workflow(
+    workflow_id: uuid.UUID,
+    session: Annotated[Session, Depends(get_session)],
+) -> WorkflowResponse:
+    """Cross-tenant workflow lookup. Used by the operator console to
+    show workflow names on tiles for runs in any tenant."""
+    wf = session.get(Workflow, workflow_id)
+    if wf is None:
+        raise HTTPException(status_code=404, detail="workflow not found")
+    return WorkflowResponse(
+        id=wf.id,
+        tenant_id=wf.tenant_id,
+        created_by=wf.created_by,
+        name=wf.name,
+        description=wf.description,
+        latest_version=wf.latest_version,
+        created_at=wf.created_at,
+        updated_at=wf.updated_at,
+    )
+
+
+@router.get(
+    "/workflows/{workflow_id}/versions/{version}",
+    response_model=WorkflowVersionResponse,
+)
+def get_any_workflow_version(
+    workflow_id: uuid.UUID,
+    version: int,
+    session: Annotated[Session, Depends(get_session)],
+) -> WorkflowVersionResponse:
+    """Cross-tenant workflow-version lookup. Used by the live tile grid
+    so the LiveDagViewer can render the DAG for a run in any tenant."""
+    row = session.scalars(
+        _select(WorkflowVersion).where(
+            WorkflowVersion.workflow_id == workflow_id,
+            WorkflowVersion.version == version,
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="version not found")
+    return WorkflowVersionResponse(
+        id=row.id,
+        workflow_id=row.workflow_id,
+        version=row.version,
+        dag=Dag.model_validate(row.dag),
+        rationale=row.rationale,
+        created_by=row.created_by,
+        created_at=row.created_at,
     )
 
 

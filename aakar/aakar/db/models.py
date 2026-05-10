@@ -77,6 +77,11 @@ class RunEventKind:
     RUN_PAUSED = "run_paused"
     RUN_RESUMED = "run_resumed"
     SIGNAL_RECEIVED = "signal_received"
+    LIVE_SCREEN = "live_screen"
+    """Best-effort screenshot of the active browser session captured after
+    a node completes (success or failure). Payload: {"uri": str}. The UI
+    renders the most recent one alongside the run timeline so an operator
+    can see what the automation is looking at."""
     LOG = "log"
 
 

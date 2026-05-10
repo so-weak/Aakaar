@@ -41,6 +41,11 @@ export const superuser = {
   listAllUsers: () => request<User[]>("/superuser/users"),
   listAllRuns: (opts: { active?: boolean } = {}) =>
     request<Run[]>(`/superuser/runs${opts.active ? "?active=true" : ""}`),
+  getRunDetail: (id: string) => request<RunDetail>(`/superuser/runs/${id}`),
+  getWorkflow: (id: string) =>
+    request<Workflow>(`/superuser/workflows/${id}`),
+  getWorkflowVersion: (id: string, version: number) =>
+    request<WorkflowVersion>(`/superuser/workflows/${id}/versions/${version}`),
   listTenantGrants: (id: string) => request<Grant[]>(`/superuser/tenants/${id}/grants`),
   createTenantGrant: (
     id: string,

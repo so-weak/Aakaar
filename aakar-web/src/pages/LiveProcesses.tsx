@@ -12,6 +12,7 @@ import type { Run, RunDetail, RunStatus, Tenant, WorkflowVersion } from "@/api/t
 import { useAuth } from "@/auth/AuthContext";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { LiveDagViewer } from "@/components/LiveDagViewer";
+import { LiveScreenPanel } from "@/components/LiveScreenPanel";
 import { PageHeader } from "@/components/PageHeader";
 import { formatISTTime } from "@/lib/datetime";
 
@@ -89,6 +90,7 @@ export function LiveProcessesPage() {
               <RunTile
                 key={r.id}
                 run={r}
+                isSuper={isSuper}
                 tenantSlug={
                   isSuper ? tenantsById.get(r.tenant_id)?.slug ?? null : null
                 }
@@ -105,15 +107,19 @@ export function LiveProcessesPage() {
 
 function RunTile({
   run,
+  isSuper,
   tenantSlug,
 }: {
   run: Run;
+  isSuper: boolean;
   tenantSlug: string | null;
 }) {
   // Per-tile: poll events (so the live indicator advances) + load DAG once.
+  // Tenant-scoped endpoints reject superusers (no tenant_id) so the
+  // operator console hits cross-tenant superuser variants instead.
   const detailQ = useQuery<RunDetail>({
-    queryKey: ["run", run.id],
-    queryFn: () => runsApi.get(run.id),
+    queryKey: [isSuper ? "su-run" : "run", run.id],
+    queryFn: () => (isSuper ? superuserApi.getRunDetail(run.id) : runsApi.get(run.id)),
     refetchInterval: (q) => {
       const r = q.state.data?.run;
       if (!r) return 2_000;
@@ -126,19 +132,25 @@ function RunTile({
   });
 
   const versionQ = useQuery<WorkflowVersion>({
-    queryKey: ["workflow-version", run.workflow_id, run.workflow_version],
-    queryFn: () => workflowsApi.getVersion(run.workflow_id, run.workflow_version),
+    queryKey: [
+      isSuper ? "su-workflow-version" : "workflow-version",
+      run.workflow_id,
+      run.workflow_version,
+    ],
+    queryFn: () =>
+      isSuper
+        ? superuserApi.getWorkflowVersion(run.workflow_id, run.workflow_version)
+        : workflowsApi.getVersion(run.workflow_id, run.workflow_version),
     staleTime: Infinity,
   });
 
   const workflowQ = useQuery({
-    queryKey: ["workflow", run.workflow_id],
-    queryFn: () => workflowsApi.get(run.workflow_id),
+    queryKey: [isSuper ? "su-workflow" : "workflow", run.workflow_id],
+    queryFn: () =>
+      isSuper
+        ? superuserApi.getWorkflow(run.workflow_id)
+        : workflowsApi.get(run.workflow_id),
     staleTime: 60_000,
-    // Only the run's own tenant can resolve the workflow name through
-    // /workflows/{id}; superuser doesn't have a cross-tenant workflow
-    // endpoint, so we just show "wf <id>" in that case.
-    enabled: tenantSlug === null,
   });
 
   const status = (detailQ.data?.run.status ?? run.status) as RunStatus;
@@ -171,7 +183,7 @@ function RunTile({
         <RunStatusBadge status={status} />
       </div>
 
-      <div className="h-[220px] bg-ink-950/45">
+      <div className="relative h-[220px] bg-ink-950/45">
         {versionQ.data ? (
           <LiveDagViewer
             dag={versionQ.data.dag}
@@ -188,6 +200,7 @@ function RunTile({
             Loading DAG…
           </div>
         )}
+        <LiveScreenPanel events={events} variant="thumb" />
       </div>
     </Link>
   );

@@ -16,20 +16,27 @@ import {
   XCircle,
 } from "lucide-react";
 
-import { runs as runsApi, workflows as workflowsApi } from "@/api";
+import { runs as runsApi, superuser as superuserApi, workflows as workflowsApi } from "@/api";
 import type { PendingPrompt, RunDetail, RunEvent } from "@/api/types";
+import { useAuth } from "@/auth/AuthContext";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { LiveDagViewer } from "@/components/LiveDagViewer";
+import { LiveScreenPanel } from "@/components/LiveScreenPanel";
 import { PageHeader } from "@/components/PageHeader";
 import { formatISTDateTime, formatISTTime } from "@/lib/datetime";
+import { useObjectBlob } from "@/lib/objectBlob";
 
 export function RunDetailPage() {
   const { id = "" } = useParams<{ id: string }>();
   const [view, setView] = useState<"graph" | "timeline">("graph");
+  const { claims } = useAuth();
+  const isSuper = claims?.role === "superuser";
 
   const { data, isLoading, error } = useQuery<RunDetail>({
-    queryKey: ["run", id],
-    queryFn: () => runsApi.get(id),
+    // Tenant-scoped /runs/{id} rejects superusers; route them through
+    // the cross-tenant /superuser/runs/{id} variant.
+    queryKey: [isSuper ? "su-run" : "run", id],
+    queryFn: () => (isSuper ? superuserApi.getRunDetail(id) : runsApi.get(id)),
     refetchInterval: (q) => {
       const r = q.state.data?.run;
       if (!r) return 1_500;
@@ -43,12 +50,17 @@ export function RunDetailPage() {
   // The DAG is immutable per (workflow_id, version) — fetch once and cache.
   const versionQ = useQuery({
     queryKey: [
-      "workflow-version",
+      isSuper ? "su-workflow-version" : "workflow-version",
       data?.run.workflow_id,
       data?.run.workflow_version,
     ],
     queryFn: () =>
-      workflowsApi.getVersion(data!.run.workflow_id, data!.run.workflow_version),
+      isSuper
+        ? superuserApi.getWorkflowVersion(
+            data!.run.workflow_id,
+            data!.run.workflow_version,
+          )
+        : workflowsApi.getVersion(data!.run.workflow_id, data!.run.workflow_version),
     enabled: !!data?.run.workflow_id,
     staleTime: Infinity,
   });
@@ -88,26 +100,31 @@ export function RunDetailPage() {
       <div className="relative z-10 grid flex-1 grid-cols-3 gap-0 overflow-hidden">
         <section className="col-span-2 flex flex-col overflow-hidden border-r border-ink-700/80">
           {view === "graph" ? (
-            <>
-              <div className="border-b border-ink-700/80 bg-ink-950/45 px-6 py-3 panel-title">
-                Graph view · live step indicator
+            <div className="flex flex-1 flex-col overflow-hidden">
+              <div className="flex flex-[3] flex-col overflow-hidden">
+                <div className="border-b border-ink-700/80 bg-ink-950/45 px-6 py-3 panel-title">
+                  Graph view · live step indicator
+                </div>
+                <div className="flex-1 overflow-hidden">
+                  {versionQ.data ? (
+                    <LiveDagViewer
+                      dag={versionQ.data.dag}
+                      events={events}
+                      runStatus={run.status}
+                    />
+                  ) : versionQ.error ? (
+                    <div className="p-6">
+                      <ErrorBanner error={versionQ.error} />
+                    </div>
+                  ) : (
+                    <div className="p-6 text-sm text-ink-400">Loading DAG…</div>
+                  )}
+                </div>
               </div>
-              <div className="flex-1 overflow-hidden">
-                {versionQ.data ? (
-                  <LiveDagViewer
-                    dag={versionQ.data.dag}
-                    events={events}
-                    runStatus={run.status}
-                  />
-                ) : versionQ.error ? (
-                  <div className="p-6">
-                    <ErrorBanner error={versionQ.error} />
-                  </div>
-                ) : (
-                  <div className="p-6 text-sm text-ink-400">Loading DAG…</div>
-                )}
+              <div className="flex flex-[2] flex-col overflow-hidden border-t border-ink-700/80">
+                <LiveScreenPanel events={events} />
               </div>
-            </>
+            </div>
           ) : (
             <>
               <div className="border-b border-ink-700/80 bg-ink-950/45 px-6 py-3 panel-title">
@@ -297,56 +314,6 @@ function _filenameFromUri(uri: string): string {
 
 function _isImageUri(uri: string): boolean {
   return _IMAGE_EXT_RE.test(uri);
-}
-
-/**
- * Fetch a managed-storage URI as a blob URL using the bearer token. Browsers
- * don't send Authorization on `<img src>`, so we have to materialize a blob.
- * The blob URL is revoked on unmount or when `uri` changes.
- */
-function useObjectBlob(uri: string | null): {
-  src: string | null;
-  blob: Blob | null;
-  err: string | null;
-} {
-  const [src, setSrc] = useState<string | null>(null);
-  const [blob, setBlob] = useState<Blob | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  useEffect(() => {
-    if (!uri) {
-      setSrc(null);
-      setBlob(null);
-      setErr(null);
-      return;
-    }
-    let cancelled = false;
-    let blobUrl: string | null = null;
-    (async () => {
-      try {
-        const token = sessionStorage.getItem("aakar.token") ?? "";
-        const base = (import.meta.env.VITE_API_BASE as string | undefined) ?? "/api";
-        const res = await fetch(
-          `${base}/objects?uri=${encodeURIComponent(uri)}`,
-          { headers: { Authorization: `Bearer ${token}` } },
-        );
-        if (!res.ok) throw new Error(`fetch failed: ${res.status}`);
-        const b = await res.blob();
-        blobUrl = URL.createObjectURL(b);
-        if (!cancelled) {
-          setBlob(b);
-          setSrc(blobUrl);
-          setErr(null);
-        }
-      } catch (e) {
-        if (!cancelled) setErr(e instanceof Error ? e.message : String(e));
-      }
-    })();
-    return () => {
-      cancelled = true;
-      if (blobUrl) URL.revokeObjectURL(blobUrl);
-    };
-  }, [uri]);
-  return { src, blob, err };
 }
 
 function _triggerDownload(blob: Blob, filename: string): void {

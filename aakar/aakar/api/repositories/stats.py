@@ -248,6 +248,62 @@ def per_tenant_volume(session: Session, *, since: datetime) -> list[dict]:
     return rows
 
 
+# ---------- daily volume time series -----------------------------------
+
+
+_IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def daily_volume(
+    session: Session,
+    *,
+    tenant_id: uuid.UUID | None,
+    user_id: uuid.UUID | None,
+    days: int = 30,
+) -> list[dict]:
+    """Per-IST-day status counts for the last `days` days.
+
+    Returns a contiguous series (empty days included as zeros) so the
+    chart x-axis is gap-free. Bucketing happens in Python because the
+    test harness uses SQLite and `AT TIME ZONE` isn't portable; the
+    row volume here is bounded by `days * runs_per_day` which is fine
+    for v1 dashboard scale.
+    """
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    stmt = select(Run.started_at, Run.status).where(Run.started_at >= since)
+    stmt = _scope_filter(stmt, tenant_id=tenant_id, user_id=user_id)
+
+    buckets: dict[str, dict[str, int]] = {}
+    for started_at, status in session.execute(stmt).all():
+        # Normalize naive timestamps (older SQLite rows) into UTC before
+        # converting; `astimezone()` raises on naive datetimes.
+        if started_at.tzinfo is None:
+            started_at = started_at.replace(tzinfo=timezone.utc)
+        local = started_at.astimezone(_IST)
+        key = local.strftime("%Y-%m-%d")
+        bucket = buckets.setdefault(key, {})
+        bucket[status] = bucket.get(status, 0) + 1
+
+    today_ist = datetime.now(_IST).date()
+    out: list[dict] = []
+    for i in range(days - 1, -1, -1):
+        d = today_ist - timedelta(days=i)
+        key = d.isoformat()
+        b = buckets.get(key, {})
+        out.append(
+            {
+                "date": key,
+                "succeeded": b.get(RunStatus.SUCCEEDED, 0),
+                "failed": b.get(RunStatus.FAILED, 0),
+                "paused": b.get(RunStatus.PAUSED, 0),
+                "running": b.get(RunStatus.RUNNING, 0),
+                "queued": b.get(RunStatus.QUEUED, 0),
+                "cancelled": b.get(RunStatus.CANCELLED, 0),
+            }
+        )
+    return out
+
+
 # ---------- window helper ----------------------------------------------
 
 

@@ -16,6 +16,7 @@ from aakar.api.deps import get_session, require_tenant_user
 from aakar.api.repositories import stats as stats_repo
 from aakar.api.schemas import (
     CapabilityUsage,
+    DailyVolume,
     DashboardStatsResponse,
     FailureSummary,
     VolumeBucket,
@@ -82,6 +83,9 @@ def _build_dashboard(
     failures = stats_repo.recent_failures(
         session, tenant_id=tenant_id, user_id=user_id, limit=10
     )
+    daily = stats_repo.daily_volume(
+        session, tenant_id=tenant_id, user_id=user_id, days=30
+    )
 
     per_tenant = None
     if include_per_tenant:
@@ -95,6 +99,7 @@ def _build_dashboard(
         volume_24h=VolumeBucket(**v24),
         volume_7d=VolumeBucket(**v7),
         volume_30d=VolumeBucket(**v30),
+        daily_volume=[DailyVolume(**d) for d in daily],
         capability_usage=[CapabilityUsage(**c) for c in cap_usage],
         active_count=active,
         recent_failures=[FailureSummary(**f) for f in failures],

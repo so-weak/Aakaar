@@ -55,6 +55,12 @@ def deps(
             jwt_secret="test-secret-must-be-long-enough-for-hs256",
             access_token_ttl_minutes=60,
             embeddings_dim=embeddings.dim,
+            # Tests assert on exact session-call sequences and event lists
+            # — leave the live-screenshot capture off so the executor's
+            # post-node hook doesn't inject extra screenshot() calls or
+            # extra LIVE_SCREEN events. Tests that exercise the feature
+            # opt in explicitly.
+            live_screenshots=False,
         ),
         engine=engine,
         session_factory=SessionFactory(engine),

@@ -75,6 +75,17 @@ class LocalExecutor:
     `ActivityContext.llm`. Capabilities use it for narrow read-only DOM
     introspection (e.g. login-form discovery tiebreak); it is NOT a route
     to drive actions."""
+    live_screenshots: bool = False
+    """When true, capture a screenshot of the active browser session after
+    every node (success or failure) and emit a `live_screen` event with
+    the storage URI. The UI renders the most recent one as a live preview
+    panel. Disabled deployments skip the capture entirely — there is no
+    cost beyond the boolean check.
+
+    Default off so unit tests that construct LocalExecutor directly
+    (without going through Settings) get clean event streams. Production
+    wires this through `Settings.live_screenshots` (defaults to true)
+    in `AppDependencies`."""
 
     async def execute(self, dag: Dag, ctx: RunContext) -> RunOutcome:
         env: dict[str, dict[str, Any]] = {}
@@ -127,7 +138,14 @@ class LocalExecutor:
             ref=node.ref,
         ):
             inputs = resolve_inputs(node.inputs, env=env, alias_to_id=alias_to_id)
-            outputs = await self._dispatch(node, inputs, ctx)
+            try:
+                outputs = await self._dispatch(node, inputs, ctx)
+            finally:
+                # Best-effort live screenshot — runs whether the node
+                # succeeded or failed so the UI can show the failure state.
+                # Any exception here is swallowed; a broken screenshot must
+                # never break a run.
+                await self._maybe_emit_live_screen(node, ctx)
             self.recorder.record(
                 run_id=ctx.run_id,
                 tenant_id=ctx.tenant_id,
@@ -136,6 +154,47 @@ class LocalExecutor:
                 payload={"ref": node.ref, "outputs": _redact_event_outputs(node.ref, outputs)},
             )
             return outputs
+
+    async def _maybe_emit_live_screen(self, node: Node, ctx: RunContext) -> None:
+        """Capture and persist a screenshot of the most recently active
+        browser session, then record a LIVE_SCREEN event pointing at it.
+
+        Browser sessions are stashed in `session_state` under keys
+        prefixed `browser:` (see `activities/browser.py`). The most
+        recently inserted holder is the right session to peek at — for
+        the typical single-session run that's the only one; for
+        multi-session flows it's the one the just-finished node was
+        operating on.
+        """
+        if not self.live_screenshots:
+            return
+        actx = ctx.activity_ctx
+        state = getattr(actx, "session_state", None) or {}
+        holders = [v for k, v in state.items() if str(k).startswith("browser:")]
+        if not holders:
+            return
+        sess = getattr(holders[-1], "session", None)
+        if sess is None or not hasattr(sess, "screenshot"):
+            return
+        store = getattr(actx, "object_store", None)
+        if store is None:
+            return
+        try:
+            png = await sess.screenshot()
+        except Exception:
+            return
+        try:
+            key = f"runs/{ctx.run_id}/livescreen/{uuid.uuid4().hex}.png"
+            obj = store.put(str(ctx.tenant_id), key, png)
+        except Exception:
+            return
+        self.recorder.record(
+            run_id=ctx.run_id,
+            tenant_id=ctx.tenant_id,
+            node_id=node.id,
+            kind=RunEventKind.LIVE_SCREEN,
+            payload={"uri": obj.uri},
+        )
 
     async def _dispatch(
         self, node: Node, inputs: dict[str, Any], ctx: RunContext
