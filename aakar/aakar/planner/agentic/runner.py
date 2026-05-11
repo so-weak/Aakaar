@@ -55,19 +55,60 @@ _INSPECT_JS = r"""
     if (window.CSS && CSS.escape) return CSS.escape(s);
     return String(s).replace(/([^a-zA-Z0-9_-])/g, "\\$1");
   }
+  function isUniqueOnPage(sel, target) {
+    try {
+      const matches = document.querySelectorAll(sel);
+      return matches.length === 1 && matches[0] === target;
+    } catch { return false; }
+  }
   function bestSelector(el) {
     if (!el || !(el instanceof Element)) return null;
-    if (el.id) return "#" + cssEscape(el.id);
+    // Try increasingly specific candidates and accept the first that
+    // resolves to *exactly this element*. A class-based selector that
+    // matches three siblings is worse than the nth-of-type fallback.
+    const candidates = [];
+    if (el.id) candidates.push("#" + cssEscape(el.id));
     const name = el.getAttribute && el.getAttribute("name");
-    if (name) return el.tagName.toLowerCase() + "[name=" + JSON.stringify(name) + "]";
+    if (name) {
+      const valAttr = el.getAttribute && el.getAttribute("value");
+      // Radios share a name; disambiguate with the value attribute.
+      if (valAttr) {
+        candidates.push(
+          el.tagName.toLowerCase() +
+          "[name=" + JSON.stringify(name) +
+          "][value=" + JSON.stringify(valAttr) + "]"
+        );
+      }
+      candidates.push(el.tagName.toLowerCase() + "[name=" + JSON.stringify(name) + "]");
+    }
     const dataTestId = el.getAttribute && el.getAttribute("data-testid");
-    if (dataTestId) return "[data-testid=" + JSON.stringify(dataTestId) + "]";
+    if (dataTestId) candidates.push("[data-testid=" + JSON.stringify(dataTestId) + "]");
     const cls = (el.className || "").split(/\s+/).filter(Boolean).slice(0, 2).join(".");
-    if (cls) return el.tagName.toLowerCase() + "." + cls.split(".").map(cssEscape).join(".");
-    const parent = el.parentElement;
-    if (!parent) return el.tagName.toLowerCase();
-    const idx = Array.from(parent.querySelectorAll(el.tagName)).indexOf(el);
-    return el.tagName.toLowerCase() + ":nth-of-type(" + (idx + 1) + ")";
+    if (cls) {
+      candidates.push(el.tagName.toLowerCase() + "." + cls.split(".").map(cssEscape).join("."));
+    }
+    for (const c of candidates) {
+      if (isUniqueOnPage(c, el)) return c;
+    }
+    // Build a positional path from <body> down. Last-resort but always
+    // resolves to exactly one element.
+    const path = [];
+    let cur = el;
+    while (cur && cur.parentElement && cur !== document.body) {
+      const parent = cur.parentElement;
+      const sameTag = Array.from(parent.children).filter(
+        (c) => c.tagName === cur.tagName
+      );
+      const idx = sameTag.indexOf(cur);
+      const seg =
+        sameTag.length === 1
+          ? cur.tagName.toLowerCase()
+          : cur.tagName.toLowerCase() + ":nth-of-type(" + (idx + 1) + ")";
+      path.unshift(seg);
+      cur = parent;
+      if (path.length > 6) break;
+    }
+    return path.join(" > ") || el.tagName.toLowerCase();
   }
   function labelOf(el) {
     const aria = el.getAttribute && el.getAttribute("aria-label");
@@ -158,9 +199,11 @@ class PlannerToolRunner:
     async def navigate(self, url: str) -> dict[str, Any]:
         if self._session is None:
             return {"error": "no planning session"}
+        logger.info("agentic.navigate url=%s", url)
         try:
             await self._session.navigate(url)
         except Exception as e:  # noqa: BLE001
+            logger.warning("agentic.navigate failed url=%s: %s", url, e)
             return {"error": f"navigate failed: {type(e).__name__}: {e}"}
         meta = await self._page_meta()
         return {"ok": True, **meta}
@@ -168,9 +211,11 @@ class PlannerToolRunner:
     async def inspect_page(self) -> dict[str, Any]:
         if self._session is None:
             return {"error": "no planning session"}
+        logger.debug("agentic.inspect_page")
         try:
             result = await self._session.evaluate(_INSPECT_JS)
         except Exception as e:  # noqa: BLE001
+            logger.warning("agentic.inspect_page failed: %s", e)
             return {"error": f"inspect failed: {type(e).__name__}: {e}"}
         if not isinstance(result, dict):
             return {"error": "inspect returned non-object"}
@@ -183,6 +228,7 @@ class PlannerToolRunner:
         auto-discovered. Refuses if the grant doesn't exist."""
         from aakar.capabilities.web_login import CAP_REF as WEB_LOGIN_REF
 
+        logger.info("agentic.login_with_grant url=%s alias=%s", login_url, account_alias)
         # Build a synthetic ActivityContext — fetch_credentials only needs
         # tenant_id, vault, granted_capabilities. The other fields are unused.
         try:
@@ -194,6 +240,7 @@ class PlannerToolRunner:
                 account_alias=account_alias,
             )
         except PermissionError as e:
+            logger.warning("agentic.login_with_grant: grant lookup failed alias=%s: %s", account_alias, e)
             return {"error": f"grant lookup failed: {e}"}
 
         if self._session is None:
@@ -230,8 +277,10 @@ class PlannerToolRunner:
             except Exception:  # noqa: BLE001
                 pass
         except Exception as e:  # noqa: BLE001
+            logger.warning("agentic.login_with_grant failed url=%s: %s", login_url, e)
             return {"error": f"login failed: {type(e).__name__}: {e}"}
         meta = await self._page_meta()
+        logger.info("agentic.login_with_grant ok landed_url=%s", meta.get("url"))
         return {"ok": True, "logged_in": True, **meta}
 
     async def _page_meta(self) -> dict[str, Any]:

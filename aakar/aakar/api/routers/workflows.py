@@ -11,6 +11,7 @@ the chat endpoint — but we still validate to prevent corruption.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Annotated
 
@@ -32,6 +33,7 @@ from aakar.shared.dag.types import Dag
 from aakar.shared.registry import Registry
 
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/workflows", tags=["workflows"])
 
 
@@ -41,6 +43,7 @@ def _validate_dag_for_tenant(
     try:
         validate_dag(dag, registry=registry, granted_capabilities=granted)
     except ValidationError as e:
+        logger.info("DAG validation failed: %s", e)
         raise HTTPException(
             status_code=422,
             detail=f"DAG validation failed: {e}",
@@ -93,6 +96,13 @@ def create_workflow(
         rationale=body.rationale,
     )
     session.commit()
+    logger.info(
+        "workflow created id=%s tenant_id=%s name=%r nodes=%d",
+        workflow.id,
+        user.tenant_id,
+        body.name,
+        len(body.dag.nodes),
+    )
     return _to_response(workflow)
 
 
@@ -179,6 +189,12 @@ def update_workflow(
         rationale=body.rationale,
     )
     session.commit()
+    logger.info(
+        "workflow version added workflow_id=%s version=%s nodes=%d",
+        workflow_id,
+        version.version,
+        len(body.dag.nodes),
+    )
     return _version_to_response(version)
 
 
@@ -196,3 +212,4 @@ def delete_workflow(
         raise HTTPException(status_code=403, detail="only the owner can delete")
     workflows_repo.delete_workflow(session, user.tenant_id, workflow_id)
     session.commit()
+    logger.info("workflow deleted id=%s tenant_id=%s", workflow_id, user.tenant_id)

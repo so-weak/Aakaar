@@ -59,6 +59,13 @@ class RunOrchestrator:
         dag: Dag,
         granted_caps: dict[str, dict[str, Any]],
     ) -> asyncio.Task[RunOutcome]:
+        logger.info(
+            "schedule run_id=%s tenant_id=%s nodes=%d granted_caps=%d",
+            run_id,
+            tenant_id,
+            len(dag.nodes),
+            len(granted_caps),
+        )
         task = asyncio.create_task(
             self._drive(
                 run_id=run_id, tenant_id=tenant_id, dag=dag, granted_caps=granted_caps,
@@ -68,6 +75,7 @@ class RunOrchestrator:
         return task
 
     async def respond(self, *, run_id: uuid.UUID, node_id: str, response: str) -> None:
+        logger.info("respond run_id=%s node_id=%s", run_id, node_id)
         await self.signals.resolve(run_id, node_id, response)
 
     async def wait_for(self, run_id: uuid.UUID) -> RunOutcome:
@@ -86,6 +94,7 @@ class RunOrchestrator:
         dag: Dag,
         granted_caps: dict[str, dict[str, Any]],
     ) -> RunOutcome:
+        logger.debug("_drive: marking run %s as RUNNING", run_id)
         self._update_status(run_id=run_id, status=RunStatus.RUNNING)
 
         activity_ctx = ActivityContext(
@@ -119,11 +128,20 @@ class RunOrchestrator:
                 except Exception:
                     logger.exception("session_state cleanup failed for run %s", run_id)
 
+        final_status = (
+            RunStatus.SUCCEEDED if outcome.status == "succeeded" else RunStatus.FAILED
+        )
+        if final_status == RunStatus.SUCCEEDED:
+            logger.info("run %s SUCCEEDED (outputs=%d nodes)", run_id, len(outcome.outputs))
+        else:
+            logger.warning(
+                "run %s FAILED error=%s",
+                run_id,
+                (outcome.error or {}).get("message", outcome.error),
+            )
         self._update_status(
             run_id=run_id,
-            status=(
-                RunStatus.SUCCEEDED if outcome.status == "succeeded" else RunStatus.FAILED
-            ),
+            status=final_status,
             outputs=_redact_outputs(outcome.outputs),
             error=outcome.error,
             end=True,

@@ -21,7 +21,7 @@ from typing import Protocol
 from pydantic import BaseModel
 
 from aakar.shared.dag.refs import Ref, parse_refs
-from aakar.shared.dag.types import Dag, Node, NodeKind
+from aakar.shared.dag.types import Dag, Edge, Node, NodeKind
 
 
 class ValidationError(ValueError):
@@ -111,6 +111,116 @@ def _ancestors_of(nid: str, idx: _DagIndex) -> set[str]:
 
 
 # ---------- public API -----------------------------------------------------
+
+
+def auto_complete_edges(dag: Dag) -> Dag:
+    """Return a copy of `dag` with implicit data-flow edges materialized.
+
+    Every `${alias.field}` reference in a node's inputs implies a
+    "must run after" relationship: the producing node must complete
+    before the consuming node starts. Forcing the planner to mirror
+    those references in the `edges` list is busywork — the LLM
+    consistently forgets, and the validator then rejects what is
+    semantically a perfectly fine DAG.
+
+    This pass also strips duplicate `outputs_as` aliases (keeping
+    only the first occurrence). The LLM occasionally tags multiple
+    nodes with `outputs_as="session"` as if it were a "currently-
+    active session" marker; the second tag is invalid (aliases must
+    be unique) and the right semantic is to clear it.
+
+    This pass walks every reference; if there is no edge path from
+    the producer to the consumer yet, it adds a direct edge. It
+    refuses to add an edge that would introduce a cycle (that's a
+    real DAG bug the caller should see) — those references fall
+    through to `validate_dag` and surface as the original error.
+    """
+    if not dag.nodes:
+        return dag
+
+    # First pass: dedup outputs_as. The first node to claim a name
+    # keeps it; later nodes lose theirs.
+    seen_aliases: set[str] = set()
+    for n in dag.nodes:
+        seen_aliases.add(n.id)
+    cleaned_nodes: list[Node] = []
+    for n in dag.nodes:
+        if n.outputs_as is None:
+            cleaned_nodes.append(n)
+            continue
+        # If the alias collides with another node's id, or with an
+        # earlier node's outputs_as, strip it.
+        if n.outputs_as in seen_aliases:
+            cleaned_nodes.append(n.model_copy(update={"outputs_as": None}))
+        else:
+            seen_aliases.add(n.outputs_as)
+            cleaned_nodes.append(n)
+
+    nodes_by_id = {n.id: n for n in cleaned_nodes}
+    aliases: dict[str, str] = {n.id: n.id for n in cleaned_nodes}
+    for n in cleaned_nodes:
+        if n.outputs_as is not None and n.outputs_as not in aliases:
+            aliases[n.outputs_as] = n.id
+
+    # Mutable adjacency so we can compute reachability after each
+    # tentative add without rebuilding the whole index.
+    successors: dict[str, set[str]] = {n.id: set() for n in cleaned_nodes}
+    predecessors: dict[str, set[str]] = {n.id: set() for n in cleaned_nodes}
+    edges: list[Edge] = list(dag.edges)
+    for e in edges:
+        if e.source in successors and e.target in predecessors:
+            successors[e.source].add(e.target)
+            predecessors[e.target].add(e.source)
+
+    def _ancestors(nid: str) -> set[str]:
+        seen: set[str] = set()
+        stack = list(predecessors.get(nid, ()))
+        while stack:
+            cur = stack.pop()
+            if cur in seen:
+                continue
+            seen.add(cur)
+            stack.extend(predecessors.get(cur, ()))
+        return seen
+
+    def _descendants(nid: str) -> set[str]:
+        seen: set[str] = set()
+        stack = list(successors.get(nid, ()))
+        while stack:
+            cur = stack.pop()
+            if cur in seen:
+                continue
+            seen.add(cur)
+            stack.extend(successors.get(cur, ()))
+        return seen
+
+    added: list[tuple[str, str]] = []
+    for node in cleaned_nodes:
+        for _path, ref in parse_refs(node.inputs):
+            src_id = aliases.get(ref.alias)
+            if src_id is None or src_id == node.id:
+                continue
+            if src_id in _ancestors(node.id):
+                continue
+            # Refuse if adding the edge would cycle.
+            if src_id in _descendants(node.id) or src_id == node.id:
+                continue
+            successors[src_id].add(node.id)
+            predecessors[node.id].add(src_id)
+            added.append((src_id, node.id))
+
+    nodes_changed = any(a is not b for a, b in zip(cleaned_nodes, dag.nodes))
+    if not added and not nodes_changed:
+        return dag
+    new_edges = list(dag.edges) + [
+        Edge(source=s, target=t) for s, t in added
+    ]
+    return Dag(
+        id=dag.id,
+        version=dag.version,
+        nodes=cleaned_nodes,
+        edges=new_edges,
+    )
 
 
 def validate_dag(

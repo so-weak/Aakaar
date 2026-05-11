@@ -7,6 +7,7 @@ is read from the user row. Superusers have tenant_id == NULL.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
@@ -21,6 +22,7 @@ from aakar.api.schemas import LoginRequest, LoginResponse
 from aakar.db.models import Tenant, User, UserStatus
 
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
@@ -33,6 +35,7 @@ def login(
     # Constant-ish-time: always look up by email; verify password even if no
     # user is found, against a sentinel hash. Rough mitigation against user
     # enumeration via response timing.
+    logger.debug("login attempt for email=%s", body.email)
     candidates = list(session.scalars(select(User).where(User.email == body.email)))
     user: User | None = None
     for u in candidates:
@@ -41,6 +44,7 @@ def login(
             break
 
     if user is None or user.status != UserStatus.ACTIVE:
+        logger.info("login failed for email=%s (no active user matched)", body.email)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid credentials"
         )
@@ -64,6 +68,12 @@ def login(
             tenant_slug = tenant.slug
             tenant_name = tenant.name
 
+    logger.info(
+        "login ok user_id=%s tenant_id=%s role=%s",
+        user.id,
+        user.tenant_id,
+        user.role,
+    )
     return LoginResponse(
         access_token=token,
         expires_at=issued + ttl,

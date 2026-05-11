@@ -1,60 +1,56 @@
 import type { Config } from "tailwindcss";
 
+// Tailwind colors are wired to CSS variables so themes can swap palettes
+// without touching component classNames. Each value is an `R G B` triplet
+// the `<alpha-value>` form interpolates into, which means utilities like
+// `bg-ink-900/70` keep working under every theme.
+const cssVarRgb = (name: string) => `rgb(var(${name}) / <alpha-value>)`;
+
 export default {
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
   theme: {
     extend: {
       colors: {
         ink: {
-          50: "#fbf8ee",
-          100: "#efe8d1",
-          200: "#d8cfb6",
-          300: "#aaa18f",
-          400: "#817a6e",
-          500: "#646058",
-          600: "#4d4a45",
-          700: "#393734",
-          800: "#242422",
-          900: "#161614",
-          950: "#0b0b0a",
+          50: cssVarRgb("--ink-50"),
+          100: cssVarRgb("--ink-100"),
+          200: cssVarRgb("--ink-200"),
+          300: cssVarRgb("--ink-300"),
+          400: cssVarRgb("--ink-400"),
+          500: cssVarRgb("--ink-500"),
+          600: cssVarRgb("--ink-600"),
+          700: cssVarRgb("--ink-700"),
+          800: cssVarRgb("--ink-800"),
+          900: cssVarRgb("--ink-900"),
+          950: cssVarRgb("--ink-950"),
         },
         accent: {
-          50: "#faffd8",
-          100: "#f2ff9e",
-          200: "#e8ff58",
-          300: "#d9fb1d",
-          400: "#bde600",
-          500: "#9dc300",
-          600: "#7a9900",
-          700: "#5d7306",
-          800: "#48570b",
-          900: "#39470d",
+          50: cssVarRgb("--accent-50"),
+          100: cssVarRgb("--accent-100"),
+          200: cssVarRgb("--accent-200"),
+          300: cssVarRgb("--accent-300"),
+          400: cssVarRgb("--accent-400"),
+          500: cssVarRgb("--accent-500"),
+          600: cssVarRgb("--accent-600"),
+          700: cssVarRgb("--accent-700"),
+          800: cssVarRgb("--accent-800"),
+          900: cssVarRgb("--accent-900"),
         },
         signal: {
-          pink: "#ff3b93",
-          cyan: "#16d9ff",
-          paper: "#f4edd7",
-          black: "#090908",
+          pink: cssVarRgb("--signal-pink"),
+          cyan: cssVarRgb("--signal-cyan"),
+          paper: cssVarRgb("--signal-paper"),
+          black: cssVarRgb("--signal-black"),
         },
       },
       fontFamily: {
-        sans: [
-          "Inter",
-          "ui-sans-serif",
-          "system-ui",
-          "-apple-system",
-          "Segoe UI",
-          "Helvetica",
-          "Arial",
-          "sans-serif",
-        ],
-        mono: [
-          "JetBrains Mono",
-          "ui-monospace",
-          "SFMono-Regular",
-          "Menlo",
-          "monospace",
-        ],
+        sans: ["var(--font-sans)"],
+        mono: ["var(--font-mono)"],
+        display: ["var(--font-display)"],
+      },
+      borderRadius: {
+        control: "var(--radius-control)",
+        card: "var(--radius-card)",
       },
     },
   },

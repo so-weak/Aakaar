@@ -1,0 +1,62 @@
+# Local production-like stack. Bring up with:
+#   AAKAR_JWT_SECRET=$(openssl rand -hex 32) OPENAI_API_KEY=sk-... docker compose up --build
+#
+# Brings up:
+#   - postgres   (Yugabyte/Postgres-compatible store; swap image for production)
+#   - aakar-api  (FastAPI + Playwright on :8000)
+#   - aakar-web  (nginx serving the Vite bundle on :5173, /api proxied to aakar-api)
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: aakar
+      POSTGRES_PASSWORD: aakar
+      POSTGRES_DB: aakar
+    volumes:
+      - aakar-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aakar -d aakar"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "5432:5432"
+
+  aakar-api:
+    build:
+      context: ./aakar
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      AAKAR_DB_URL: postgresql+psycopg://aakar:aakar@postgres:5432/aakar
+      AAKAR_JWT_SECRET: ${AAKAR_JWT_SECRET:?set AAKAR_JWT_SECRET in env}
+      AAKAR_DATA_DIR: /data
+      AAKAR_CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
+      AAKAR_BROWSER_HEADLESS: "true"
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      AAKAR_LLM_MODEL: ${AAKAR_LLM_MODEL:-gpt-4.1-mini}
+    volumes:
+      - aakar-data:/data
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  aakar-web:
+    build:
+      context: ./aakar-web
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE: /api
+    depends_on:
+      - aakar-api
+    environment:
+      AAKAR_BACKEND_URL: http://aakar-api:8000
+    ports:
+      - "5173:80"
+    restart: unless-stopped
+
+volumes:
+  aakar-pg:
+  aakar-data:

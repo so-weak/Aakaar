@@ -114,3 +114,98 @@ async def test_storage_get_rejects_cross_tenant_uri(tmp_path: Path) -> None:
     assert handler is not None
     with pytest.raises(PermissionError):
         await handler(actx, {"uri": foreign_uri})
+
+
+# ---------- file.read_local --------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_file_read_local_ingests_into_object_store(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("AAKAR_ALLOW_LOCAL_PATHS", "true")
+    activities = build_default_activities()
+    actx = _actx(tmp_path)
+
+    src = tmp_path / "downloads" / "report.csv"
+    src.parent.mkdir(parents=True)
+    payload = b"id,amount\n1,100\n2,250\n"
+    src.write_bytes(payload)
+
+    handler = activities.get("file.read_local")
+    assert handler is not None
+    out = await handler(actx, {"path": str(src)})
+
+    assert out["filename"] == "report.csv"
+    assert out["size"] == len(payload)
+    assert out["file_uri"].startswith("aakar://")
+    # The ingested bytes are retrievable via the same object store.
+    assert actx.object_store.get(out["file_uri"]) == payload
+
+
+@pytest.mark.asyncio
+async def test_file_read_local_disabled_by_default(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Without AAKAR_ALLOW_LOCAL_PATHS=true the action refuses every
+    call. This is the production posture — DAG-emitted paths must not
+    have unrestricted disk read."""
+    monkeypatch.delenv("AAKAR_ALLOW_LOCAL_PATHS", raising=False)
+    activities = build_default_activities()
+    actx = _actx(tmp_path)
+    src = tmp_path / "x.csv"
+    src.write_bytes(b"hi")
+    handler = activities.get("file.read_local")
+    assert handler is not None
+    with pytest.raises(PermissionError):
+        await handler(actx, {"path": str(src)})
+
+
+@pytest.mark.asyncio
+async def test_file_read_local_rejects_relative_path(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("AAKAR_ALLOW_LOCAL_PATHS", "true")
+    activities = build_default_activities()
+    actx = _actx(tmp_path)
+    handler = activities.get("file.read_local")
+    assert handler is not None
+    with pytest.raises(ValueError, match="absolute"):
+        await handler(actx, {"path": "downloads/report.csv"})
+
+
+@pytest.mark.asyncio
+async def test_file_read_local_missing_file(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("AAKAR_ALLOW_LOCAL_PATHS", "true")
+    activities = build_default_activities()
+    actx = _actx(tmp_path)
+    handler = activities.get("file.read_local")
+    assert handler is not None
+    with pytest.raises(FileNotFoundError):
+        await handler(actx, {"path": str(tmp_path / "nonexistent.csv")})
+
+
+# ---------- time.now ---------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_time_now_returns_ist_and_utc(tmp_path: Path) -> None:
+    """Both timezones are present and parseable; the IST date is the
+    UTC date or one day ahead (never behind)."""
+    from datetime import datetime
+
+    activities = build_default_activities()
+    actx = _actx(tmp_path)
+    handler = activities.get("time.now")
+    assert handler is not None
+    out = await handler(actx, {})
+
+    assert set(out.keys()) == {"ist_date", "ist_datetime", "utc_date", "utc_datetime"}
+    # Round-trippable through ISO parsing — catches format regressions.
+    datetime.strptime(out["ist_date"], "%Y-%m-%d")
+    datetime.strptime(out["utc_date"], "%Y-%m-%d")
+    # Sanity: IST is UTC+5:30, so the IST calendar day is never *behind*
+    # the UTC one. (Same day or the day after.)
+    assert out["ist_date"] >= out["utc_date"]

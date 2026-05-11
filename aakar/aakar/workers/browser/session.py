@@ -64,7 +64,19 @@ class BrowserSession(Protocol):
 
     async def click(self, selector: str) -> None: ...
 
+    async def click_by_text(self, text: str) -> None: ...
+    """Click any element whose visible text matches `text`. Use when
+    you want to click a navigation link or button by its label
+    (e.g. 'Recon Upload', 'Logout') without guessing CSS selectors."""
+
     async def select(self, selector: str, value: str) -> None: ...
+
+    async def set_field(self, label: str, value: str) -> None: ...
+    """Set a form control identified by its visible label text. The
+    implementation dispatches by control type (select / input / radio /
+    checkbox), so the planner can write `set_field("Switch Type",
+    "Issuer")` without emitting a guessed CSS selector. Removes a whole
+    category of LLM-hallucinated selector failures from agentic DAGs."""
 
     async def upload(self, selector: str, file_path: str) -> None: ...
 

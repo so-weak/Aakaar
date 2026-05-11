@@ -47,7 +47,7 @@ function DagNode({ data }: NodeProps<Node<DagNodeData>>) {
   return (
     <div
       className={[
-        "min-w-[210px] rounded-lg border border-ink-700 bg-ink-950/95 px-3 py-2.5 text-left shadow-[6px_6px_0_rgb(0_0_0/0.35)]",
+        "min-w-[210px] rounded-card border border-ink-700 bg-ink-950/95 px-3 py-2.5 text-left brand-shadow-cyan-md",
         "ring-1 ring-inset",
         styles.ring,
       ].join(" ")}

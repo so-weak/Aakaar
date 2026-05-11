@@ -15,10 +15,11 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import Any
 
 from aakar.planner.llm import LLMClient, LLMMessage, PlannerCompletion
 from aakar.planner.prompt import PromptBuilder
-from aakar.shared.dag import ValidationError, validate_dag
+from aakar.shared.dag import ValidationError, auto_complete_edges, validate_dag
 from aakar.shared.dag.types import Dag
 from aakar.shared.planner.responses import (
     ClarifyResponse,
@@ -55,13 +56,25 @@ class PlannerService:
         *,
         user_message: str,
         granted_capabilities: set[str],
+        granted_aliases: dict[str, list[str]] | None = None,
+        grant_input_defaults: dict[str, dict[str, dict[str, Any]]] | None = None,
         current_dag: Dag | None = None,
         chat_history: list[LLMMessage] | None = None,
     ) -> PlannerResponse:
         builder = PromptBuilder(
-            registry=self.registry, granted_capabilities=granted_capabilities
+            registry=self.registry,
+            granted_capabilities=granted_capabilities,
+            granted_aliases=granted_aliases or {},
+            grant_input_defaults=grant_input_defaults or {},
         )
 
+        logger.debug(
+            "planner.plan: granted_caps=%d aliases=%d has_current_dag=%s history=%d",
+            len(granted_capabilities),
+            len(granted_aliases or {}),
+            current_dag is not None,
+            len(chat_history or []),
+        )
         repair_errors: list[str] = []
         for attempt in range(self.max_repair_attempts + 1):
             messages = builder.build_messages(
@@ -70,15 +83,26 @@ class PlannerService:
                 chat_history=chat_history,
                 repair_errors=repair_errors or None,
             )
+            logger.debug("planner LLM call attempt=%d messages=%d", attempt, len(messages))
             completion = self.llm.complete_planner(messages)
+            logger.debug("planner LLM completion kind=%s attempt=%d", completion.kind, attempt)
             try:
-                return self._convert(
+                resp = self._convert(
                     completion=completion,
                     granted_capabilities=granted_capabilities,
                 )
+                logger.info(
+                    "planner ok kind=%s attempt=%d", completion.kind, attempt
+                )
+                return resp
             except ValidationError as e:
                 logger.info("planner attempt %d failed validation: %s", attempt, e)
                 if attempt == self.max_repair_attempts:
+                    logger.warning(
+                        "planner gave up after %d attempts; final error: %s",
+                        attempt + 1,
+                        e,
+                    )
                     raise PlannerError(
                         f"planner could not produce a valid DAG after {attempt + 1} attempts: {e}"
                     ) from e
@@ -102,11 +126,15 @@ class PlannerService:
                 needed=list(completion.needed),
                 explanation=completion.explanation,
             )
-        # kind == "dag" — validate before returning.
+        # kind == "dag" — auto-complete missing data-flow edges, then
+        # validate. The LLM regularly forgets to mirror `${A.x}`
+        # references in the `edges` list; auto_complete_edges turns
+        # that recurring bug into a no-op.
         assert completion.dag is not None  # invariant enforced by PlannerCompletion
+        completed = auto_complete_edges(completion.dag)
         validate_dag(
-            completion.dag,
+            completed,
             registry=self.registry,
             granted_capabilities=granted_capabilities,
         )
-        return DagResponse(dag=completion.dag, rationale=completion.rationale)
+        return DagResponse(dag=completed, rationale=completion.rationale)

@@ -12,22 +12,15 @@ export const DASHBOARD_METRICS = {
 
 export const LAST_LOGIN = '07 May 2026 & 10:58:05'
 
-export const SWITCH_TYPES = [
-  'NFS',
-  'VISA',
-  'MasterCard',
-  'RuPay',
-  'IMPS',
-  'UPI'
-]
+export const SWITCH_TYPES = ['Issuer', 'Acquirer']
 
 export const CYCLE_NUMBERS = ['C01', 'C02', 'C03', 'C04']
 
 export const RECON_UPLOAD_HISTORY = [
   {
     id: 1,
-    fileName: 'NFS_C02_06052026.csv',
-    switchType: 'NFS',
+    fileName: 'ISSUER_C02_06052026.csv',
+    switchType: 'Issuer',
     cycle: 'C02',
     date: '06/05/2026',
     status: 'Uploaded',
@@ -35,8 +28,8 @@ export const RECON_UPLOAD_HISTORY = [
   },
   {
     id: 2,
-    fileName: 'VISA_C01_05052026.zip',
-    switchType: 'VISA',
+    fileName: 'ACQUIRER_C01_05052026.zip',
+    switchType: 'Acquirer',
     cycle: 'C01',
     date: '05/05/2026',
     status: 'Processed',
@@ -44,8 +37,8 @@ export const RECON_UPLOAD_HISTORY = [
   },
   {
     id: 3,
-    fileName: 'RUPAY_C03_04052026.csv',
-    switchType: 'RuPay',
+    fileName: 'ISSUER_C03_04052026.csv',
+    switchType: 'Issuer',
     cycle: 'C03',
     date: '04/05/2026',
     status: 'Failed',

@@ -14,11 +14,15 @@ they are translated to subdirectories. Path traversal is rejected.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import stat
 from pathlib import Path
 
 from aakar.vault.types import Secrets, VaultEntry, VaultError, VaultNotFound
+
+
+logger = logging.getLogger(__name__)
 
 
 class LocalVault:
@@ -43,16 +47,23 @@ class LocalVault:
             json.dump(secrets, f, ensure_ascii=False)
         os.chmod(tmp, stat.S_IRUSR | stat.S_IWUSR)
         tmp.replace(path)
+        # Never log secret values — only ref + the names of the keys.
+        logger.info(
+            "vault.put tenant=%s ref=%s names=%s", tenant_id, vault_ref, sorted(secrets)
+        )
         return VaultEntry(vault_ref=vault_ref, secret_names=tuple(sorted(secrets)))
 
     def fetch(self, tenant_id: str, vault_ref: str) -> Secrets:
         path = self._resolve(tenant_id, vault_ref)
         if not path.is_file():
+            logger.warning("vault.fetch miss tenant=%s ref=%s", tenant_id, vault_ref)
             raise VaultNotFound(f"{tenant_id}/{vault_ref}")
         with path.open() as f:
             data = json.load(f)
         if not isinstance(data, dict):
+            logger.error("vault.fetch malformed tenant=%s ref=%s", tenant_id, vault_ref)
             raise VaultError(f"vault entry malformed: {tenant_id}/{vault_ref}")
+        logger.debug("vault.fetch ok tenant=%s ref=%s names=%s", tenant_id, vault_ref, sorted(data))
         return {str(k): str(v) for k, v in data.items()}
 
     def delete(self, tenant_id: str, vault_ref: str) -> None:
@@ -60,6 +71,7 @@ class LocalVault:
         if not path.is_file():
             raise VaultNotFound(f"{tenant_id}/{vault_ref}")
         path.unlink()
+        logger.info("vault.delete tenant=%s ref=%s", tenant_id, vault_ref)
 
     def describe(self, tenant_id: str, vault_ref: str) -> VaultEntry:
         secrets = self.fetch(tenant_id, vault_ref)

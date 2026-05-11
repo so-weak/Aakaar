@@ -105,3 +105,21 @@ def set_user_status(
 def disable_user(session: Session, user_id: uuid.UUID) -> User | None:
     """Back-compat alias for `set_user_status(..., status='disabled')`."""
     return set_user_status(session, user_id, status=UserStatus.DISABLED)
+
+
+def disable_users_for_tenant(session: Session, tenant_id: uuid.UUID) -> int:
+    """Mark every active user in `tenant_id` as DISABLED. Returns the
+    count flipped. Used by the tenant-suspend cascade so a suspended
+    tenant's users can't authenticate against the API."""
+    from sqlalchemy import update
+
+    result = session.execute(
+        update(User)
+        .where(
+            User.tenant_id == tenant_id,
+            User.status == UserStatus.ACTIVE,
+        )
+        .values(status=UserStatus.DISABLED)
+    )
+    session.flush()
+    return int(result.rowcount or 0)

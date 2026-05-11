@@ -8,6 +8,7 @@ implementations in a separate module.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -49,13 +50,18 @@ from aakar.api.routers import (
 )
 
 
+logger = logging.getLogger(__name__)
+
+
 def create_app(deps: AppDependencies) -> FastAPI:
     @asynccontextmanager
     async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        logger.info("lifespan: startup")
         bootstrap_superuser(deps.settings, deps.session_factory)
         try:
             yield
         finally:
+            logger.info("lifespan: shutdown")
             # Tear down any pool that exposes async `shutdown()` — currently
             # PlaywrightBrowserPool. FakeBrowserPool (used in tests) doesn't
             # need this; the duck-typed check keeps test wiring untouched.
@@ -63,8 +69,9 @@ def create_app(deps: AppDependencies) -> FastAPI:
             if shutdown is not None:
                 try:
                     await shutdown()
+                    logger.debug("browser pool shutdown complete")
                 except Exception:
-                    pass
+                    logger.exception("browser pool shutdown failed")
 
     app = FastAPI(title="Aakar", version="0.1.0", lifespan=_lifespan)
     app.state.deps = deps

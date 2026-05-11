@@ -18,6 +18,7 @@ upstream node (typically `cap.web_login`).
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from typing import Any
 
@@ -35,6 +36,7 @@ from aakar.interpreter.activities.types import ActivityContext
 from aakar.shared.registry import CapabilityDefinition
 
 
+logger = logging.getLogger(__name__)
 CAP_REF = "cap.file_download"
 
 _HITL_PROMPT_TIMEOUT_S = 300
@@ -123,27 +125,127 @@ async def handler(ctx: ActivityContext, inputs: dict[str, Any]) -> dict[str, Any
     trigger_selector = inputs.get("trigger_selector")
     url = inputs.get("url")
 
-    # If the caller asked for hint-based selection, resolve it to a
-    # concrete trigger_selector via discovery + ranking + (optional) HITL.
-    if target_hint:
-        trigger_selector = await _resolve_target_hint(ctx, sess, target_hint)
+    logger.info(
+        "cap.file_download start run_id=%s session=%s mode=%s",
+        ctx.run_id,
+        inputs["session"],
+        "selector" if trigger_selector else ("url" if url else "target_hint"),
+    )
 
-    file = await sess.download(trigger_selector=trigger_selector, url=url)
+    # If a literal selector or URL was supplied, take the simple path —
+    # no discovery loop, no nav-then-rescan recovery. The caller knows
+    # what they want.
+    if not target_hint:
+        file = await sess.download(trigger_selector=trigger_selector, url=url)
+        key = f"runs/{ctx.run_id}/downloads/{uuid.uuid4().hex}_{file.filename}"
+        obj = ctx.object_store.put(str(ctx.tenant_id), key, file.content)
+        logger.info(
+            "cap.file_download ok uri=%s filename=%s bytes=%d",
+            obj.uri,
+            file.filename,
+            len(file.content),
+        )
+        return {"uri": obj.uri, "filename": file.filename}
+
+    # target_hint path — try discovery, click, see if a download fires.
+    # Many sites bury reports behind a section page (e.g. nbbl's "Master
+    # Data" → "Biller Master"); the first picker hit may navigate
+    # instead of triggering a download. Catch that, re-scan the new
+    # page, and try the next match. Capped to a small number of
+    # iterations so a misconfigured page can't loop forever.
+    logger.debug("cap.file_download target_hint=%r", target_hint)
+    file = await _download_with_nav_recovery(
+        ctx, sess, target_hint=target_hint, max_steps=3
+    )
     key = f"runs/{ctx.run_id}/downloads/{uuid.uuid4().hex}_{file.filename}"
     obj = ctx.object_store.put(str(ctx.tenant_id), key, file.content)
+    logger.info(
+        "cap.file_download ok uri=%s filename=%s bytes=%d (target_hint)",
+        obj.uri,
+        file.filename,
+        len(file.content),
+    )
     return {"uri": obj.uri, "filename": file.filename}
+
+
+async def _download_with_nav_recovery(
+    ctx: ActivityContext, sess: Any, *, target_hint: str, max_steps: int
+):
+    """Pick a candidate matching `target_hint`, click it, and either
+    capture the download or — if the click was a navigation — re-scan
+    the new page and try again.
+
+    On each iteration we exclude selectors we've already clicked so a
+    bad picker decision doesn't trap us in a loop on the same element.
+    """
+    visited: set[str] = set()
+    last_error: Exception | None = None
+    for step in range(max_steps):
+        selector = await _resolve_target_hint(
+            ctx, sess, target_hint, exclude_selectors=visited
+        )
+        visited.add(selector)
+        logger.debug(
+            "cap.file_download step=%d selector=%r target_hint=%r",
+            step,
+            selector,
+            target_hint,
+        )
+        try:
+            return await sess.download(trigger_selector=selector)
+        except Exception as e:  # noqa: BLE001
+            # Playwright raises TimeoutError when `expect_download` fires
+            # nothing within its budget — that's our "click was a nav,
+            # not a download" signal. Other exceptions (selector not
+            # found, network error) we also retry once with a different
+            # candidate, since the page state has likely changed.
+            last_error = e
+            msg = str(e).lower()
+            looks_like_nav = (
+                "download" in msg
+                or "timeout" in msg
+                or "navigation" in msg
+            )
+            logger.info(
+                "cap.file_download step=%d click=%r looked_like_nav=%s err=%s",
+                step,
+                selector,
+                looks_like_nav,
+                type(e).__name__,
+            )
+            if step == max_steps - 1 or not looks_like_nav:
+                raise
+            # Otherwise loop and let _resolve_target_hint re-discover
+            # against the now-changed page.
+            continue
+    # Defensive: the loop always either returns or re-raises, but keep
+    # the type checker happy.
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError(  # pragma: no cover
+        f"cap.file_download: ran out of candidates for {target_hint!r}"
+    )
 
 
 # ---------- target_hint resolution -------------------------------------------
 
 
 async def _resolve_target_hint(
-    ctx: ActivityContext, sess: Any, target_hint: str
+    ctx: ActivityContext,
+    sess: Any,
+    target_hint: str,
+    *,
+    exclude_selectors: set[str] | None = None,
 ) -> str:
     """Walk the page, rank candidates, return a CSS selector to click.
 
     Pauses HITL with a screenshot + numbered candidate list when the top
     candidate isn't a clear winner. Raises if no candidates match.
+
+    `exclude_selectors`, when supplied, drops candidates whose selector
+    matches anything in the set. The nav-recovery loop uses this to
+    avoid re-clicking a candidate that already turned out to be a nav
+    link rather than a download trigger.
     """
     raw = await sess.evaluate(DISCOVERY_JS)
     if not isinstance(raw, dict):
@@ -151,6 +253,8 @@ async def _resolve_target_hint(
             f"file_download discovery returned non-object: {type(raw).__name__}"
         )
     candidates = rank_candidates(raw.get("candidates"), target_hint=target_hint)
+    if exclude_selectors:
+        candidates = [c for c in candidates if c.selector not in exclude_selectors]
     pick = decide(candidates)
 
     if pick.chosen is not None:

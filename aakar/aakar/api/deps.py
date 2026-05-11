@@ -10,6 +10,7 @@ swap individual factories via `app.dependency_overrides`.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -51,6 +52,9 @@ from aakar.vault import Vault
 from aakar.workers.browser import BrowserPool
 
 
+logger = logging.getLogger(__name__)
+
+
 # ---------- AppDependencies ------------------------------------------------
 
 
@@ -84,6 +88,7 @@ class AppDependencies:
     orchestrator: RunOrchestrator = field(init=False)
 
     def __post_init__(self) -> None:
+        logger.debug("AppDependencies: wiring derived components")
         self.capability_index = CapabilityIndex(
             registry=self.registry,
             embeddings=self.embeddings,
@@ -99,9 +104,13 @@ class AppDependencies:
                 browser_pool=self.browser_pool,
                 vault=self.vault,
             )
+            logger.debug("agentic planner wired")
+        else:
+            logger.info("agentic planner disabled (no browser_pool)")
         if self.activities is None:
             self.activities = build_default_activities()
         if self.autoload_capabilities:
+            logger.debug("autoloading capabilities into registry/activities")
             load_capabilities(self.registry, self.activities)
         if self.event_recorder is None:
             self.event_recorder = DbEventRecorder(session_factory=self.session_factory)
@@ -123,6 +132,7 @@ class AppDependencies:
             vault=self.vault,
             browser_pool=self.browser_pool,
         )
+        logger.debug("AppDependencies: ready")
 
 
 # ---------- generic accessors ---------------------------------------------
@@ -210,6 +220,7 @@ def get_current_claims(
             algorithm=settings.jwt_algorithm,
         )
     except InvalidToken as e:
+        logger.info("auth: rejected token (%s)", e)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=str(e),
@@ -223,10 +234,36 @@ def get_current_user(
 ) -> User:
     user = session.get(User, claims.user_id)
     if user is None or user.status != UserStatus.ACTIVE:
+        logger.info("auth: user_id=%s not active", claims.user_id)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="user not active")
     if user.role != claims.role:
         # Role drifted since the token was issued — invalidate.
+        logger.info(
+            "auth: role drift user_id=%s token_role=%s db_role=%s",
+            user.id,
+            claims.role,
+            user.role,
+        )
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="role changed")
+    # Defence-in-depth for tenant suspension: even if the suspend cascade
+    # missed flipping a row (or a new user was created against a
+    # suspended tenant somehow), refuse the request. Superusers
+    # (tenant_id is None) are exempt — they need to be able to log in
+    # to fix a suspended tenant.
+    if user.tenant_id is not None:
+        from aakar.db.models import Tenant, TenantStatus
+
+        tenant = session.get(Tenant, user.tenant_id)
+        if tenant is not None and tenant.status == TenantStatus.SUSPENDED:
+            logger.warning(
+                "auth: blocked user_id=%s on suspended tenant_id=%s",
+                user.id,
+                user.tenant_id,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="tenant suspended",
+            )
     return user
 
 

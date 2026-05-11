@@ -16,6 +16,7 @@ into the planner's repair loop.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -32,7 +33,8 @@ from aakar.planner.llm import (
 from aakar.shared.dag import ValidationError
 
 
-_DEFAULT_LLM_MODEL = "gpt-4.1-mini"
+logger = logging.getLogger(__name__)
+_DEFAULT_LLM_MODEL = "gpt-5.4-mini"
 
 
 @dataclass
@@ -42,14 +44,24 @@ class OpenAILLMClient(LLMClient):
     temperature: float = 0.0
 
     def complete_planner(self, messages: list[LLMMessage]) -> PlannerCompletion:
+        logger.debug("OpenAI complete_planner model=%s messages=%d", self.model, len(messages))
         response = self.client.chat.completions.create(
             model=self.model,
             temperature=self.temperature,
             messages=[{"role": m.role.value, "content": m.content} for m in messages],
             response_format={"type": "json_object"},
         )
+        usage = getattr(response, "usage", None)
+        if usage is not None:
+            logger.debug(
+                "OpenAI tokens prompt=%s completion=%s total=%s",
+                getattr(usage, "prompt_tokens", "?"),
+                getattr(usage, "completion_tokens", "?"),
+                getattr(usage, "total_tokens", "?"),
+            )
         content = response.choices[0].message.content
         if not content:
+            logger.error("OpenAI returned an empty completion")
             raise RuntimeError("OpenAI returned an empty completion")
         try:
             return PlannerCompletion.model_validate_json(content)
@@ -57,6 +69,7 @@ class OpenAILLMClient(LLMClient):
             # Surface as a DAG-layer ValidationError so the planner's repair
             # loop (`PlannerService.plan`) sees it, feeds the error back to
             # the model, and gets another chance to produce well-formed JSON.
+            logger.warning("PlannerCompletion JSON validation failed: %s", e)
             raise ValidationError(
                 f"PlannerCompletion JSON did not match the expected envelope: {e}"
             ) from e
@@ -71,6 +84,12 @@ class OpenAILLMClient(LLMClient):
         more tool calls (continue the loop) or a final text content (the
         model is trying to talk to the user — agentic service treats this
         as a hint to give up and produce a clarify response)."""
+        logger.debug(
+            "OpenAI complete_with_tools model=%s messages=%d tools=%d",
+            self.model,
+            len(messages),
+            len(tools),
+        )
         response = self.client.chat.completions.create(
             model=self.model,
             temperature=self.temperature,
@@ -84,6 +103,11 @@ class OpenAILLMClient(LLMClient):
         )
         msg = response.choices[0].message
         raw_calls = getattr(msg, "tool_calls", None) or []
+        logger.debug(
+            "OpenAI tool step tool_calls=%d has_final_content=%s",
+            len(raw_calls),
+            bool(msg.content),
+        )
         calls: list[ToolCall] = []
         for tc in raw_calls:
             try:

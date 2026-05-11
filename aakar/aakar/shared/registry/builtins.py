@@ -76,10 +76,39 @@ class _ClickIn(_Strict):
     selector: str
 
 
+class _ClickByTextIn(_Strict):
+    session: str
+    text: str = Field(
+        description=(
+            "Visible text of the element to click (link, button, or any "
+            "element). Case-insensitive substring match. Use this for "
+            "navigation links and logout buttons whose CSS selector you "
+            "don't know."
+        )
+    )
+
+
 class _SelectIn(_Strict):
     session: str
     selector: str
     value: str
+
+
+class _SetFieldIn(_Strict):
+    session: str
+    label: str = Field(
+        description=(
+            "Visible label text of the form field (e.g. 'Switch Type', "
+            "'Cycle Number'). Case-insensitive substring match."
+        )
+    )
+    value: str = Field(
+        description=(
+            "Value to set. For <select>: the option's value or visible "
+            "label. For radio groups: the option's label (e.g. 'Yes' / "
+            "'No'). For text/date inputs: the literal value."
+        )
+    )
 
 
 class _UploadIn(_Strict):
@@ -166,11 +195,37 @@ def _browser_defs() -> list[ActionDefinition]:
             tags=("browser",),
         ),
         ActionDefinition(
+            ref="browser.click_by_text",
+            description=(
+                "Click an element by its visible text (link, button, or "
+                "any element). Prefer this over `browser.click` for nav "
+                "links and logout buttons whose CSS selectors aren't "
+                "verified. Tries link → button → any-text in order."
+            ),
+            input_schema=_ClickByTextIn,
+            output_schema=_Empty,
+            tags=("browser",),
+        ),
+        ActionDefinition(
             ref="browser.select",
             description="Select an option in a <select> element by value.",
             input_schema=_SelectIn,
             output_schema=_Empty,
             tags=("browser",),
+        ),
+        ActionDefinition(
+            ref="browser.set_field",
+            description=(
+                "Set a form control by its visible label. Auto-dispatches "
+                "over <select>, <input>, and radio groups — prefer this "
+                "over `browser.fill` / `browser.select` / `browser.click` "
+                "when you don't have a verified CSS selector for the "
+                "field. Removes selector hallucination for multi-field "
+                "form workflows."
+            ),
+            input_schema=_SetFieldIn,
+            output_schema=_Empty,
+            tags=("browser", "form"),
         ),
         ActionDefinition(
             ref="browser.upload",
@@ -265,6 +320,23 @@ class _FileUriOut(_Strict):
     file_uri: str
 
 
+class _ReadLocalIn(_Strict):
+    path: str = Field(
+        description=(
+            "Absolute local filesystem path on the API host. The host "
+            "must have AAKAR_ALLOW_LOCAL_PATHS=true; otherwise the call "
+            "fails. Use this only when the user explicitly references a "
+            "file already on disk (e.g. ~/Downloads/report.csv)."
+        )
+    )
+
+
+class _ReadLocalOut(_Strict):
+    file_uri: str = Field(description="Managed-storage URI of the ingested file.")
+    filename: str = Field(description="Basename of the original local file.")
+    size: int = Field(description="File size in bytes.")
+
+
 def _file_defs() -> list[ActionDefinition]:
     return [
         ActionDefinition(
@@ -280,6 +352,18 @@ def _file_defs() -> list[ActionDefinition]:
             input_schema=_WriteCsvIn,
             output_schema=_FileUriOut,
             tags=("file",),
+        ),
+        ActionDefinition(
+            ref="file.read_local",
+            description=(
+                "Ingest a local filesystem file into managed storage and "
+                "return its `aakar://` URI. Pair with `cap.file_upload` to "
+                "upload a file the user has on disk. Requires "
+                "AAKAR_ALLOW_LOCAL_PATHS=true on the API host."
+            ),
+            input_schema=_ReadLocalIn,
+            output_schema=_ReadLocalOut,
+            tags=("file", "ingestion"),
         ),
     ]
 
@@ -315,6 +399,32 @@ def _storage_defs() -> list[ActionDefinition]:
             input_schema=_StorageGetIn,
             output_schema=_FileUriOut,
             tags=("storage",),
+        ),
+    ]
+
+
+# ---------- time -----------------------------------------------------------
+
+
+class _TimeNowOut(_Strict):
+    ist_date: str = Field(description="Today's date in IST as yyyy-mm-dd.")
+    ist_datetime: str = Field(description="ISO-8601 datetime in IST.")
+    utc_date: str = Field(description="Today's date in UTC as yyyy-mm-dd.")
+    utc_datetime: str = Field(description="ISO-8601 datetime in UTC.")
+
+
+def _time_defs() -> list[ActionDefinition]:
+    return [
+        ActionDefinition(
+            ref="time.now",
+            description=(
+                "Return the current date and datetime in both IST and UTC. "
+                "Use `${node.ist_date}` when a workflow needs 'today' so "
+                "saved DAGs don't carry a stale literal date."
+            ),
+            input_schema=_Empty,
+            output_schema=_TimeNowOut,
+            tags=("time",),
         ),
     ]
 
@@ -370,5 +480,6 @@ def build_default_registry() -> Registry:
     reg.add_many(_http_defs())
     reg.add_many(_file_defs())
     reg.add_many(_storage_defs())
+    reg.add_many(_time_defs())
     reg.add_many(_control_defs())
     return reg

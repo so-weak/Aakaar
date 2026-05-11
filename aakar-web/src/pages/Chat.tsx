@@ -448,7 +448,7 @@ function SaveConfirmModal({
 function UserBubble({ text }: { text: string }) {
   return (
     <div className="flex justify-end">
-      <div className="max-w-[85%] whitespace-pre-wrap rounded-lg bg-accent-500/10 px-3.5 py-2 text-sm text-ink-100 ring-1 ring-inset ring-accent-500/30">
+      <div className="max-w-[85%] whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-lg bg-accent-500/10 px-3.5 py-2 text-sm text-ink-100 ring-1 ring-inset ring-accent-500/30">
         {text}
       </div>
     </div>
@@ -460,11 +460,11 @@ function PlannerBubble({ response }: { response: RawChatResponse }) {
     const dag = response.dag;
     return (
       <div className="flex justify-start">
-        <div className="card max-w-[85%] px-4 py-3">
+        <div className="card max-w-[85%] px-4 py-3 [overflow-wrap:anywhere]">
           <div className="mb-2 flex items-center gap-2 text-xs font-medium text-emerald-300">
             <CheckCircle2 size={14} /> Drafted a workflow
           </div>
-          <p className="text-sm text-ink-100">{response.rationale}</p>
+          <p className="break-words text-sm text-ink-100">{response.rationale}</p>
           <p className="mt-2 text-xs text-ink-500">
             {dag.nodes.length} node{dag.nodes.length === 1 ? "" : "s"} · preview on the right.
           </p>
@@ -475,13 +475,13 @@ function PlannerBubble({ response }: { response: RawChatResponse }) {
   if (response.kind === "clarify") {
     return (
       <div className="flex justify-start">
-        <div className="card max-w-[85%] px-4 py-3">
+        <div className="card max-w-[85%] px-4 py-3 [overflow-wrap:anywhere]">
           <div className="mb-2 flex items-center gap-2 text-xs font-medium text-amber-300">
             <HelpCircle size={14} /> Need a bit more info
           </div>
           <ul className="list-disc space-y-1 pl-5 text-sm text-ink-100">
             {response.questions.map((q, i) => (
-              <li key={i}>{q}</li>
+              <li key={i} className="break-words">{q}</li>
             ))}
           </ul>
         </div>
@@ -490,11 +490,11 @@ function PlannerBubble({ response }: { response: RawChatResponse }) {
   }
   return (
     <div className="flex justify-start">
-      <div className="card max-w-[85%] px-4 py-3">
+      <div className="card max-w-[85%] px-4 py-3 [overflow-wrap:anywhere]">
         <div className="mb-2 flex items-center gap-2 text-xs font-medium text-rose-300">
           <ShieldAlert size={14} /> Capability not granted
         </div>
-        <p className="text-sm text-ink-100">{response.explanation}</p>
+        <p className="break-words text-sm text-ink-100">{response.explanation}</p>
         <div className="mt-2 text-xs text-ink-400">
           Ask your tenant admin to grant:{" "}
           {response.needed.map((ref, i) => (

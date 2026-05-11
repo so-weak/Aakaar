@@ -37,27 +37,7 @@ import { useAuth } from "@/auth/AuthContext";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { PageHeader } from "@/components/PageHeader";
 import { formatISTDateTime } from "@/lib/datetime";
-
-// ---------- color palette ------------------------------------------------
-//
-// Match the rest of the app: yellow accent, signal cyan/pink, plus the
-// emerald/rose/amber statuses we use elsewhere. Defined here as plain
-// hex strings so recharts can use them — Tailwind classes are not
-// available inside <svg>.
-
-const COLORS = {
-  succeeded: "#34d399", // emerald-400
-  failed: "#fb7185", // rose-400
-  paused: "#fbbf24", // amber-400
-  running: "#22d3ee", // cyan-400 (signal-cyan)
-  queued: "#a3a09a", // ink-400-ish
-  cancelled: "#6b7280", // ink-500-ish
-  accent: "#d9fb1d", // accent-300
-  pink: "#ff3b93", // signal-pink
-  axis: "#3a3835", // ink-700
-  axisText: "rgba(244,237,215,0.55)",
-  grid: "rgba(244,237,215,0.06)",
-};
+import { useChartPalette } from "@/theme/ThemeProvider";
 
 export function DashboardPage() {
   const { claims } = useAuth();
@@ -128,6 +108,7 @@ function KpiStrip({
   data: DashboardStats;
   canSeeLive: boolean;
 }) {
+  const COLORS = useChartPalette();
   const totalRate = (b: VolumeBucket) => {
     const term = b.succeeded + b.failed;
     return term > 0 ? b.succeeded / term : null;
@@ -243,7 +224,7 @@ function ActiveKpi({
         <Hourglass size={11} /> Active right now
       </div>
       <div className="mt-1 flex items-baseline gap-2">
-        <div className="text-3xl font-black tabular-nums text-signal-cyan drop-shadow-[0_0_18px_rgb(22_217_255/0.55)]">
+        <div className="brand-glow-cyan text-3xl font-black tabular-nums text-signal-cyan">
           {count}
         </div>
       </div>
@@ -264,6 +245,7 @@ function ActiveKpi({
 // ---------- 30-day trend chart ------------------------------------------
 
 function TrendChart({ data }: { data: DailyVolume[] }) {
+  const COLORS = useChartPalette();
   const formatted = useMemo(
     () =>
       data.map((d) => ({
@@ -387,10 +369,11 @@ function TrendTooltip({
   active?: boolean;
   payload?: Array<{ payload: TrendPoint }>;
 }) {
+  const COLORS = useChartPalette();
   if (!active || !payload?.length) return null;
   const p = payload[0].payload;
   return (
-    <div className="rounded-md border border-ink-700 bg-ink-950/95 px-3 py-2 text-xs shadow-lg">
+    <div className="rounded-control border border-ink-700 bg-ink-950/95 px-3 py-2 text-xs shadow-lg">
       <div className="mb-1 font-mono text-[11px] text-ink-300">{p.label}</div>
       <Stat color={COLORS.succeeded} label="succeeded" value={p.succeeded} />
       <Stat color={COLORS.failed} label="failed" value={p.failed} />
@@ -425,6 +408,7 @@ function Stat({
 // ---------- 24h status donut --------------------------------------------
 
 function StatusDonut({ bucket }: { bucket: VolumeBucket }) {
+  const COLORS = useChartPalette();
   const segments = [
     { name: "succeeded", value: bucket.succeeded, color: COLORS.succeeded },
     { name: "failed", value: bucket.failed, color: COLORS.failed },
@@ -459,7 +443,7 @@ function StatusDonut({ bucket }: { bucket: VolumeBucket }) {
                   outerRadius={88}
                   paddingAngle={2}
                   dataKey="value"
-                  stroke="#0a0908"
+                  stroke="transparent"
                   strokeWidth={2}
                   isAnimationActive={false}
                 >
@@ -518,7 +502,7 @@ function DonutTooltip({
   const p = payload[0];
   const pct = total > 0 ? (p.value / total) * 100 : 0;
   return (
-    <div className="rounded-md border border-ink-700 bg-ink-950/95 px-3 py-2 text-xs shadow-lg">
+    <div className="rounded-control border border-ink-700 bg-ink-950/95 px-3 py-2 text-xs shadow-lg">
       <div className="flex items-center gap-1.5 font-mono text-[11px] text-ink-200">
         <span
           className="h-2 w-2 rounded-full"
@@ -536,6 +520,7 @@ function DonutTooltip({
 // ---------- capability usage chart --------------------------------------
 
 function CapabilityChart({ data }: { data: CapabilityUsage[] }) {
+  const COLORS = useChartPalette();
   const rows = useMemo(
     () =>
       data.slice(0, 8).map((c) => ({
@@ -617,10 +602,11 @@ function CapabilityTooltip({
   active?: boolean;
   payload?: Array<{ payload: CapPoint }>;
 }) {
+  const COLORS = useChartPalette();
   if (!active || !payload?.length) return null;
   const p = payload[0].payload;
   return (
-    <div className="rounded-md border border-ink-700 bg-ink-950/95 px-3 py-2 text-xs shadow-lg">
+    <div className="rounded-control border border-ink-700 bg-ink-950/95 px-3 py-2 text-xs shadow-lg">
       <div className="mb-1 font-mono text-[11px] text-ink-200">
         {p.capability_ref}
       </div>
@@ -684,6 +670,7 @@ function RecentFailuresPanel({ rows }: { rows: FailureSummary[] }) {
 // ---------- per-tenant chart (super only) -------------------------------
 
 function PerTenantChart({ rows }: { rows: TenantVolume[] }) {
+  const COLORS = useChartPalette();
   if (rows.length === 0) {
     return (
       <div className="card p-6 text-center text-sm text-ink-500">
@@ -753,10 +740,11 @@ function TenantTooltip({
   active?: boolean;
   payload?: Array<{ payload: TenantVolume }>;
 }) {
+  const COLORS = useChartPalette();
   if (!active || !payload?.length) return null;
   const p = payload[0].payload;
   return (
-    <div className="rounded-md border border-ink-700 bg-ink-950/95 px-3 py-2 text-xs shadow-lg">
+    <div className="rounded-control border border-ink-700 bg-ink-950/95 px-3 py-2 text-xs shadow-lg">
       <div className="mb-1 font-mono text-[11px] text-ink-100">{p.tenant_name}</div>
       <Stat color={COLORS.succeeded} label="succeeded" value={p.succeeded} />
       <Stat color={COLORS.failed} label="failed" value={p.failed} />

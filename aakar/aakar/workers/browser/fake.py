@@ -64,8 +64,14 @@ class FakeBrowserSession:
     async def click(self, selector: str) -> None:
         self.calls.append(("click", {"selector": selector}))
 
+    async def click_by_text(self, text: str) -> None:
+        self.calls.append(("click_by_text", {"text": text}))
+
     async def select(self, selector: str, value: str) -> None:
         self.calls.append(("select", {"selector": selector, "value": value}))
+
+    async def set_field(self, label: str, value: str) -> None:
+        self.calls.append(("set_field", {"label": label, "value": value}))
 
     async def upload(self, selector: str, file_path: str) -> None:
         self.calls.append(("upload", {"selector": selector, "file_path": file_path}))

@@ -38,6 +38,7 @@ the user for credentials in chat.
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from typing import Any
 
@@ -52,6 +53,7 @@ from aakar.interpreter.credentials import fetch_credentials
 from aakar.shared.registry import CapabilityDefinition, SecretSpec
 
 
+logger = logging.getLogger(__name__)
 CAP_REF = "cap.web_login"
 
 _DEFAULT_TIMEOUT_MS = 15000
@@ -63,7 +65,15 @@ class _Inputs(BaseModel):
     account_alias: str = Field(
         description="Which credential set to use, e.g. 'primary'. The grant must exist."
     )
-    login_url: str = Field(description="URL of the login page.")
+    login_url: str | None = Field(
+        default=None,
+        description=(
+            "URL of the login page. Usually supplied by the grant's "
+            "`input_defaults` — leave this null and the executor injects "
+            "the per-tenant URL at run time. Set explicitly only to "
+            "override the grant's URL."
+        ),
+    )
     username_selector: str | None = Field(
         default=None,
         description=(
@@ -153,9 +163,14 @@ async def handler(ctx: ActivityContext, inputs: dict[str, Any]) -> dict[str, Any
     if ctx.browser_pool is None:
         raise RuntimeError("cap.web_login requires a browser_pool")
 
-    creds = fetch_credentials(
-        ctx, capability_ref=CAP_REF, account_alias=inputs["account_alias"]
+    alias = inputs["account_alias"]
+    logger.info(
+        "cap.web_login start run_id=%s alias=%s url=%s",
+        ctx.run_id,
+        alias,
+        inputs.get("login_url"),
     )
+    creds = fetch_credentials(ctx, capability_ref=CAP_REF, account_alias=alias)
 
     timeout = int(inputs.get("timeout_ms", _DEFAULT_TIMEOUT_MS))
     success_selector = inputs.get("success_selector")
@@ -165,10 +180,18 @@ async def handler(ctx: ActivityContext, inputs: dict[str, Any]) -> dict[str, Any
     explicit_captcha_image = inputs.get("captcha_image_selector")
     explicit_captcha_input = inputs.get("captcha_input_selector")
 
+    login_url = inputs.get("login_url")
+    if not login_url:
+        logger.warning("cap.web_login: missing login_url for alias=%s", alias)
+        raise RuntimeError(
+            f"cap.web_login: no login_url for alias {inputs['account_alias']!r}; "
+            "set login_url on the grant's input_defaults (Vault → edit site → URL)"
+        )
+
     cm = ctx.browser_pool.checkout()
     session = await cm.__aenter__()
     try:
-        await session.navigate(inputs["login_url"])
+        await session.navigate(login_url)
 
         # Selector resolution: prefer caller-supplied selectors. If any of
         # the three core ones is missing, run discovery once — it's cheap
@@ -177,18 +200,30 @@ async def handler(ctx: ActivityContext, inputs: dict[str, Any]) -> dict[str, Any
         need_discovery = not (explicit_username and explicit_password and explicit_submit)
         descriptor: LoginFormDescriptor | None = None
         if need_discovery:
+            logger.debug("cap.web_login: discovering login form on %s", login_url)
             descriptor = await discover_login_form(session)
             if not descriptor.password_selector and not explicit_password:
                 # Without a password input there's no login form. Surface a
                 # specific failure rather than blindly retrying selectors.
+                logger.warning(
+                    "cap.web_login: no login form found url=%s reasons=%s",
+                    login_url,
+                    descriptor.ambiguity_reasons,
+                )
                 raise RuntimeError(
-                    f"cap.web_login could not find a login form on {inputs['login_url']!r}; "
+                    f"cap.web_login could not find a login form on {login_url!r}; "
                     f"discovery reasons: {descriptor.ambiguity_reasons}"
                 )
             if descriptor.ambiguity_reasons and ctx.llm is not None:
+                logger.info(
+                    "cap.web_login: ambiguity, attempting LLM disambiguation reasons=%s",
+                    descriptor.ambiguity_reasons,
+                )
                 resolved = await _llm_disambiguate(ctx, descriptor)
                 if resolved:
                     descriptor = resolved
+            if descriptor.captcha_kind:
+                logger.info("cap.web_login: captcha detected kind=%s", descriptor.captcha_kind)
 
         username_selector = explicit_username or (descriptor and descriptor.username_selector)
         password_selector = explicit_password or (descriptor and descriptor.password_selector)
@@ -250,6 +285,9 @@ async def handler(ctx: ActivityContext, inputs: dict[str, Any]) -> dict[str, Any
 
     holder = _SessionHolder(cm=cm, session=session)
     ctx.session_state[_stash_key(session.id)] = holder
+    logger.info(
+        "cap.web_login ok run_id=%s alias=%s session=%s", ctx.run_id, alias, session.id
+    )
     return {"session": session.id}
 
 

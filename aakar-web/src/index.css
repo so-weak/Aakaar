@@ -1,6 +1,20 @@
+/*
+ * Themes — defines the CSS variables consumed by everything below this
+ * import. Loaded first so :root tokens are available before Tailwind's
+ * base layer references them. (CSS spec: @import must precede other
+ * statements except @charset / empty @layer.)
+ */
+@import "./styles/themes.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* ==========================================================================
+ * Base — html/body shell, selection, scrollbar, table reset.
+ * Every value here resolves through a CSS variable so themes can re-skin
+ * the entire frame without touching component code.
+ * ======================================================================== */
 
 @layer base {
   html,
@@ -11,18 +25,32 @@
 
   body {
     margin: 0;
-    background:
-      radial-gradient(circle at 12% 10%, rgb(255 59 147 / 0.18), transparent 28rem),
-      radial-gradient(circle at 92% 8%, rgb(22 217 255 / 0.16), transparent 30rem),
-      linear-gradient(135deg, #0b0b0a 0%, #141412 48%, #090908 100%);
-    color: rgb(251 248 238);
+    background: var(--body-bg);
+    color: rgb(var(--ink-50));
+    font-family: var(--font-sans);
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
     text-rendering: geometricPrecision;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Body texture layer — only some themes set --body-texture (scanlines,
+   * paper grain). Pinned full-viewport with `pointer-events: none` so it
+   * never blocks interaction. */
+  body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background: var(--body-texture);
+    z-index: 0;
+    opacity: 0.7;
+    mix-blend-mode: overlay;
   }
 
   ::selection {
-    background-color: rgb(217 251 29 / 0.34);
-    color: rgb(9 9 8);
+    background-color: var(--selection-bg);
+    color: var(--selection-fg);
   }
 
   ::-webkit-scrollbar {
@@ -30,12 +58,12 @@
     height: 10px;
   }
   ::-webkit-scrollbar-thumb {
-    background-color: rgb(244 237 215 / 0.22);
+    background: var(--scrollbar-thumb);
     border: 2px solid transparent;
     background-clip: padding-box;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background-color: rgb(217 251 29 / 0.55);
+    background: var(--scrollbar-thumb-hover);
     background-clip: padding-box;
   }
 
@@ -45,12 +73,12 @@
   }
 
   thead {
-    color: rgb(244 237 215 / 0.42);
+    color: var(--table-head-fg);
   }
 
   tbody tr {
-    background: rgb(22 22 20 / 0.68);
-    box-shadow: inset 0 0 0 1px rgb(244 237 215 / 0.08);
+    background: var(--table-row-bg);
+    box-shadow: var(--table-row-ring);
     transition:
       background-color 160ms ease,
       box-shadow 160ms ease,
@@ -58,24 +86,29 @@
   }
 
   tbody tr:hover {
-    background: rgb(36 36 34 / 0.88);
-    box-shadow:
-      inset 0 0 0 1px rgb(217 251 29 / 0.22),
-      0 12px 28px rgb(0 0 0 / 0.18);
+    background: var(--table-row-bg-hover);
+    box-shadow: var(--table-row-ring-hover);
   }
 
   tbody td:first-child {
-    border-bottom-left-radius: 8px;
-    border-top-left-radius: 8px;
+    border-bottom-left-radius: var(--radius-control);
+    border-top-left-radius: var(--radius-control);
   }
 
   tbody td:last-child {
-    border-bottom-right-radius: 8px;
-    border-top-right-radius: 8px;
+    border-bottom-right-radius: var(--radius-control);
+    border-top-right-radius: var(--radius-control);
   }
 }
 
+/* ==========================================================================
+ * Components — semantic classes used across pages. All values come from
+ * variables so themes only need to override the variables in themes.css.
+ * ======================================================================== */
+
 @layer components {
+  /* Background-noise layer used on the app shell. Falls back to nothing
+   * when the active theme zeros out --noise-opacity. */
   .noise-shell {
     position: relative;
     isolation: isolate;
@@ -83,111 +116,316 @@
 
   .noise-shell::before {
     background-image:
-      linear-gradient(rgb(244 237 215 / 0.035) 1px, transparent 1px),
-      linear-gradient(90deg, rgb(244 237 215 / 0.026) 1px, transparent 1px);
+      linear-gradient(var(--noise-grid-1) 1px, transparent 1px),
+      linear-gradient(90deg, var(--noise-grid-2) 1px, transparent 1px);
     background-size: 22px 22px;
     content: "";
     inset: 0;
-    mask-image: linear-gradient(to bottom, black, rgb(0 0 0 / 0.66));
+    mask-image: var(--noise-grid-mask, linear-gradient(to bottom, black, black));
     pointer-events: none;
     position: absolute;
     z-index: -1;
   }
 
   .noise-shell::after {
-    background:
-      repeating-linear-gradient(
-        0deg,
-        rgb(255 255 255 / 0.025) 0,
-        rgb(255 255 255 / 0.025) 1px,
-        transparent 1px,
-        transparent 4px
-      );
+    background: var(--noise-stripes);
     content: "";
     inset: 0;
-    mix-blend-mode: overlay;
-    opacity: 0.7;
+    mix-blend-mode: var(--noise-blend);
+    opacity: var(--noise-opacity);
     pointer-events: none;
     position: absolute;
     z-index: -1;
   }
 
-  .btn {
-    @apply inline-flex min-h-10 items-center justify-center gap-2 rounded-md
-           px-3.5 py-2 text-sm font-semibold uppercase tracking-wide transition
-           disabled:cursor-not-allowed disabled:opacity-50;
-  }
-  .btn-primary {
-    @apply btn border border-accent-300 bg-accent-300 text-ink-950 shadow-[4px_4px_0_rgb(255_59_147/0.9)]
-           hover:-translate-y-0.5 hover:bg-signal-paper hover:shadow-[6px_6px_0_rgb(255_59_147/0.95)]
-           focus:outline-none focus:ring-2 focus:ring-accent-300/45;
-  }
-  .btn-ghost {
-    @apply btn border border-transparent text-ink-200 hover:border-ink-700 hover:bg-ink-800/70 hover:text-ink-50;
-  }
+  /* Buttons --------------------------------------------------------------
+   * Shared base — applied to every variant so a bare `.btn-primary` still
+   * gets min-height, padding, font sizing, and transition. (Originally the
+   * variants used Tailwind @apply to chain `.btn`; the multi-selector form
+   * keeps the same shape without depending on @apply across CSS rules.) */
+
+  .btn,
+  .btn-primary,
+  .btn-ghost,
   .btn-danger {
-    @apply btn border border-rose-300 bg-rose-500/90 text-white shadow-[4px_4px_0_rgb(9_9_8)] hover:bg-rose-400;
+    display: inline-flex;
+    min-height: 2.5rem;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    border-radius: var(--btn-radius);
+    padding: 0.5rem 0.875rem;
+    font-family: var(--btn-font-family, var(--font-sans));
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+    font-weight: var(--btn-font-weight);
+    text-transform: var(--btn-text-transform);
+    letter-spacing: var(--btn-letter-spacing);
+    transition:
+      background-color 160ms ease,
+      box-shadow 200ms ease,
+      transform 160ms ease,
+      color 160ms ease,
+      border-color 160ms ease;
   }
+
+  .btn:disabled,
+  .btn-primary:disabled,
+  .btn-ghost:disabled,
+  .btn-danger:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+
+  .btn-primary {
+    background: var(--btn-primary-bg);
+    color: var(--btn-primary-fg);
+    border: var(--btn-primary-border);
+    box-shadow: var(--btn-primary-shadow);
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    background: var(--btn-primary-bg-hover);
+    box-shadow: var(--btn-primary-shadow-hover);
+    transform: translateY(var(--btn-primary-translate-hover));
+  }
+
+  .btn-primary:focus {
+    outline: none;
+    box-shadow:
+      var(--btn-primary-shadow),
+      0 0 0 3px rgb(var(--accent-300) / 0.45);
+  }
+
+  .btn-ghost {
+    background: transparent;
+    color: var(--btn-ghost-fg);
+    border: 1px solid transparent;
+  }
+
+  .btn-ghost:hover:not(:disabled) {
+    background: var(--btn-ghost-bg-hover);
+    color: var(--btn-ghost-fg-hover);
+    border: var(--btn-ghost-border-hover);
+  }
+
+  .btn-danger {
+    background: var(--btn-danger-bg);
+    color: var(--btn-danger-fg);
+    border: var(--btn-danger-border);
+    box-shadow: var(--btn-danger-shadow);
+  }
+
+  .btn-danger:hover:not(:disabled) {
+    background: var(--btn-danger-bg-hover);
+  }
+
+  /* Inputs --------------------------------------------------------------- */
 
   .input {
-    @apply block w-full rounded-md border border-ink-700 bg-ink-950/70 px-3 py-2 text-sm text-ink-50
-           shadow-inner placeholder:text-ink-500
-           focus:border-accent-300 focus:outline-none focus:ring-2 focus:ring-accent-300/25;
+    display: block;
+    width: 100%;
+    border-radius: var(--radius-control);
+    background: var(--input-bg);
+    border: var(--input-border);
+    color: var(--input-fg);
+    padding: 0.5rem 0.75rem;
+    font-size: 0.875rem;
+    font-family: var(--font-sans);
+    box-shadow: var(--input-shadow);
+    transition:
+      border-color 160ms ease,
+      box-shadow 160ms ease;
   }
+
+  .input::placeholder {
+    color: var(--input-placeholder);
+  }
+
+  .input:focus {
+    outline: none;
+    border-color: var(--input-focus-border);
+    box-shadow: var(--input-focus-ring);
+  }
+
+  /* Cards ---------------------------------------------------------------- */
 
   .card {
-    @apply rounded-lg border border-ink-700/80 bg-ink-900/70 shadow-[0_18px_60px_rgb(0_0_0/0.22)] backdrop-blur;
+    border-radius: var(--radius-card);
+    background: var(--surface-card-bg);
+    border: var(--surface-card-border);
+    box-shadow: var(--surface-card-shadow);
+    backdrop-filter: var(--surface-card-backdrop);
+    -webkit-backdrop-filter: var(--surface-card-backdrop);
   }
 
+  /* Stamp (e.g. "console" tag in PageHeader) ---------------------------- */
+
+  .stamp {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 0.25rem;
+    background: var(--stamp-bg);
+    color: var(--stamp-fg);
+    border: var(--stamp-border);
+    padding: 0.25rem 0.5rem;
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+  }
+
+  /* Generic badge — keeps Tailwind ring utilities for tone-specific
+   * variants (e.g., signal-pink, emerald) so pages can compose. */
   .badge {
     @apply inline-flex items-center gap-1 rounded px-2 py-0.5
            font-mono text-[11px] font-semibold uppercase tracking-wide ring-1 ring-inset;
   }
 
-  .stamp {
-    @apply inline-flex items-center rounded border border-accent-300/50 bg-accent-300/10 px-2 py-1
-           font-mono text-[11px] font-semibold uppercase tracking-[0.18em] text-accent-200;
-  }
-
   .panel-title {
-    @apply font-mono text-[11px] font-semibold uppercase tracking-[0.2em] text-ink-400;
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    font-weight: 600;
+    color: var(--panel-title-fg);
+    text-transform: var(--panel-title-transform);
+    letter-spacing: var(--panel-title-tracking);
   }
 
-  .morph-logo {
-    height: 52%;
-    overflow: visible;
-    width: 52%;
+  /* Brand shadow utility classes — used in place of Tailwind arbitrary
+   * shadow values that were hard-coded to neon pink/cyan. */
+  .brand-shadow-pink-sm {
+    box-shadow: var(--shadow-brand-pink-sm);
+  }
+  .brand-shadow-pink-md {
+    box-shadow: var(--shadow-brand-pink-md);
+  }
+  .brand-shadow-pink-lg {
+    box-shadow: var(--shadow-brand-pink-lg);
+  }
+  .brand-shadow-cyan-sm {
+    box-shadow: var(--shadow-brand-cyan-sm);
+  }
+  .brand-shadow-cyan-md {
+    box-shadow: var(--shadow-brand-cyan-md);
+  }
+  .brand-shadow-trio {
+    box-shadow: var(--shadow-brand-trio);
+  }
+  .brand-glow-cyan {
+    filter: drop-shadow(var(--shadow-glow-cyan));
   }
 
-  .morph-logo__shape {
-    animation: aakar-line-cycle 9s ease-in-out infinite;
-    fill: none;
-    opacity: 0;
-    stroke: rgb(9 9 8);
-    stroke-dasharray: 240;
-    stroke-dashoffset: 240;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-    stroke-width: 11;
-    transform-box: fill-box;
-    transform-origin: center;
+  /* Logo tile — the morphing-shape badge that sits in the sidebar and
+   * login screen. Theming this in one place lets every render pick up the
+   * skeuo-glass / synthwave-glow / minimal-mono treatment automatically. */
+  .logo-tile {
+    background: var(--logo-tile-bg);
+    color: var(--logo-tile-fg);
+    border: var(--logo-tile-border);
+    box-shadow: var(--logo-tile-shadow);
   }
 
-  .morph-logo__shape--square {
-    animation-delay: 1.8s;
+  /* App shell: the page container with elevated sidebar styling. */
+  .app-shell {
+    background: rgb(var(--ink-950));
+    color: rgb(var(--ink-50));
   }
 
-  .morph-logo__shape--circle {
-    animation-delay: 3.6s;
+  .app-sidebar {
+    background: var(--surface-elevated-bg);
+    border-right: var(--surface-elevated-border-x);
+    box-shadow: var(--surface-elevated-shadow);
+    backdrop-filter: var(--surface-elevated-backdrop);
+    -webkit-backdrop-filter: var(--surface-elevated-backdrop);
   }
 
-  .morph-logo__shape--sine {
-    animation-delay: 5.4s;
+  .app-header {
+    background: var(--header-bg);
+    border-bottom: var(--header-border-b);
+    backdrop-filter: var(--header-backdrop);
+    -webkit-backdrop-filter: var(--header-backdrop);
   }
 
-  .morph-logo__shape--arrow {
-    animation-delay: 7.2s;
+  .headline {
+    text-transform: var(--headline-transform);
+    letter-spacing: var(--headline-tracking);
+    font-weight: var(--headline-weight);
+    font-family: var(--font-display);
   }
+
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    border-radius: var(--radius-control);
+    border: 1px solid transparent;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--nav-idle-fg);
+    transition:
+      background 160ms ease,
+      color 160ms ease,
+      border-color 160ms ease,
+      box-shadow 200ms ease;
+  }
+
+  .nav-item:hover {
+    background: var(--nav-hover-bg);
+    color: var(--nav-hover-fg);
+    border: var(--nav-hover-border);
+  }
+
+  .nav-item.is-active,
+  .nav-item.active {
+    background: var(--nav-active-bg);
+    color: var(--nav-active-fg);
+    border: var(--nav-active-border);
+    box-shadow: var(--nav-active-shadow);
+  }
+
+  .nav-item.is-active .nav-icon,
+  .nav-item.active .nav-icon {
+    color: var(--nav-icon-active-fg);
+  }
+}
+
+/* ==========================================================================
+ * Logo morph animation — uses --logo-stroke so the SVG retraces in the
+ * theme's preferred ink colour.
+ * ======================================================================== */
+
+.morph-logo {
+  height: 52%;
+  overflow: visible;
+  width: 52%;
+}
+
+.morph-logo__shape {
+  animation: aakar-line-cycle 9s ease-in-out infinite;
+  fill: none;
+  opacity: 0;
+  stroke: var(--logo-stroke);
+  stroke-dasharray: 240;
+  stroke-dashoffset: 240;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 11;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.morph-logo__shape--square {
+  animation-delay: 1.8s;
+}
+.morph-logo__shape--circle {
+  animation-delay: 3.6s;
+}
+.morph-logo__shape--sine {
+  animation-delay: 5.4s;
+}
+.morph-logo__shape--arrow {
+  animation-delay: 7.2s;
 }
 
 @keyframes aakar-line-cycle {
@@ -218,18 +456,22 @@
   }
 }
 
+/* ==========================================================================
+ * React Flow — graph viewer integration. Themed via variables.
+ * ======================================================================== */
+
 .react-flow__node {
   font-family: inherit;
 }
 .react-flow__attribution {
   background: transparent !important;
-  color: rgb(244 237 215 / 0.42);
+  color: var(--panel-title-fg) !important;
 }
 .react-flow__controls {
-  border: 1px solid rgb(244 237 215 / 0.12) !important;
-  box-shadow: 6px 6px 0 rgb(255 59 147 / 0.18) !important;
+  border: 1px solid rgb(var(--ink-700) / 0.5) !important;
+  box-shadow: var(--shadow-brand-pink-sm) !important;
 }
 .react-flow__minimap {
-  border: 1px solid rgb(244 237 215 / 0.12);
-  border-radius: 8px;
+  border: 1px solid rgb(var(--ink-700) / 0.5);
+  border-radius: var(--radius-card);
 }

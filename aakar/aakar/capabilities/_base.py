@@ -70,5 +70,7 @@ def load_into(registry: Registry, activities: ActivityRegistry, *, package: str 
             continue
         registry.add(definition)
         activities.register(definition.ref, handler)
+        logger.debug("capability registered ref=%s module=%s", definition.ref, name)
         n += 1
+    logger.info("capability loader: %d capabilities loaded from %s", n, parent_pkg)
     return n

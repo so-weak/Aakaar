@@ -11,12 +11,14 @@ semantics (timers, signals).
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
 from aakar.interpreter.activities.types import ActivityContext
 
 
+logger = logging.getLogger(__name__)
 ActivityHandler = Callable[[ActivityContext, dict[str, Any]], Awaitable[dict[str, Any]]]
 
 
@@ -30,6 +32,7 @@ class ActivityRegistry:
         if ref in self._handlers:
             raise ValueError(f"activity handler already registered for {ref!r}")
         self._handlers[ref] = handler
+        logger.debug("activity registered ref=%s", ref)
 
     def get(self, ref: str) -> ActivityHandler | None:
         return self._handlers.get(ref)
@@ -51,10 +54,13 @@ def build_default_activities() -> ActivityRegistry:
     from aakar.interpreter.activities import file as _file
     from aakar.interpreter.activities import http as _http
     from aakar.interpreter.activities import storage as _storage
+    from aakar.interpreter.activities import time_ as _time
 
     reg = ActivityRegistry()
     _http.register_into(reg)
     _file.register_into(reg)
     _storage.register_into(reg)
     _browser.register_into(reg)
+    _time.register_into(reg)
+    logger.info("default activities registered (count=%d)", len(reg.refs()))
     return reg

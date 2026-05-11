@@ -90,8 +90,22 @@ class LocalExecutor:
     async def execute(self, dag: Dag, ctx: RunContext) -> RunOutcome:
         env: dict[str, dict[str, Any]] = {}
         alias_to_id = self._alias_index(dag)
+        layers = list(topological_layers(dag))
+        logger.info(
+            "execute run_id=%s nodes=%d layers=%d",
+            ctx.run_id,
+            len(dag.nodes),
+            len(layers),
+        )
         try:
-            for layer in topological_layers(dag):
+            for layer_idx, layer in enumerate(layers):
+                logger.debug(
+                    "run_id=%s layer %d/%d nodes=%s",
+                    ctx.run_id,
+                    layer_idx + 1,
+                    len(layers),
+                    [n.id for n in layer],
+                )
                 results = await asyncio.gather(
                     *[
                         self._run_node(node, env=env, alias_to_id=alias_to_id, ctx=ctx)
@@ -101,8 +115,10 @@ class LocalExecutor:
                 )
                 for node, outputs in zip(layer, results):
                     env[node.id] = outputs
+            logger.info("execute run_id=%s succeeded", ctx.run_id)
             return RunOutcome(run_id=ctx.run_id, status="succeeded", outputs=env)
         except Exception as e:
+            logger.exception("execute run_id=%s failed: %s", ctx.run_id, e)
             await self.signals.cancel_all_for(ctx.run_id)
             return RunOutcome(
                 run_id=ctx.run_id,
@@ -138,8 +154,26 @@ class LocalExecutor:
             ref=node.ref,
         ):
             inputs = resolve_inputs(node.inputs, env=env, alias_to_id=alias_to_id)
+            inputs = self._merge_grant_defaults(node, inputs, ctx)
+            logger.debug(
+                "node start run_id=%s node_id=%s ref=%s kind=%s",
+                ctx.run_id,
+                node.id,
+                node.ref,
+                node.kind,
+            )
             try:
                 outputs = await self._dispatch(node, inputs, ctx)
+            except Exception as e:
+                logger.warning(
+                    "node failed run_id=%s node_id=%s ref=%s err=%s: %s",
+                    ctx.run_id,
+                    node.id,
+                    node.ref,
+                    type(e).__name__,
+                    e,
+                )
+                raise
             finally:
                 # Best-effort live screenshot — runs whether the node
                 # succeeded or failed so the UI can show the failure state.
@@ -153,7 +187,46 @@ class LocalExecutor:
                 kind=RunEventKind.NODE_COMPLETED,
                 payload={"ref": node.ref, "outputs": _redact_event_outputs(node.ref, outputs)},
             )
+            logger.debug(
+                "node done  run_id=%s node_id=%s ref=%s output_keys=%s",
+                ctx.run_id,
+                node.id,
+                node.ref,
+                list(outputs.keys()) if isinstance(outputs, dict) else type(outputs).__name__,
+            )
             return outputs
+
+    @staticmethod
+    def _merge_grant_defaults(
+        node: Node, inputs: dict[str, Any], ctx: RunContext
+    ) -> dict[str, Any]:
+        """If a capability node references a granted alias, fill missing
+        inputs from the grant's `input_defaults`.
+
+        Per-tenant config like `login_url` belongs on the grant, not in
+        the DAG — the planner doesn't know specific URLs and would
+        otherwise hallucinate them. The DAG carries the alias; the
+        executor injects the URL (and any other site-specific defaults)
+        from the grant at run time. Explicit DAG inputs always win.
+        """
+        if node.kind is not NodeKind.CAPABILITY:
+            return inputs
+        alias = inputs.get("account_alias")
+        if not isinstance(alias, str) or not alias:
+            return inputs
+        grants = ctx.activity_ctx.granted_capabilities or {}
+        per_alias = grants.get(node.ref, {})
+        defaults = (per_alias.get(alias) or {}).get("input_defaults") or {}
+        if not defaults:
+            return inputs
+        # Don't overwrite anything the planner explicitly set; only fill
+        # holes. Display-only fields like `display_name` aren't part of
+        # any capability's input_schema, so they're harmless to copy and
+        # get filtered out at the input-validation step anyway.
+        merged: dict[str, Any] = dict(inputs)
+        for k, v in defaults.items():
+            merged.setdefault(k, v)
+        return merged
 
     async def _maybe_emit_live_screen(self, node: Node, ctx: RunContext) -> None:
         """Capture and persist a screenshot of the most recently active
@@ -182,11 +255,13 @@ class LocalExecutor:
         try:
             png = await sess.screenshot()
         except Exception:
+            logger.debug("live_screen: screenshot failed for run_id=%s node_id=%s", ctx.run_id, node.id, exc_info=True)
             return
         try:
             key = f"runs/{ctx.run_id}/livescreen/{uuid.uuid4().hex}.png"
             obj = store.put(str(ctx.tenant_id), key, png)
         except Exception:
+            logger.debug("live_screen: object_store.put failed", exc_info=True)
             return
         self.recorder.record(
             run_id=ctx.run_id,
@@ -220,12 +295,20 @@ class LocalExecutor:
     ) -> dict[str, Any]:
         if node.ref == "control.wait":
             seconds = float(inputs.get("seconds", 0))
+            logger.debug("control.wait run_id=%s node_id=%s seconds=%s", ctx.run_id, node.id, seconds)
             await asyncio.sleep(seconds)
             return {}
         if node.ref == "human.prompt":
             message = inputs["message"]
             expects = inputs.get("expects", "text")
             timeout_seconds = int(inputs.get("timeout_seconds", 300))
+            logger.info(
+                "human.prompt opened run_id=%s node_id=%s expects=%s timeout=%ds",
+                ctx.run_id,
+                node.id,
+                expects,
+                timeout_seconds,
+            )
             self.recorder.record(
                 run_id=ctx.run_id,
                 tenant_id=ctx.tenant_id,
@@ -239,9 +322,21 @@ class LocalExecutor:
             try:
                 response = await asyncio.wait_for(prompt.future, timeout=timeout_seconds)
             except asyncio.TimeoutError as e:
+                logger.warning(
+                    "human.prompt TIMEOUT run_id=%s node_id=%s after %ds",
+                    ctx.run_id,
+                    node.id,
+                    timeout_seconds,
+                )
                 raise RuntimeError(
                     f"human.prompt timed out after {timeout_seconds}s on node {node.id}"
                 ) from e
+            logger.info(
+                "human.prompt resolved run_id=%s node_id=%s response_len=%d",
+                ctx.run_id,
+                node.id,
+                len(response),
+            )
             self.recorder.record(
                 run_id=ctx.run_id,
                 tenant_id=ctx.tenant_id,

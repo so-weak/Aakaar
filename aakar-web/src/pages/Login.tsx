@@ -31,7 +31,7 @@ export function LoginPage() {
   };
 
   return (
-    <div className="noise-shell grid h-full place-items-center overflow-hidden bg-ink-950 px-4">
+    <div className="noise-shell app-shell grid h-full place-items-center overflow-hidden px-4">
       <div className="pointer-events-none absolute left-10 top-8 hidden rotate-[-8deg] border border-signal-pink px-4 py-2 font-mono text-xs uppercase tracking-[0.3em] text-signal-pink md:block">
         plan loud
       </div>
@@ -43,16 +43,14 @@ export function LoginPage() {
         <div className="mb-8">
           <div className="mb-5 flex items-center justify-center">
             <span
-              className="grid h-16 w-16 place-items-center rounded-md border border-accent-300 bg-accent-300 text-ink-950 shadow-[8px_8px_0_rgb(255_59_147)]"
+              className="logo-tile brand-shadow-pink-lg grid h-16 w-16 place-items-center rounded-control"
               aria-hidden="true"
             >
               <MorphLogo />
             </span>
           </div>
           <div className="text-center">
-            <div className="text-4xl font-black uppercase tracking-[0.22em] text-ink-50">
-              Aakar
-            </div>
+            <div className="headline text-4xl text-ink-50">Aakar</div>
             <div className="mt-2 font-mono text-[11px] uppercase tracking-[0.28em] text-accent-200">
               workflow platform
             </div>
@@ -62,9 +60,7 @@ export function LoginPage() {
         <form onSubmit={onSubmit} className="card space-y-4 p-6">
           <div>
             <span className="stamp">secure desk</span>
-            <h1 className="mt-3 text-xl font-black uppercase tracking-wide text-ink-50">
-              Sign in
-            </h1>
+            <h1 className="headline mt-3 text-xl text-ink-50">Sign in</h1>
           </div>
 
           <label className="block">
@@ -93,7 +89,7 @@ export function LoginPage() {
           </label>
 
           {error ? (
-            <div className="rounded-md border border-rose-300/35 bg-rose-950/50 px-3 py-2 text-sm text-rose-100">
+            <div className="rounded-control border border-rose-300/35 bg-rose-950/50 px-3 py-2 text-sm text-rose-100">
               {error}
             </div>
           ) : null}

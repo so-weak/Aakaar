@@ -16,12 +16,16 @@ the driver refuses to read/write keys that resolve outside the tenant root.
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import shutil
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
+
+
+logger = logging.getLogger(__name__)
 
 
 URI_SCHEME = "aakar"
@@ -133,6 +137,7 @@ class LocalFsObjectStore:
         path = self._resolve(tenant_id, key)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
+        logger.debug("object_store.put tenant=%s key=%s bytes=%d", tenant_id, key, len(data))
         return StoredObject(
             uri=make_uri(tenant_id, key),
             tenant_id=tenant_id,
@@ -168,6 +173,7 @@ class LocalFsObjectStore:
         tenant_id, key = parse_uri(uri)
         path = self._resolve(tenant_id, key)
         if not path.is_file():
+            logger.warning("object_store.get miss uri=%s", uri)
             raise ObjectNotFound(uri)
         return path.read_bytes()
 
@@ -200,6 +206,7 @@ class LocalFsObjectStore:
         if not path.is_file():
             raise ObjectNotFound(uri)
         path.unlink()
+        logger.debug("object_store.delete uri=%s", uri)
 
     def list(self, tenant_id: str, prefix: str = "") -> list[StoredObject]:
         base = self._tenant_root(tenant_id)

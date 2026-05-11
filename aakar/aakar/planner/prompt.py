@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import json
 import typing
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Union
 
 from pydantic.fields import FieldInfo
@@ -46,6 +46,18 @@ class PromptBuilder:
 
     registry: Registry
     granted_capabilities: set[str]
+    granted_aliases: dict[str, list[str]] = field(default_factory=dict)
+    """Map of capability_ref → list of configured account aliases for this
+    tenant. Surfaced in the prompt so the planner picks an existing
+    alias (e.g. 'nbbl') instead of guessing 'primary'. Empty means no
+    aliases are configured — planner should respond with `kind: missing`."""
+    grant_input_defaults: dict[str, dict[str, dict[str, Any]]] = field(
+        default_factory=dict
+    )
+    """Map of capability_ref → alias → input_defaults (e.g. login_url).
+    Surfaced in the prompt so the planner can derive site URLs from the
+    grant's login_url base instead of hallucinating hostnames like
+    'hdfc-admin'. Only safe defaults flow through here — never secrets."""
 
     def build_messages(
         self,
@@ -86,7 +98,9 @@ class PromptBuilder:
             _RESPONSE_ENVELOPE,
             _DAG_SHAPE,
             "# Available capabilities (granted to this tenant)",
-            _capabilities_block(granted_caps),
+            _capabilities_block(
+                granted_caps, self.granted_aliases, self.grant_input_defaults
+            ),
             "# Available action primitives",
             _definitions_block(actions),
             "# Available control nodes",
@@ -122,6 +136,9 @@ _RULES = """\
 - Reference upstream node outputs with `${node_id.field}` strings (or `${alias.field}` if a node sets `outputs_as`). Do not embed runtime data in the DAG.
 - Use `cap.web_login` for any authenticated browser flow. Chain it to `cap.file_download` / `cap.file_upload` / `browser.*` actions via `${login.session}`. If the user mentions a captcha on the login page, set `cap.web_login`'s `captcha_image_selector` and `captcha_input_selector` inputs — the handler captures the captcha image and pauses for the user via the run's HITL channel. Do NOT use `human.prompt` for captchas; the capability handles it inline. If the user mentions an OTP / MFA step *after* login, compose a `human.prompt` (expects: "otp") between the login node and the next action; for filling that OTP into a form, use `browser.fill_secret` only if the value is in the vault, otherwise use `browser.fill` with the prompt's `${response}`.
 - For `cap.file_download`, when the user describes the target by name (e.g. "Biller Transactions May 2026", "first report", "today's settlement"), set the `target_hint` input to that natural-language string instead of asking the user for a CSS selector or URL. The capability walks the post-login page itself, fuzzy-matches the hint, and pauses HITL only if multiple candidates score equally. Use `trigger_selector`/`url` only when the user gave you a literal selector or URL.
+- For "go to X page" / "navigate to the Y screen" instructions where the user did NOT give an explicit URL, use `browser.click_by_text(text="X")` to click the in-page navigation link rather than guessing `browser.navigate(url="...")`. Sites use inconsistent URL paths (`/recon/upload` vs `/recon-upload`) that the planner cannot reliably infer from the page name.
+- For multi-field form filling (selects, radios, date pickers, text inputs), prefer `browser.set_field(label, value)` over `browser.fill` / `browser.select` / `browser.click`. set_field resolves the control by its visible label and dispatches by control type — no CSS selector needed. Use `browser.fill`/`select` only when you already know a verified selector.
+- For `cap.file_upload`, ALWAYS supply either `submit_selector` or `submit_label` so the form is actually submitted after the file is attached — without one, the file is silently left attached. When the user says "and confirm success", set `success_text` to the success message (e.g. "Uploaded") rather than emitting a separate `browser.wait_for` node with a guessed `.success` class.
 - Respond with exactly one `kind`:
   - `dag` — a complete, valid DAG you are confident will execute.
   - `clarify` — one or more specific questions to disambiguate the request. Prefer this when in doubt.
@@ -166,14 +183,25 @@ Example node:
 Then a downstream node references it as `"session": "${session.session}"` — NOT by inlining the output schema."""
 
 
-def _capabilities_block(caps: list[CapabilityDefinition]) -> str:
+def _capabilities_block(
+    caps: list[CapabilityDefinition],
+    aliases: dict[str, list[str]],
+    input_defaults: dict[str, dict[str, dict[str, Any]]],
+) -> str:
     if not caps:
         return (
             "_No capabilities are granted to this tenant._ "
             "If the request needs site-specific automation, respond with `kind: \"missing\"` "
             "naming the capability ref(s) you would need."
         )
-    return "\n\n".join(_describe_capability(c) for c in caps)
+    return "\n\n".join(
+        _describe_capability(
+            c,
+            aliases.get(c.ref, []),
+            input_defaults.get(c.ref, {}),
+        )
+        for c in caps
+    )
 
 
 def _definitions_block(defs: list[ActionDefinition] | list[ControlDefinition]) -> str:
@@ -182,11 +210,32 @@ def _definitions_block(defs: list[ActionDefinition] | list[ControlDefinition]) -
     return "\n\n".join(_describe_definition(d) for d in defs)
 
 
-def _describe_capability(cap: CapabilityDefinition) -> str:
+def _describe_capability(
+    cap: CapabilityDefinition,
+    aliases: list[str],
+    input_defaults: dict[str, dict[str, Any]],
+) -> str:
     block = _describe_definition(cap)
     if cap.secrets:
         secrets_line = ", ".join(_describe_secret(s) for s in cap.secrets)
         block += f"\n  secrets (auto-injected, do NOT ask the user): {secrets_line}"
+    if aliases:
+        # Surface configured aliases (and any non-secret defaults like
+        # login_url) so the planner picks an existing alias and derives
+        # site URLs from the grant rather than hallucinating hostnames.
+        block += "\n  configured aliases for this tenant:"
+        for alias in sorted(aliases):
+            defaults = input_defaults.get(alias) or {}
+            url = defaults.get("login_url")
+            if url:
+                block += f"\n    - `{alias}` (login_url: {url})"
+            else:
+                block += f"\n    - `{alias}`"
+    elif cap.secrets:
+        block += (
+            "\n  configured aliases for this tenant: (none — respond with "
+            "kind=missing if the user's request requires this capability)"
+        )
     return block
 
 

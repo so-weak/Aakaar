@@ -51,7 +51,7 @@ export function WorkflowsPage() {
                   className="card group block p-4 transition hover:-translate-y-0.5 hover:border-accent-300/45 hover:bg-ink-800/65"
                 >
                   <div className="flex items-start gap-3">
-                    <span className="grid h-10 w-10 shrink-0 place-items-center rounded-md border border-ink-700 bg-ink-950 text-accent-200 shadow-[4px_4px_0_rgb(22_217_255/0.18)] transition group-hover:border-accent-300">
+                    <span className="brand-shadow-cyan-md grid h-10 w-10 shrink-0 place-items-center rounded-control border border-ink-700 bg-ink-950 text-accent-200 transition group-hover:border-accent-300">
                       <WorkflowIcon size={16} />
                     </span>
                     <div className="min-w-0 flex-1">

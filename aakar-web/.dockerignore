@@ -1,0 +1,13 @@
+node_modules
+dist
+.cache
+.vite
+.DS_Store
+.env
+.env.*
+!.env.example
+.git
+.gitignore
+*.log
+coverage
+*.tsbuildinfo

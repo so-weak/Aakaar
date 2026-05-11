@@ -12,6 +12,7 @@ from aakar.api.deps import AppDependencies
 from tests._api_helpers import (
     auth_headers,
     login,
+    seed_superuser,
     seed_tenant_admin,
     seed_tenant_user,
 )
@@ -240,3 +241,56 @@ def test_tenant_user_cannot_call_admin_endpoints(
         headers=auth_headers(member_token),
     )
     assert r.status_code == 403
+
+
+# ---------- tenant suspension cascades to users -------------------------
+
+
+def test_suspend_tenant_disables_all_users_and_blocks_login(
+    deps: AppDependencies, client: TestClient
+) -> None:
+    """Suspending a tenant must lock its users out — both by flipping
+    every active user to DISABLED *and* by the auth-layer tenant check."""
+    tenant, _admin = seed_tenant_admin(
+        deps,
+        slug="aarya",
+        name="Aarya",
+        admin_email="admin@aarya.test",
+        admin_password="adminpass1",
+    )
+    seed_tenant_user(
+        deps, tenant_id=tenant.id, email="op@aarya.test", password="oppass1"
+    )
+
+    # Both users can log in before suspension.
+    r = client.post("/auth/login", json={"email": "admin@aarya.test", "password": "adminpass1"})
+    assert r.status_code == 200
+    admin_token = r.json()["access_token"]
+    r = client.post("/auth/login", json={"email": "op@aarya.test", "password": "oppass1"})
+    assert r.status_code == 200
+
+    # Bootstrap a superuser to suspend the tenant.
+    seed_superuser(deps, email="root@aakar.test", password="rootpass1")
+    su_token = login(client, email="root@aakar.test", password="rootpass1")
+
+    r = client.post(
+        f"/superuser/tenants/{tenant.id}/suspend",
+        headers=auth_headers(su_token),
+    )
+    assert r.status_code == 200
+
+    # New logins fail — user rows are now DISABLED.
+    r = client.post("/auth/login", json={"email": "admin@aarya.test", "password": "adminpass1"})
+    assert r.status_code == 401
+    r = client.post("/auth/login", json={"email": "op@aarya.test", "password": "oppass1"})
+    assert r.status_code == 401
+
+    # Pre-existing JWTs also stop working — defence-in-depth via the
+    # tenant-status check in get_current_user. (A token issued before
+    # the suspend would otherwise still be valid until expiry.)
+    r = client.get("/admin/users", headers=auth_headers(admin_token))
+    assert r.status_code == 401
+
+    # Superuser logins are unaffected — superusers have no tenant_id.
+    r = client.get("/superuser/tenants", headers=auth_headers(su_token))
+    assert r.status_code == 200

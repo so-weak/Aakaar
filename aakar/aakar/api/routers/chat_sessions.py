@@ -15,6 +15,7 @@ want one round-trip; sessions add:
 
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Annotated, Any
 
@@ -46,6 +47,7 @@ from aakar.shared.dag.types import Dag
 from aakar.shared.planner.responses import ClarifyResponse, DagResponse, MissingResponse
 
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat/sessions", tags=["chat-sessions"])
 
 
@@ -228,6 +230,13 @@ async def send_message(
 
     prior = sessions_repo.list_messages(db, session_id=sess.id)
     history = _planner_history(prior)
+    logger.info(
+        "chat session message session_id=%s user_id=%s prior_msgs=%d msg_len=%d",
+        session_id,
+        user.id,
+        len(prior),
+        len(body.message or ""),
+    )
 
     # Persist the user turn before calling the planner so a planner failure
     # doesn't lose what the user just typed.
@@ -235,16 +244,25 @@ async def send_message(
     db.commit()
 
     granted = grants_repo.list_granted_refs(db, user.tenant_id)
+    grant_map = _grant_map_for_tenant(db, user.tenant_id)
+    granted_aliases = {ref: sorted(am.keys()) for ref, am in grant_map.items()}
+    grant_input_defaults = {
+        ref: {alias: dict(info.get("input_defaults") or {}) for alias, info in am.items()}
+        for ref, am in grant_map.items()
+    }
     current_dag = Dag.model_validate(sess.draft_dag) if sess.draft_dag else None
 
     try:
         resp = planner.plan(
             user_message=body.message,
             granted_capabilities=granted,
+            granted_aliases=granted_aliases,
+            grant_input_defaults=grant_input_defaults,
             current_dag=current_dag,
             chat_history=history,
         )
     except PlannerError as e:
+        logger.exception("planner failed in session_id=%s", session_id)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"planner failed: {e}",
@@ -254,7 +272,6 @@ async def send_message(
     # context it couldn't get. Retry with the agentic loop if it's wired.
     if isinstance(resp, ClarifyResponse) and agentic is not None:
         try:
-            grant_map = _grant_map_for_tenant(db, user.tenant_id)
             agentic_resp = await agentic.plan(
                 user_message=body.message,
                 tenant_id=user.tenant_id,
@@ -273,9 +290,7 @@ async def send_message(
             # Agentic failure must not break a request that already had a
             # valid one-shot answer. Stick with the clarify and surface a
             # short note in observability via the standard logger.
-            import logging as _logging
-
-            _logging.getLogger(__name__).exception(
+            logger.exception(
                 "agentic-planner fallback failed; keeping one-shot clarify"
             )
 

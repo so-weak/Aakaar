@@ -17,6 +17,7 @@ import {
 
 import { useAuth } from "@/auth/AuthContext";
 import { MorphLogo } from "@/components/MorphLogo";
+import { ThemeSwitcher } from "@/theme/ThemeSwitcher";
 
 interface NavItem {
   to: string;
@@ -33,7 +34,7 @@ const NAV: NavItem[] = [
   { to: "/live", label: "Live", icon: Activity, visibleTo: ["tenant_admin", "superuser"] },
   { to: "/capabilities", label: "Capabilities", icon: Network, visibleTo: ["superuser", "tenant_admin", "tenant_user"] },
   { to: "/admin/users", label: "Users", icon: Users, visibleTo: ["tenant_admin"] },
-  { to: "/admin/grants", label: "Grants", icon: KeyRound, visibleTo: ["tenant_admin"] },
+  { to: "/admin/grants", label: "Vault", icon: KeyRound, visibleTo: ["tenant_admin"] },
   { to: "/superuser/tenants", label: "Tenants", icon: ShieldCheck, visibleTo: ["superuser"] },
   { to: "/superuser/users", label: "All users", icon: Users, visibleTo: ["superuser"] },
 ];
@@ -58,10 +59,13 @@ export function Layout() {
   const items = NAV.filter((n) => n.visibleTo.includes(claims.role));
 
   return (
-    <div className="noise-shell flex h-full overflow-hidden bg-ink-950 text-ink-50">
+    <div className="noise-shell app-shell flex h-full overflow-hidden">
       <aside
         className={[
-          "flex shrink-0 flex-col border-r border-ink-700/80 bg-ink-950/78 shadow-[16px_0_60px_rgb(0_0_0/0.22)] backdrop-blur-xl transition-[width] duration-200",
+          // `relative z-20` establishes a stacking context above <main>
+          // so the ThemeSwitcher popup can overflow the sidebar into the
+          // main area without being covered by recharts SVGs.
+          "app-sidebar relative z-20 flex shrink-0 flex-col transition-[width] duration-200",
           collapsed ? "w-16" : "w-64",
         ].join(" ")}
       >
@@ -75,16 +79,14 @@ export function Layout() {
             title={collapsed ? "Aakar" : undefined}
           >
             <span
-              className="grid h-11 w-11 shrink-0 place-items-center rounded-md border border-accent-300 bg-accent-300 text-ink-950 shadow-[5px_5px_0_rgb(255_59_147/0.9)] transition group-hover:-rotate-2"
+              className="logo-tile grid h-11 w-11 shrink-0 place-items-center rounded-control transition group-hover:-rotate-2"
               aria-hidden="true"
             >
               <MorphLogo />
             </span>
             {collapsed ? null : (
               <span>
-                <span className="block text-lg font-black uppercase tracking-[0.18em] text-ink-50">
-                  aakar
-                </span>
+                <span className="headline block text-lg text-ink-50">aakar</span>
                 <span className="mt-0.5 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.22em] text-accent-200">
                   <Sparkles size={11} />
                   flow engine
@@ -102,15 +104,16 @@ export function Layout() {
               title={collapsed ? item.label : undefined}
               className={({ isActive }) =>
                 [
-                  "group flex items-center gap-3 rounded-md border text-sm font-semibold transition",
+                  "nav-item group",
                   collapsed ? "justify-center px-0 py-2.5" : "px-3 py-2.5",
-                  isActive
-                    ? "border-accent-300/70 bg-accent-300/12 text-accent-100 shadow-[4px_4px_0_rgb(22_217_255/0.22)]"
-                    : "border-transparent text-ink-300 hover:border-ink-700 hover:bg-ink-900/75 hover:text-ink-50",
+                  isActive ? "is-active" : "",
                 ].join(" ")
               }
             >
-              <item.icon size={17} className="shrink-0 text-ink-400 transition group-hover:text-accent-200" />
+              <item.icon
+                size={17}
+                className="nav-icon shrink-0 transition group-hover:text-accent-200"
+              />
               {collapsed ? null : <span>{item.label}</span>}
             </NavLink>
           ))}
@@ -118,19 +121,19 @@ export function Layout() {
 
         <div
           className={[
-            "border-t border-ink-700/80",
+            "border-t border-ink-700/60",
             collapsed ? "px-2 py-3" : "px-3 py-4",
           ].join(" ")}
         >
           {collapsed ? (
             <div
-              className="mb-2 grid h-9 w-full place-items-center rounded-md border border-ink-700 bg-ink-900/70 font-mono text-[11px] font-bold uppercase text-signal-cyan"
+              className="mb-2 grid h-9 w-full place-items-center rounded-control border border-ink-700 bg-ink-900/70 font-mono text-[11px] font-bold uppercase text-signal-cyan"
               title={`${claims.email} · ${roleLabel(claims)}`}
             >
               {initials(claims.email)}
             </div>
           ) : (
-            <div className="mb-3 rounded-md border border-ink-700 bg-ink-900/70 px-3 py-2.5">
+            <div className="mb-3 rounded-control border border-ink-700/60 bg-ink-900/70 px-3 py-2.5">
               <div className="truncate text-xs font-semibold text-ink-100">
                 {claims.email}
               </div>
@@ -139,6 +142,11 @@ export function Layout() {
               </div>
             </div>
           )}
+
+          <div className="mb-1.5">
+            <ThemeSwitcher collapsed={collapsed} />
+          </div>
+
           <button
             type="button"
             className={[

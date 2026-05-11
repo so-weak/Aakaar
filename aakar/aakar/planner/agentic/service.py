@@ -33,7 +33,7 @@ from aakar.planner.agentic.tools import (
 )
 from aakar.planner.llm import LLMClient, LLMMessage, PlannerCompletion, Role, ToolCall
 from aakar.planner.prompt import PromptBuilder
-from aakar.shared.dag import ValidationError, validate_dag
+from aakar.shared.dag import ValidationError, auto_complete_edges, validate_dag
 from aakar.shared.dag.types import Dag
 from aakar.shared.planner.responses import (
     ClarifyResponse,
@@ -58,6 +58,29 @@ do, then call `done` ONCE with a complete plan.
 Rules:
 - Inspect a page BEFORE picking selectors for it. The selectors you
   emit in the final DAG must match what the page actually has.
+- If the user mentions a specific page ("recon upload page",
+  "settings page"), navigate to that page AND immediately call
+  `inspect_page` on it before emitting selectors. Each navigate
+  MUST be followed by an inspect_page if you intend to interact
+  with that page. Inspecting only the post-login dashboard is NOT
+  enough — the form selectors live on the form's own page.
+- For multi-field FORM filling, prefer `browser.set_field(label,
+  value)` over `browser.fill` / `browser.select` / `browser.click`.
+  set_field locates the control by label text and dispatches by
+  control type (select, input, radio, date) — you don't need a CSS
+  selector at all. Example: to set "Switch Type" to "Issuer", emit
+  `browser.set_field(session, label="Switch Type", value="Issuer")`.
+- For navigation between pages of the same site, prefer
+  `browser.click_by_text(text="Recon Upload")` over
+  `browser.navigate(url="...")` — the URL path may not be obvious
+  (e.g. /recon/upload vs /recon-upload), but the visible nav-link
+  text is.
+- For logout, prefer `browser.click_by_text(text="Logout")` over
+  guessing a CSS selector. Same for any other clickable item whose
+  selector you didn't directly confirm via inspect_page.
+- Use selectors from `inspect_page` results VERBATIM only when you
+  inspected that exact page. Do NOT invent `#id` or `[name=...]`
+  selectors that aren't in the inspect output.
 - If the user mentioned a specific element ("first report", "Biller
   Transactions"), find it by inspecting the relevant page; don't guess.
 - Login via `login_with_grant`: credentials come from the vault, never
@@ -65,6 +88,18 @@ Rules:
   say. If a captcha is detected, do NOT try to log in at plan time —
   emit a DAG that uses `cap.web_login` (which handles captchas at run
   time via HITL).
+- For "download X" where X is a recognizable name on the post-login
+  page, prefer `cap.file_download(target_hint="X")`. Its runtime
+  discovery handles fuzzy matching and HITL ambiguity, so you don't
+  need to inspect just to find a download link. Inspect when the page
+  needs multi-field form filling (selects, radios, dates, file inputs)
+  — that's where exact selectors matter.
+- When the user references "today" or any relative date, emit a
+  `time.now` node and reference its output (e.g.
+  `${now.ist_date}`) instead of baking a literal date into the DAG.
+- When the user says "upload /path/to/file", emit a `file.read_local`
+  node first (returns a managed-storage URI), then pass that URI to
+  `cap.file_upload`. Do NOT try to read the local path yourself.
 - When you have enough information, call `done` with kind="dag" and the
   full DAG. If you genuinely cannot figure out what to do (e.g., the
   user wants something the registry can't express), call `done` with
@@ -104,8 +139,22 @@ class AgenticPlannerService:
         builder for visibility); `granted_capability_grants` is the full
         ref→alias→{vault_ref, …} map (used by login tool to fetch creds).
         """
+        granted_aliases: dict[str, list[str]] = {
+            ref: sorted(alias_map.keys())
+            for ref, alias_map in (granted_capability_grants or {}).items()
+        }
+        grant_input_defaults: dict[str, dict[str, dict[str, Any]]] = {
+            ref: {
+                alias: dict(info.get("input_defaults") or {})
+                for alias, info in alias_map.items()
+            }
+            for ref, alias_map in (granted_capability_grants or {}).items()
+        }
         prompt_builder = PromptBuilder(
-            registry=self.registry, granted_capabilities=granted_capabilities
+            registry=self.registry,
+            granted_capabilities=granted_capabilities,
+            granted_aliases=granted_aliases,
+            grant_input_defaults=grant_input_defaults,
         )
         base_messages = prompt_builder.build_messages(
             user_message=user_message,
@@ -128,10 +177,18 @@ class AgenticPlannerService:
         deadline = time.monotonic() + self.deadline_seconds
         observations: list[str] = []  # short summaries for the clarify-fallback
 
+        logger.info(
+            "agentic plan tenant_id=%s tools=%d max_calls=%d deadline=%.1fs",
+            tenant_id,
+            len(tools),
+            self.max_tool_calls,
+            self.deadline_seconds,
+        )
         async with runner.session():
             for iteration in range(self.max_tool_calls):
                 if time.monotonic() > deadline:
                     observations.append(f"hit time deadline after {iteration} tool calls")
+                    logger.warning("agentic plan: hit deadline after %d iterations", iteration)
                     break
                 try:
                     step = await asyncio.to_thread(
@@ -150,14 +207,47 @@ class AgenticPlannerService:
                     # The model gave up on tools — surface what it said as
                     # a clarify question. Better than silently looping.
                     text = step.final_content or "Planner stopped without producing a DAG."
+                    logger.info("agentic: model returned final content without tools (iter=%d)", iteration)
                     return ClarifyResponse(questions=[text])
+                logger.debug(
+                    "agentic iter=%d tool_calls=%s",
+                    iteration,
+                    [c.name for c in step.tool_calls],
+                )
 
                 # Process each tool call (the LLM occasionally emits more
-                # than one per turn). The `done` call short-circuits.
+                # than one per turn). The `done` call short-circuits or
+                # triggers an in-loop repair if the DAG fails validation.
                 tool_messages: list[LLMMessage] = []
+                repair_msg: str | None = None
                 for call in step.tool_calls:
                     if call.name == "done":
-                        return self._finalize(call, granted_capabilities, observations)
+                        try:
+                            with open("/tmp/aakar-agentic-trace.log", "a") as fh:
+                                fh.write(f"---\nuser={user_message}\n")
+                                for o in observations:
+                                    fh.write(f"  {o}\n")
+                                fh.write(f"  done.kind={call.arguments.get('kind')}\n")
+                        except Exception:
+                            pass
+                        finalized = self._finalize(
+                            call, granted_capabilities, observations
+                        )
+                        # If the LLM tried to emit a DAG but it didn't
+                        # validate, _finalize returns a ClarifyResponse.
+                        # Treat that as a repair opportunity instead of
+                        # giving up: feed the error back and let the
+                        # LLM fix it. Three of the most common bugs are
+                        # missing edges, hallucinated selectors, and
+                        # references to nodes that don't exist.
+                        if (
+                            call.arguments.get("kind") == "dag"
+                            and isinstance(finalized, ClarifyResponse)
+                            and finalized.questions
+                        ):
+                            repair_msg = finalized.questions[0]
+                            break
+                        return finalized
                     result = await dispatch(runner, call.name, call.arguments)
                     observations.append(self._summarize(call, result.payload))
                     tool_messages.append(self._format_tool_message(call, result.payload))
@@ -165,12 +255,39 @@ class AgenticPlannerService:
                 # Echo the assistant's tool calls and our results back into
                 # the conversation so the next call sees them in context.
                 messages.append(self._format_assistant_call_record(step.tool_calls))
-                messages.extend(tool_messages)
+                if repair_msg is not None:
+                    observations.append(f"repair: {repair_msg[:160]}")
+                    messages.append(
+                        LLMMessage(
+                            role=Role.USER,
+                            content=(
+                                "<repair>The DAG you proposed didn't "
+                                f"validate: {repair_msg}. Fix the DAG and "
+                                "call done() again. Common fixes: (1) every "
+                                "${node.field} reference needs an edge path "
+                                "from the producing node — add missing edges; "
+                                "(2) selectors must come VERBATIM from "
+                                "inspect_page results — call inspect_page "
+                                "again on the right page if you don't have "
+                                "the selectors yet.</repair>"
+                            ),
+                        )
+                    )
+                else:
+                    messages.extend(tool_messages)
             else:
                 observations.append(
                     f"hit iteration cap of {self.max_tool_calls} tool calls"
                 )
+                logger.warning("agentic plan: hit iteration cap of %d", self.max_tool_calls)
 
+        try:
+            with open("/tmp/aakar-agentic-trace.log", "a") as fh:
+                fh.write(f"---\nuser={user_message}\n")
+                for o in observations:
+                    fh.write(f"  {o}\n")
+        except Exception:
+            pass
         return ClarifyResponse(
             questions=[
                 "I explored the site but couldn't finalize the workflow within budget.",
@@ -210,16 +327,29 @@ class AgenticPlannerService:
             )
         try:
             dag = Dag.model_validate(raw_dag)
+            dag = auto_complete_edges(dag)
             validate_dag(
                 dag,
                 registry=self.registry,
                 granted_capabilities=granted_capabilities,
             )
         except ValidationError as e:
+            try:
+                with open("/tmp/aakar-agentic-trace.log", "a") as fh:
+                    fh.write(f"  validation_error: {e}\n")
+                    import json as _j
+                    fh.write(f"  dag={_j.dumps(raw_dag)[:2000]}\n")
+            except Exception:
+                pass
             return ClarifyResponse(
                 questions=[f"the proposed DAG didn't validate: {e}"]
             )
         except Exception as e:  # noqa: BLE001
+            try:
+                with open("/tmp/aakar-agentic-trace.log", "a") as fh:
+                    fh.write(f"  parse_error: {e}\n")
+            except Exception:
+                pass
             return ClarifyResponse(questions=[f"DAG parse failed: {e}"])
         return DagResponse(dag=dag, rationale=rationale)
 
@@ -244,12 +374,21 @@ class AgenticPlannerService:
     @staticmethod
     def _summarize(call: ToolCall, payload: dict[str, Any]) -> str:
         if "error" in payload:
-            return f"{call.name}: error — {payload['error']}"
+            return (
+                f"{call.name}({json.dumps(call.arguments)[:160]}): "
+                f"error — {payload['error']}"
+            )
         if call.name == "navigate":
-            return f"navigated to {payload.get('url') or '?'} ({payload.get('title') or ''})"
+            return (
+                f"navigate(url={call.arguments.get('url')!r}) → "
+                f"{payload.get('url') or '?'} ({payload.get('title') or ''})"
+            )
         if call.name == "login_with_grant":
             if payload.get("logged_in"):
-                return f"logged in; landed on {payload.get('url') or '?'}"
+                return (
+                    f"login_with_grant({json.dumps(call.arguments)[:120]}) → "
+                    f"landed on {payload.get('url') or '?'}"
+                )
             return f"login_with_grant: {payload}"
         if call.name == "inspect_page":
             n = payload.get("interactive_count_total", 0)

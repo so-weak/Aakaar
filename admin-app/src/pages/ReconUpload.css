@@ -217,3 +217,25 @@
   background: #fee2e2;
   color: #b91c1c;
 }
+
+.recon-error {
+  margin-top: 12px;
+  padding: 8px 12px;
+  border: 1px solid #fecaca;
+  background: #fee2e2;
+  color: #991b1b;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.recon-empty {
+  text-align: center;
+  color: #6b7280;
+  padding: 24px 0;
+  font-size: 13px;
+}
+
+.recon-upload-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}

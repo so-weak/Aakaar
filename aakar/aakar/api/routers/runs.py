@@ -9,6 +9,7 @@ Edit policy:
 
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Annotated
 
@@ -37,6 +38,7 @@ from aakar.interpreter.signals import SignalNotPending
 from aakar.shared.dag.types import Dag
 
 
+logger = logging.getLogger(__name__)
 router = APIRouter(tags=["runs"])
 
 
@@ -68,13 +70,24 @@ async def start_run(
     orchestrator: Annotated[RunOrchestrator, Depends(get_orchestrator)],
 ) -> RunResponse:
     assert user.tenant_id is not None
+    logger.info(
+        "start_run requested workflow_id=%s tenant_id=%s user_id=%s version=%s",
+        workflow_id,
+        user.tenant_id,
+        user.id,
+        body.version,
+    )
     workflow = workflows_repo.get_workflow(session, user.tenant_id, workflow_id)
     if workflow is None:
+        logger.warning("start_run: workflow_id=%s not found in tenant_id=%s", workflow_id, user.tenant_id)
         raise HTTPException(status_code=404, detail="workflow not found")
 
     target_version = body.version or workflow.latest_version
     wfv = workflows_repo.get_version(session, user.tenant_id, workflow_id, target_version)
     if wfv is None:
+        logger.warning(
+            "start_run: workflow_id=%s version=%s not found", workflow_id, target_version
+        )
         raise HTTPException(status_code=404, detail=f"version {target_version} not found")
 
     dag = Dag.model_validate(wfv.dag)
@@ -97,6 +110,14 @@ async def start_run(
         inputs=body.inputs,
     )
     session.commit()
+    logger.info(
+        "run created run_id=%s workflow_id=%s version=%s nodes=%d granted_caps=%d",
+        run.id,
+        workflow_id,
+        target_version,
+        len(dag.nodes),
+        len(granted_caps),
+    )
 
     orchestrator.schedule(
         run_id=run.id,
@@ -104,6 +125,7 @@ async def start_run(
         dag=dag,
         granted_caps=granted_caps,
     )
+    logger.debug("run scheduled run_id=%s", run.id)
     return _to_run_response(run)
 
 
@@ -170,15 +192,25 @@ async def respond_to_run(
     if run is None:
         raise HTTPException(status_code=404, detail="run not found")
     if run.started_by != user.id:
+        logger.info(
+            "run respond denied run_id=%s started_by=%s caller=%s",
+            run_id,
+            run.started_by,
+            user.id,
+        )
         raise HTTPException(
             status_code=403,
             detail="only the user who started the run can respond to its prompts",
         )
+    logger.info("run respond run_id=%s node_id=%s", run_id, body.node_id)
     try:
         await orchestrator.respond(
             run_id=run_id, node_id=body.node_id, response=body.response
         )
     except SignalNotPending as e:
+        logger.warning(
+            "run respond no pending prompt run_id=%s node_id=%s", run_id, body.node_id
+        )
         raise HTTPException(
             status_code=409, detail=f"no pending prompt for node {body.node_id!r}"
         ) from e

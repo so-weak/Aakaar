@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Annotated
 
@@ -30,6 +31,7 @@ from aakar.shared.registry import Registry
 from aakar.vault import Vault
 
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 
@@ -48,8 +50,17 @@ def create_user(
             role=body.role,
         )
     except users_repo.EmailTaken as e:
+        logger.info("admin create_user: email taken email=%s tenant_id=%s", body.email, admin.tenant_id)
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"email taken: {e}") from e
     session.commit()
+    logger.info(
+        "admin user created id=%s email=%s role=%s tenant_id=%s by_admin=%s",
+        u.id,
+        u.email,
+        u.role,
+        admin.tenant_id,
+        admin.id,
+    )
     return _to_user_response(u)
 
 
@@ -133,6 +144,7 @@ def suspend_user(
     if updated is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
     session.commit()
+    logger.warning("user suspended id=%s by_admin=%s", user_id, admin.id)
     return _to_user_response(updated)
 
 
@@ -148,6 +160,7 @@ def reactivate_user(
     if updated is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
     session.commit()
+    logger.info("user reactivated id=%s by_admin=%s", user_id, admin.id)
     return _to_user_response(updated)
 
 
@@ -207,10 +220,18 @@ def create_grant(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
 
     session.commit()
+    logger.info(
+        "grant created id=%s capability_ref=%s alias=%s tenant_id=%s",
+        grant.id,
+        grant.capability_ref,
+        grant.account_alias,
+        admin.tenant_id,
+    )
 
     # Refresh the capability index for this tenant so the planner sees the new grant.
     granted = grants_repo.list_granted_refs(session, admin.tenant_id)
     capability_index.reindex_for_tenant(str(admin.tenant_id), granted)
+    logger.debug("capability index reindexed for tenant_id=%s (refs=%d)", admin.tenant_id, len(granted))
 
     return GrantResponse(
         id=grant.id,
@@ -354,5 +375,6 @@ def delete_grant(
     if not ok:
         raise HTTPException(status_code=404, detail="grant not found")
     session.commit()
+    logger.info("grant deleted id=%s tenant_id=%s", grant_id, admin.tenant_id)
     granted = grants_repo.list_granted_refs(session, admin.tenant_id)
     capability_index.reindex_for_tenant(str(admin.tenant_id), granted)

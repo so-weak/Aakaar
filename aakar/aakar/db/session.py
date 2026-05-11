@@ -10,10 +10,14 @@ caller (sqlite is in stdlib; psycopg ships separately).
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from sqlalchemy import Engine, create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,6 +36,7 @@ def make_engine(config: EngineConfig) -> Engine:
     connect_args: dict[str, object] = {}
     if is_sqlite:
         connect_args["check_same_thread"] = False
+    logger.info("db: creating engine dialect=%s echo=%s", "sqlite" if is_sqlite else "other", config.echo)
     engine = create_engine(config.url, echo=config.echo, future=True, connect_args=connect_args)
     if is_sqlite:
         @event.listens_for(engine, "connect")

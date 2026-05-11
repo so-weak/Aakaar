@@ -1,8 +1,7 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   SWITCH_TYPES,
-  CYCLE_NUMBERS,
-  RECON_UPLOAD_HISTORY
+  CYCLE_NUMBERS
 } from '../data/mockData.js'
 import './ReconUpload.css'
 
@@ -13,23 +12,78 @@ export default function ReconUpload() {
   const [cycle, setCycle] = useState('C02')
   const [date, setDate] = useState('2026-05-06')
   const [fileName, setFileName] = useState('')
+  const [file, setFile] = useState(null)
+  const [uploading, setUploading] = useState(false)
+  const [errorMsg, setErrorMsg] = useState('')
+  const [history, setHistory] = useState([])
+  const [historyError, setHistoryError] = useState('')
   const fileRef = useRef(null)
 
   const handleBrowse = () => fileRef.current?.click()
   const handleFile = (e) => {
     const f = e.target.files?.[0]
-    if (f) setFileName(f.name)
+    if (f) {
+      setFile(f)
+      setFileName(f.name)
+    }
   }
 
-  const handleUpload = (e) => {
+  const fetchHistory = async () => {
+    try {
+      const res = await fetch('/api/recon/uploads')
+      if (!res.ok) throw new Error(`history fetch failed: ${res.status}`)
+      const data = await res.json()
+      setHistory(data)
+      setHistoryError('')
+    } catch (err) {
+      setHistoryError(err.message || String(err))
+    }
+  }
+
+  // Refresh history whenever the View tab is opened. The backend keeps
+  // its list in memory, so this is the single source of truth.
+  useEffect(() => {
+    if (tab === 'view') fetchHistory()
+  }, [tab])
+
+  const handleUpload = async (e) => {
     e.preventDefault()
-    if (!switchType || !fileName) {
-      alert('Please choose a Switch Type and a file before uploading.')
+    setErrorMsg('')
+    if (!switchType || !file) {
+      setErrorMsg('Please choose a Switch Type and a file before uploading.')
       return
     }
-    alert(
-      `Upload submitted (mock)\nSwitch: ${switchType}\nCycle: ${cycle}\nDate: ${date}\nFile: ${fileName}`
-    )
+    setUploading(true)
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      fd.append('switch_type', switchType)
+      fd.append('cycle', cycle)
+      fd.append('date', date)
+      fd.append('skip_recon', skipRecon)
+
+      const res = await fetch('/api/recon/uploads', {
+        method: 'POST',
+        body: fd
+      })
+      if (!res.ok) {
+        const detail = await res.text()
+        throw new Error(`upload failed (${res.status}): ${detail}`)
+      }
+      const row = await res.json()
+      setHistory((prev) => [row, ...prev])
+      // Reset file but keep the form's switch/cycle/date so the operator
+      // can upload several files in a row without reselecting.
+      setFile(null)
+      setFileName('')
+      if (fileRef.current) fileRef.current.value = ''
+      // Jump to the View tab so they see the new row land.
+      setTab('view')
+    } catch (err) {
+      setErrorMsg(err.message || String(err))
+    } finally {
+      setUploading(false)
+    }
   }
 
   const formatDate = (iso) => {
@@ -169,10 +223,18 @@ export default function ReconUpload() {
           </div>
 
           <div className="recon-actions">
-            <button type="submit" className="recon-upload-btn">
-              ⤒ Upload
+            <button
+              type="submit"
+              className="recon-upload-btn"
+              disabled={uploading}
+            >
+              {uploading ? 'Uploading…' : '⤒ Upload'}
             </button>
           </div>
+
+          {errorMsg ? (
+            <div className="recon-error">{errorMsg}</div>
+          ) : null}
 
           <div className="recon-summary">
             <strong>Summary:</strong> {switchType || '—'} ·{' '}
@@ -182,6 +244,11 @@ export default function ReconUpload() {
         </form>
       ) : (
         <div className="recon-table-wrap">
+          {historyError ? (
+            <div className="recon-error">
+              Couldn't load history: {historyError}
+            </div>
+          ) : null}
           <table className="recon-table">
             <thead>
               <tr>
@@ -195,25 +262,34 @@ export default function ReconUpload() {
               </tr>
             </thead>
             <tbody>
-              {RECON_UPLOAD_HISTORY.map((row, i) => (
-                <tr key={row.id}>
-                  <td>{i + 1}</td>
-                  <td>{row.fileName}</td>
-                  <td>{row.switchType}</td>
-                  <td>{row.cycle}</td>
-                  <td>{row.date}</td>
-                  <td>
-                    <span
-                      className={
-                        'recon-status recon-status-' + row.status.toLowerCase()
-                      }
-                    >
-                      {row.status}
-                    </span>
+              {history.length === 0 && !historyError ? (
+                <tr>
+                  <td colSpan={7} className="recon-empty">
+                    No uploads yet.
                   </td>
-                  <td>{row.uploadedAt}</td>
                 </tr>
-              ))}
+              ) : (
+                history.map((row, i) => (
+                  <tr key={row.id}>
+                    <td>{i + 1}</td>
+                    <td>{row.fileName}</td>
+                    <td>{row.switchType}</td>
+                    <td>{row.cycle}</td>
+                    <td>{row.date}</td>
+                    <td>
+                      <span
+                        className={
+                          'recon-status recon-status-' +
+                          row.status.toLowerCase()
+                        }
+                      >
+                        {row.status}
+                      </span>
+                    </td>
+                    <td>{row.uploadedAt}</td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
