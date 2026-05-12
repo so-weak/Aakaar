@@ -13,6 +13,7 @@ import type { Edge, Node, NodeProps } from "@xyflow/react";
 import dagre from "dagre";
 
 import type { Dag, NodeKind, RunEvent, RunStatus } from "@/api/types";
+import { useTheme } from "@/theme/ThemeProvider";
 
 /**
  * Compact, status-aware ReactFlow viewer for a live (or finished) run.
@@ -218,6 +219,20 @@ function LiveDagViewerInner({
   runStatus,
   compact = false,
 }: LiveDagViewerProps) {
+  const { meta } = useTheme();
+  const isDark = meta.mode === "dark";
+  // Two edge colors per mode:
+  //   - `activeEdge`   — the upstream node has succeeded (run animates).
+  //   - `inactiveEdge` — pending / future hop, drawn faintly.
+  // Mint stays visible in both modes; the dim lime from the dark theme
+  // would disappear on white, so light mode swaps it for faint ink.
+  const activeEdge = isDark
+    ? "rgb(110 231 183 / 0.85)"  // mint — neon-grunge / retro
+    : "rgb(4 120 87 / 0.85)";    // emerald-700 on white
+  const inactiveEdge = isDark
+    ? "rgb(217 251 29 / 0.40)"
+    : "rgb(15 23 42 / 0.30)";
+
   const statuses = useMemo(
     () => deriveNodeStatuses(dag, events, runStatus),
     [dag, events, runStatus],
@@ -244,15 +259,13 @@ function LiveDagViewerInner({
         target: e.to,
         animated: active && runStatus === "running",
         style: {
-          stroke: active
-            ? "rgb(110 231 183 / 0.85)"
-            : "rgb(217 251 29 / 0.4)",
+          stroke: active ? activeEdge : inactiveEdge,
           strokeWidth: 1.4,
         },
       };
     });
     return layout(nodes, edges, compact);
-  }, [dag, statuses, runStatus, compact]);
+  }, [dag, statuses, runStatus, compact, activeEdge, inactiveEdge]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState<Node<LiveDagNodeData>>(
     initial.nodes,
@@ -263,6 +276,11 @@ function LiveDagViewerInner({
     setNodes(initial.nodes);
     setEdges(initial.edges);
   }, [initial, setNodes, setEdges]);
+
+  // <Background> dot color, picked off the same `isDark` derived above.
+  const dotColor = isDark
+    ? "rgb(244 237 215 / 0.10)"
+    : "rgb(15 23 42 / 0.12)";
 
   return (
     <ReactFlow
@@ -277,7 +295,7 @@ function LiveDagViewerInner({
       connectionMode={ConnectionMode.Loose}
       minZoom={0.15}
       maxZoom={1.5}
-      colorMode="dark"
+      colorMode={meta.mode}
       panOnDrag={!compact}
       zoomOnScroll={!compact}
       zoomOnPinch={!compact}
@@ -286,7 +304,7 @@ function LiveDagViewerInner({
       nodesConnectable={false}
       elementsSelectable={false}
     >
-      <Background color="rgb(244 237 215 / 0.1)" gap={18} size={1} />
+      <Background color={dotColor} gap={18} size={1} />
     </ReactFlow>
   );
 }

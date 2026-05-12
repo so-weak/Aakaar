@@ -60,6 +60,7 @@ export type LabelKey =
   | "sutras"
   | "yajna"
   | "yajnas"
+  | "runYajna"
   | "yantra"
   // chat
   | "samvada"
@@ -196,6 +197,18 @@ const T: Record<LabelKey, Record<LangCode, string>> = {
     bn: "যজ্ঞসমূহ",
     ta: "யக்ஞங்கள்",
     kn: "ಯಜ್ಞಗಳು",
+  },
+  // Action label for the "start a run" button. In English the verb and
+  // noun collapse to the same word ("Run") so we don't repeat it; the
+  // other languages keep the verb in English and the noun localised so
+  // the button is unambiguously an action.
+  runYajna: {
+    en: "Run",
+    "hi-Latn": "Run Yajna",
+    "hi-Deva": "यज्ञ चलाएँ",
+    bn: "যজ্ঞ চালান",
+    ta: "யக்ஞம் தொடங்கு",
+    kn: "ಯಜ್ಞ ಆರಂಭಿಸಿ",
   },
   yantra: {
     en: "Plan",

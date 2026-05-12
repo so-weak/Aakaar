@@ -237,7 +237,7 @@ function BuildInfoToast() {
         v1
       </span>
       <span className="flex flex-col">
-        <span className="text-sm font-semibold">Aakar · the workshop of forms</span>
+        <span className="text-sm font-semibold">AAKAAR · the workshop of forms</span>
         <span className="text-[11px] font-mono leading-snug opacity-80">
           v1 · mode: {mode}
         </span>

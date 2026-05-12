@@ -28,7 +28,7 @@ export function SuperuserUsersPage() {
   return (
     <div className="flex h-full flex-col">
       <PageHeader
-        title={`All ${labels.sadhakas.toLowerCase()}`}
+        title={`${labels.sadhakas.toLowerCase()}`}
         subtitle={`Every ${labels.sadhaka.toLowerCase()} across every ${labels.mandala.toLowerCase()}. Click an ${labels.mandala.toLowerCase()} to drill in.`}
       />
       <div className="relative z-10 min-h-0 flex-1 overflow-y-auto p-7">

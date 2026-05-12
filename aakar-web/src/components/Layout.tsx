@@ -83,7 +83,7 @@ export function Layout() {
               "group flex items-center gap-3",
               collapsed ? "justify-center" : "",
             ].join(" ")}
-            title={collapsed ? "Aakar" : undefined}
+            title={collapsed ? "AAKAAR" : undefined}
           >
             <span
               className="logo-tile grid h-11 w-11 shrink-0 place-items-center rounded-control transition group-hover:-rotate-2"
@@ -93,7 +93,7 @@ export function Layout() {
             </span>
             {collapsed ? null : (
               <span>
-                <span className="headline block text-lg text-ink-50">aakar</span>
+                <span className="headline block text-lg text-ink-50">AAKAAR</span>
                 <span className="mt-0.5 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.22em] text-accent-200">
                   <Sparkles size={11} />
                   flow engine

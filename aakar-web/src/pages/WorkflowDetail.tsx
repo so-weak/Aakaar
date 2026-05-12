@@ -91,7 +91,7 @@ export function WorkflowDetailPage() {
               onClick={() => start.mutate()}
               disabled={start.isPending}
             >
-              <Play size={15} /> Run {labels.yajna.toLowerCase()}
+              <Play size={15} /> {labels.runYajna}
             </button>
           </>
         }

@@ -52,7 +52,7 @@ export function LoginPage() {
             </span>
           </div>
           <div className="text-center">
-            <div className="headline text-4xl text-ink-50">Aakar</div>
+            <div className="headline text-4xl text-ink-50">AAKAAR</div>
             <div className="mt-2 font-mono text-[11px] uppercase tracking-[0.28em] text-accent-200">
               the workshop of forms
             </div>

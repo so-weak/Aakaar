@@ -15,6 +15,7 @@ import type { Edge, Node, NodeProps } from "@xyflow/react";
 import dagre from "dagre";
 
 import type { Dag, NodeKind } from "@/api/types";
+import { useTheme } from "@/theme/ThemeProvider";
 
 // ---------- node data + custom renderer ---------------------------------
 
@@ -109,6 +110,14 @@ function layout(
 // ---------- viewer -------------------------------------------------------
 
 function DagViewerInner({ dag }: { dag: Dag }) {
+  const { meta } = useTheme();
+  const isDark = meta.mode === "dark";
+  // Edge stroke: neon-lime on dark themes (matches the original
+  // aesthetic), deep navy on light themes (lime is invisible on white).
+  const edgeStroke = isDark
+    ? "rgb(217 251 29 / 0.75)"
+    : "rgb(15 23 42 / 0.55)";
+
   const initial = useMemo(() => {
     const nodes: Node<DagNodeData>[] = dag.nodes.map((n) => ({
       id: n.id,
@@ -121,10 +130,10 @@ function DagViewerInner({ dag }: { dag: Dag }) {
       source: e.from,
       target: e.to,
       animated: true,
-      style: { stroke: "rgb(217 251 29 / 0.75)", strokeWidth: 1.7 },
+      style: { stroke: edgeStroke, strokeWidth: 1.7 },
     }));
     return layout(nodes, edges);
-  }, [dag]);
+  }, [dag, edgeStroke]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState<Node<DagNodeData>>(initial.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(initial.edges);
@@ -133,6 +142,17 @@ function DagViewerInner({ dag }: { dag: Dag }) {
     setNodes(initial.nodes);
     setEdges(initial.edges);
   }, [initial, setNodes, setEdges]);
+
+  // xyflow's colorMode swaps its bundled pane/edge palette; <Background>
+  // dot color and MiniMap chrome stay JS props, so we pick them ourselves
+  // off the theme mode that was already read above.
+  const dotColor = isDark
+    ? "rgb(244 237 215 / 0.18)"
+    : "rgb(15 23 42 / 0.18)";
+  const miniMapBg = isDark ? "rgb(22 22 20)" : "rgb(248 250 252)";
+  const miniMapMask = isDark
+    ? "rgba(9, 9, 8, 0.72)"
+    : "rgba(15, 23, 42, 0.18)";
 
   return (
     <ReactFlow
@@ -147,16 +167,16 @@ function DagViewerInner({ dag }: { dag: Dag }) {
       connectionMode={ConnectionMode.Loose}
       minZoom={0.2}
       maxZoom={1.5}
-      colorMode="dark"
+      colorMode={meta.mode}
     >
-      <Background color="rgb(244 237 215 / 0.18)" gap={22} size={1} />
+      <Background color={dotColor} gap={22} size={1} />
       <Controls className="!bg-ink-950 !text-ink-100 [&_button]:!border-ink-700 [&_button]:!bg-ink-950 [&_button]:!text-ink-100 [&_button:hover]:!bg-ink-800" />
       <MiniMap
         pannable
         zoomable
         nodeColor={() => "#d9fb1d"}
-        maskColor="rgba(9, 9, 8, 0.72)"
-        style={{ backgroundColor: "rgb(22 22 20)" }}
+        maskColor={miniMapMask}
+        style={{ backgroundColor: miniMapBg }}
       />
     </ReactFlow>
   );
