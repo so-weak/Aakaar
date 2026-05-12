@@ -36,6 +36,13 @@ class Settings:
     emit a `live_screen` event the UI streams into the run view. Disable
     via AAKAR_LIVE_SCREENSHOTS=false to save object-store space if the
     live panel isn't needed."""
+    download_mirror_dir: Path | None = None
+    """When set, cap.file_download writes an extra copy of every
+    downloaded file into this directory on the worker host (in addition
+    to managed object storage). Intended for dev use — point it at
+    `~/Downloads` so files land where a browser would put them. Leave
+    unset in deployed environments; the object store remains the
+    canonical location. Path is expanded with `~`/$VAR before use."""
     cors_allow_origins: list[str] = field(
         default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"]
     )
@@ -67,6 +74,10 @@ def load_settings() -> Settings:
         )
 
     data_dir = Path(os.environ.get("AAKAR_DATA_DIR", "./data"))
+    raw_mirror = os.environ.get("AAKAR_DOWNLOAD_MIRROR_DIR", "").strip()
+    download_mirror_dir = (
+        Path(os.path.expandvars(raw_mirror)).expanduser() if raw_mirror else None
+    )
     raw_origins = os.environ.get(
         "AAKAR_CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
     )
@@ -92,6 +103,7 @@ def load_settings() -> Settings:
         not in ("0", "false", "no"),
         live_screenshots=os.environ.get("AAKAR_LIVE_SCREENSHOTS", "true").lower()
         not in ("0", "false", "no"),
+        download_mirror_dir=download_mirror_dir,
         cors_allow_origins=cors_origins,
     )
 

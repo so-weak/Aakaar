@@ -36,11 +36,13 @@ import type {
 import { useAuth } from "@/auth/AuthContext";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { PageHeader } from "@/components/PageHeader";
+import { useLabels } from "@/i18n/LanguageProvider";
 import { formatISTDateTime } from "@/lib/datetime";
 import { useChartPalette } from "@/theme/ThemeProvider";
 
 export function DashboardPage() {
   const { claims } = useAuth();
+  const labels = useLabels();
   const isSuper = claims?.role === "superuser";
   const isAdmin = claims?.role === "tenant_admin";
 
@@ -53,23 +55,23 @@ export function DashboardPage() {
 
   const subtitle = useMemo(() => {
     const scope = dashQ.data?.scope;
-    if (scope === "global") return "Cross-tenant overview · refreshes every 15s";
-    if (scope === "tenant") return "Tenant overview · refreshes every 15s";
+    if (scope === "global") return `All ${labels.mandalas} · refreshes every 15s`;
+    if (scope === "tenant") return `${labels.mandala} overview · refreshes every 15s`;
     if (scope === "user") return "Your activity · refreshes every 15s";
     return "Loading…";
-  }, [dashQ.data]);
+  }, [dashQ.data, labels]);
 
   const title = isSuper
-    ? "Operator console"
+    ? `${labels.darshana} · ${labels.pracharya}'s view`
     : isAdmin
-      ? "Tenant overview"
-      : "Your activity";
+      ? `${labels.darshana} · ${labels.mandala} overview`
+      : `${labels.darshana} · Your activity`;
 
   return (
     <div className="flex h-full flex-col">
       <PageHeader title={title} subtitle={subtitle} />
 
-      <div className="relative z-10 flex-1 overflow-y-auto p-7">
+      <div className="relative z-10 min-h-0 flex-1 overflow-y-auto p-7">
         {dashQ.error ? <ErrorBanner error={dashQ.error} /> : null}
 
         {dashQ.data ? (
@@ -109,6 +111,7 @@ function KpiStrip({
   canSeeLive: boolean;
 }) {
   const COLORS = useChartPalette();
+  const labels = useLabels();
   const totalRate = (b: VolumeBucket) => {
     const term = b.succeeded + b.failed;
     return term > 0 ? b.succeeded / term : null;
@@ -124,27 +127,27 @@ function KpiStrip({
     <section className="grid grid-cols-2 gap-4 lg:grid-cols-4">
       <KpiCard
         accent={COLORS.accent}
-        label="Last 24 hours"
+        label={`${labels.yajnas} · last 24 hours`}
         value={total(data.volume_24h)}
         secondary={
           totalRate(data.volume_24h) === null
-            ? "no terminal runs"
-            : `${(totalRate(data.volume_24h)! * 100).toFixed(1)}% success`
+            ? `no terminal ${labels.yajnas.toLowerCase()}`
+            : `${(totalRate(data.volume_24h)! * 100).toFixed(1)}% ${labels.succeeded}`
         }
         sparkline={last7}
         sparklineKey="succeeded"
       />
       <KpiCard
         accent={COLORS.succeeded}
-        label="Succeeded · 7d"
+        label={`${labels.succeeded} · 7d`}
         value={data.volume_7d.succeeded}
-        secondary={`${data.volume_7d.failed} failed`}
+        secondary={`${data.volume_7d.failed} ${labels.failed}`}
         sparkline={data.daily_volume.slice(-14)}
         sparklineKey="succeeded"
       />
       <KpiCard
         accent={COLORS.failed}
-        label="Failed · 7d"
+        label={`${labels.failed} · 7d`}
         value={data.volume_7d.failed}
         secondary={
           data.volume_7d.failed === 0 ? "clean week" : "needs attention"
@@ -218,24 +221,27 @@ function ActiveKpi({
   count: number;
   canSeeLive: boolean;
 }) {
+  const labels = useLabels();
   return (
     <div className="card relative overflow-hidden p-5">
       <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-[0.18em] text-ink-500">
-        <Hourglass size={11} /> Active right now
+        <Hourglass size={11} /> {labels.running} right now
       </div>
       <div className="mt-1 flex items-baseline gap-2">
         <div className="brand-glow-cyan text-3xl font-black tabular-nums text-signal-cyan">
           {count}
         </div>
       </div>
-      <div className="mt-1 text-xs text-ink-400">queued / running / paused</div>
+      <div className="mt-1 text-xs text-ink-400">
+        {labels.queued} / {labels.running} / {labels.paused}
+      </div>
       {canSeeLive ? (
         <Link
           to="/live"
           className="btn-ghost mt-3 inline-flex items-center gap-1.5"
         >
           <Activity size={12} className="animate-pulse" />
-          Live console
+          {labels.pratyaksha}
         </Link>
       ) : null}
     </div>
@@ -246,6 +252,7 @@ function ActiveKpi({
 
 function TrendChart({ data }: { data: DailyVolume[] }) {
   const COLORS = useChartPalette();
+  const labels = useLabels();
   const formatted = useMemo(
     () =>
       data.map((d) => ({
@@ -265,11 +272,11 @@ function TrendChart({ data }: { data: DailyVolume[] }) {
       <div className="mb-4 flex items-center justify-between">
         <div>
           <h3 className="flex items-center gap-2 text-base font-semibold text-ink-50">
-            <TrendingUp size={14} className="text-accent-300" /> Run volume · last
+            <TrendingUp size={14} className="text-accent-300" /> {labels.yajna} volume · last
             30 days
           </h3>
           <p className="mt-0.5 text-xs text-ink-500">
-            Daily IST buckets · stacked by terminal status
+            Daily IST buckets · stacked by terminal {labels.status.toLowerCase()}
           </p>
         </div>
       </div>
@@ -370,14 +377,15 @@ function TrendTooltip({
   payload?: Array<{ payload: TrendPoint }>;
 }) {
   const COLORS = useChartPalette();
+  const labels = useLabels();
   if (!active || !payload?.length) return null;
   const p = payload[0].payload;
   return (
     <div className="rounded-control border border-ink-700 bg-ink-950/95 px-3 py-2 text-xs shadow-lg">
       <div className="mb-1 font-mono text-[11px] text-ink-300">{p.label}</div>
-      <Stat color={COLORS.succeeded} label="succeeded" value={p.succeeded} />
-      <Stat color={COLORS.failed} label="failed" value={p.failed} />
-      <Stat color={COLORS.paused} label="paused" value={p.paused} />
+      <Stat color={COLORS.succeeded} label={labels.succeeded} value={p.succeeded} />
+      <Stat color={COLORS.failed} label={labels.failed} value={p.failed} />
+      <Stat color={COLORS.paused} label={labels.paused} value={p.paused} />
     </div>
   );
 }
@@ -409,13 +417,14 @@ function Stat({
 
 function StatusDonut({ bucket }: { bucket: VolumeBucket }) {
   const COLORS = useChartPalette();
+  const labels = useLabels();
   const segments = [
-    { name: "succeeded", value: bucket.succeeded, color: COLORS.succeeded },
-    { name: "failed", value: bucket.failed, color: COLORS.failed },
-    { name: "paused", value: bucket.paused, color: COLORS.paused },
-    { name: "running", value: bucket.running, color: COLORS.running },
-    { name: "queued", value: bucket.queued, color: COLORS.queued },
-    { name: "cancelled", value: bucket.cancelled, color: COLORS.cancelled },
+    { name: labels.succeeded, value: bucket.succeeded, color: COLORS.succeeded },
+    { name: labels.failed, value: bucket.failed, color: COLORS.failed },
+    { name: labels.paused, value: bucket.paused, color: COLORS.paused },
+    { name: labels.running, value: bucket.running, color: COLORS.running },
+    { name: labels.queued, value: bucket.queued, color: COLORS.queued },
+    { name: labels.cancelled, value: bucket.cancelled, color: COLORS.cancelled },
   ].filter((s) => s.value > 0);
 
   const total = segments.reduce((acc, s) => acc + s.value, 0);
@@ -425,9 +434,9 @@ function StatusDonut({ bucket }: { bucket: VolumeBucket }) {
   return (
     <div className="card flex flex-col p-5">
       <div className="flex items-center justify-between">
-        <h3 className="text-base font-semibold text-ink-50">Status · 24h</h3>
+        <h3 className="text-base font-semibold text-ink-50">{labels.status} · 24h</h3>
         <span className="font-mono text-[10px] uppercase tracking-[0.22em] text-ink-500">
-          {total} runs
+          {total} {labels.yajnas.toLowerCase()}
         </span>
       </div>
       <div className="relative flex flex-1 items-center justify-center">
@@ -462,7 +471,7 @@ function StatusDonut({ bucket }: { bucket: VolumeBucket }) {
                     : `${(successRate * 100).toFixed(0)}%`}
                 </div>
                 <div className="text-[10px] uppercase tracking-[0.2em] text-ink-500">
-                  success rate
+                  {labels.succeeded} rate
                 </div>
               </div>
             </div>
@@ -521,6 +530,7 @@ function DonutTooltip({
 
 function CapabilityChart({ data }: { data: CapabilityUsage[] }) {
   const COLORS = useChartPalette();
+  const labels = useLabels();
   const rows = useMemo(
     () =>
       data.slice(0, 8).map((c) => ({
@@ -534,14 +544,14 @@ function CapabilityChart({ data }: { data: CapabilityUsage[] }) {
   return (
     <div className="card p-5">
       <h3 className="text-base font-semibold text-ink-50">
-        Capability usage · last 7 days
+        {labels.vidya} usage · last 7 days
       </h3>
       <p className="mt-0.5 text-xs text-ink-500">
-        Top {rows.length || 8} by total invocations · failures highlighted
+        Top {rows.length || 8} by total invocations · {labels.failed.toLowerCase()} highlighted
       </p>
       <div className="mt-4 h-[260px]">
         {rows.length === 0 ? (
-          <EmptyChart message="No capability invocations in the last 7 days." />
+          <EmptyChart message={`No ${labels.vidya.toLowerCase()} invocations in the last 7 days.`} />
         ) : (
           <ResponsiveContainer width="100%" height="100%">
             <BarChart
@@ -603,6 +613,7 @@ function CapabilityTooltip({
   payload?: Array<{ payload: CapPoint }>;
 }) {
   const COLORS = useChartPalette();
+  const labels = useLabels();
   if (!active || !payload?.length) return null;
   const p = payload[0].payload;
   return (
@@ -610,8 +621,8 @@ function CapabilityTooltip({
       <div className="mb-1 font-mono text-[11px] text-ink-200">
         {p.capability_ref}
       </div>
-      <Stat color={COLORS.succeeded} label="succeeded" value={p.succeeded} />
-      <Stat color={COLORS.failed} label="failed" value={p.failure_count} />
+      <Stat color={COLORS.succeeded} label={labels.succeeded} value={p.succeeded} />
+      <Stat color={COLORS.failed} label={labels.failed} value={p.failure_count} />
       <div className="mt-1 border-t border-ink-700/70 pt-1 font-mono text-[11px] text-ink-100">
         total {p.count}
       </div>
@@ -622,18 +633,19 @@ function CapabilityTooltip({
 // ---------- recent failures list ----------------------------------------
 
 function RecentFailuresPanel({ rows }: { rows: FailureSummary[] }) {
+  const labels = useLabels();
   return (
     <div className="card p-5">
       <h3 className="flex items-center gap-2 text-base font-semibold text-ink-50">
-        <AlertTriangle size={14} className="text-rose-300" /> Recent failures
+        <AlertTriangle size={14} className="text-rose-300" /> Recent {labels.failed.toLowerCase()}
       </h3>
       <p className="mt-0.5 text-xs text-ink-500">
-        {rows.length === 0 ? "Last 10 failures" : `Showing ${rows.length} most recent`}
+        {rows.length === 0 ? `Last 10 ${labels.failed.toLowerCase()}` : `Showing ${rows.length} most recent`}
       </p>
       <div className="mt-3 space-y-2">
         {rows.length === 0 ? (
           <div className="flex items-center gap-2 rounded-md border border-emerald-400/20 bg-emerald-400/5 px-3 py-2 text-sm text-emerald-300">
-            <CheckCircle2 size={14} /> No failures in scope. Nice.
+            <CheckCircle2 size={14} /> Nothing in scope. Clean.
           </div>
         ) : (
           rows.map((r) => (
@@ -671,18 +683,19 @@ function RecentFailuresPanel({ rows }: { rows: FailureSummary[] }) {
 
 function PerTenantChart({ rows }: { rows: TenantVolume[] }) {
   const COLORS = useChartPalette();
+  const labels = useLabels();
   if (rows.length === 0) {
     return (
       <div className="card p-6 text-center text-sm text-ink-500">
         <Building2 size={20} className="mx-auto mb-2 text-ink-600" />
-        No tenant activity in the last 24 hours.
+        No {labels.mandala.toLowerCase()} activity in the last 24 hours.
       </div>
     );
   }
   return (
     <div className="card p-5">
       <h3 className="flex items-center gap-2 text-base font-semibold text-ink-50">
-        <Building2 size={14} className="text-signal-pink" /> Per-tenant volume ·
+        <Building2 size={14} className="text-signal-pink" /> Per-{labels.mandala.toLowerCase()} volume ·
         last 24 hours
       </h3>
       <p className="mt-0.5 text-xs text-ink-500">

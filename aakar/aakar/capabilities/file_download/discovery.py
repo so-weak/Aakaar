@@ -178,6 +178,35 @@ def _tokens(text: str) -> set[str]:
     return {t for t in _normalize(text).split() if len(t) > 1}
 
 
+# Generic clickable labels that, on their own, almost never tell us *which*
+# row/card a click belongs to. When a candidate's visible text is one of
+# these AND we have row_context to lean on, we drop the standalone-text
+# score from the candidate's `max(...)` so the row context drives the
+# match. This stops something like a "Transactions" filter pill from
+# out-scoring a real download button inside a card titled "Biller
+# Transactions — May 2026". Aria-labels are NOT touched — if a site
+# author bothered to set `aria-label="Download Biller Transactions May
+# 2026"`, that's a high-signal label and we still score against it.
+_GENERIC_CLICK_TEXTS: frozenset[str] = frozenset(
+    {
+        "download",
+        "download csv",
+        "download xlsx",
+        "download xls",
+        "download pdf",
+        "download file",
+        "view",
+        "open",
+        "select",
+        "go",
+        "submit",
+        "click here",
+        "more",
+        "details",
+    }
+)
+
+
 def _score(hint_norm: str, hint_tokens: set[str], text: str) -> float:
     """0.0–1.0. Highest when the candidate text contains the full hint as
     a substring; falls off as token overlap drops."""
@@ -230,11 +259,26 @@ def rank_candidates(
         if not c.selector:
             continue
         # Score the best of the candidate's text fields.
-        scores = [_score(hint_norm, hint_tokens, c.text)]
+        text_is_generic = (
+            c.row_context is not None
+            and _normalize(c.text) in _GENERIC_CLICK_TEXTS
+        )
+        scores: list[float] = []
+        if not text_is_generic:
+            # When the button's own text is uninformative (e.g. literal
+            # "Download CSV") and we have row context, drop it from the
+            # max — otherwise an exact-token filter pill elsewhere on the
+            # page out-scores the right button.
+            scores.append(_score(hint_norm, hint_tokens, c.text))
         if c.aria_label:
             scores.append(_score(hint_norm, hint_tokens, c.aria_label))
         if c.row_context:
             scores.append(_score(hint_norm, hint_tokens, c.row_context))
+        if not scores:
+            # Defensive — discovery always provides at least `text`, but
+            # if a row-only generic candidate somehow surfaced with no
+            # other fields, score it at zero rather than crash.
+            scores.append(0.0)
         c.score = max(scores)
         out.append(c)
     out.sort(key=lambda x: x.score, reverse=True)
@@ -256,12 +300,20 @@ class Pick:
     none_match: bool = False
 
 
-# Score thresholds for "clear winner" vs "ambiguous". Picked empirically:
-#  - >= 0.85 with the runner-up < 0.65 → clear winner
-#  - top < 0.35 → no candidate matches, surface as missing
-#  - everything in between → ambiguous (hand to user)
+# Score thresholds. Picked empirically against real-site fixtures.
+#  - HIGH-CONFIDENCE path: top.score >= 0.85 AND top - runner >= 0.20
+#    (typical of a substring-hit row_context match).
+#  - DECISIVE-MARGIN path: top.score >= 0.55 AND top - runner >= 0.20
+#    (covers the common case where partial token-overlap puts the top
+#    candidate around 0.60-0.75 — well below the substring threshold
+#    but so far ahead of the runner-up that asking the user would just
+#    be padding the funnel).
+#  - top < 0.35 → no candidate matches, surface as missing.
+#  - everything else → ambiguous (hand to user).
 _CLEAR_TOP = 0.85
 _CLEAR_MARGIN = 0.20
+_DECISIVE_TOP = 0.55
+_DECISIVE_MARGIN = 0.20
 _NO_MATCH_TOP = 0.35
 
 
@@ -272,7 +324,15 @@ def decide(ranked: list[Candidate]) -> Pick:
     if top.score < _NO_MATCH_TOP:
         return Pick(chosen=None, ambiguous=[], none_match=True)
     runner = ranked[1].score if len(ranked) > 1 else 0.0
-    if top.score >= _CLEAR_TOP and (top.score - runner) >= _CLEAR_MARGIN:
+    margin = top.score - runner
+    # High-confidence path: substring-hit or aria-hit puts the top near 1.0.
+    if top.score >= _CLEAR_TOP and margin >= _CLEAR_MARGIN:
+        return Pick(chosen=top, ambiguous=[])
+    # Decisive-margin path: top is meaningfully ahead, even if its
+    # absolute score reflects only partial token overlap. We require a
+    # 0.55 floor so we don't auto-pick a barely-matching candidate just
+    # because the rest of the page scored zero.
+    if top.score >= _DECISIVE_TOP and margin >= _DECISIVE_MARGIN:
         return Pick(chosen=top, ambiguous=[])
     # Ambiguous: surface up to 5 contenders. We include anything within
     # 0.15 of the top score, capped at 5, so the user has a small list

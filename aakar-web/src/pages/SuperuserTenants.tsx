@@ -6,10 +6,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { superuser as superuserApi } from "@/api";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { PageHeader } from "@/components/PageHeader";
+import { useLabels } from "@/i18n/LanguageProvider";
 import { formatISTDate } from "@/lib/datetime";
 
 export function SuperuserTenantsPage() {
   const queryClient = useQueryClient();
+  const labels = useLabels();
   const tenantsQ = useQuery({
     queryKey: ["superuser", "tenants"],
     queryFn: superuserApi.listTenants,
@@ -50,11 +52,11 @@ export function SuperuserTenantsPage() {
   return (
     <div className="flex h-full flex-col">
       <PageHeader
-        title="Tenants"
-        subtitle="Register a new tenant and seed its first admin user."
+        title={labels.mandalas}
+        subtitle={`Inscribe a new ${labels.mandala.toLowerCase()} and initiate its first ${labels.acharya.toLowerCase()}.`}
       />
-      <div className="relative z-10 grid flex-1 grid-cols-3 gap-6 overflow-hidden p-7">
-        <section className="col-span-2 overflow-y-auto">
+      <div className="relative z-10 grid min-h-0 flex-1 grid-cols-3 gap-6 overflow-hidden p-7">
+        <section className="col-span-2 min-h-0 overflow-y-auto">
           {tenantsQ.error ? <ErrorBanner error={tenantsQ.error} /> : null}
           <table className="w-full text-sm">
             <thead className="text-left text-xs uppercase tracking-wider text-ink-500">
@@ -111,8 +113,8 @@ export function SuperuserTenantsPage() {
         </section>
 
         <aside className="card h-fit p-5">
-          <span className="stamp mb-4">new scene</span>
-          <h2 className="mb-4 text-base font-black uppercase tracking-wide text-ink-50">Register a tenant</h2>
+          <span className="stamp mb-4">new mandala</span>
+          <h2 className="mb-4 text-base font-black uppercase tracking-wide text-ink-50">Inscribe a {labels.mandala.toLowerCase()}</h2>
           <form onSubmit={onSubmit} className="space-y-3">
             <label className="block">
               <span className="panel-title">Slug</span>
@@ -136,7 +138,7 @@ export function SuperuserTenantsPage() {
             </label>
             <label className="block">
               <span className="panel-title">
-                Admin email
+                {labels.acharya} email
               </span>
               <input
                 className="input mt-1"
@@ -148,7 +150,7 @@ export function SuperuserTenantsPage() {
             </label>
             <label className="block">
               <span className="panel-title">
-                Admin password
+                {labels.acharya} password
               </span>
               <input
                 className="input mt-1"
@@ -161,7 +163,7 @@ export function SuperuserTenantsPage() {
             </label>
             {create.error ? <ErrorBanner error={create.error} /> : null}
             <button type="submit" className="btn-primary w-full" disabled={create.isPending}>
-              {create.isPending ? "Creating…" : "Create tenant"}
+              {create.isPending ? "Inscribing…" : `Inscribe ${labels.mandala.toLowerCase()}`}
             </button>
           </form>
         </aside>

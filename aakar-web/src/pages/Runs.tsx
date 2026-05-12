@@ -6,6 +6,7 @@ import type { RunStatus } from "@/api/types";
 import { EmptyState } from "@/components/EmptyState";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { PageHeader } from "@/components/PageHeader";
+import { useLabels, useRunStatusLabel } from "@/i18n/LanguageProvider";
 import { formatISTDateTime } from "@/lib/datetime";
 
 const STATUS_STYLES: Record<RunStatus, { ring: string; text: string; dot: string }> = {
@@ -18,6 +19,8 @@ const STATUS_STYLES: Record<RunStatus, { ring: string; text: string; dot: string
 };
 
 export function RunsPage() {
+  const labels = useLabels();
+  const runStatusLabel = useRunStatusLabel();
   const { data, isLoading, error, refetch, isFetching } = useQuery({
     queryKey: ["runs"],
     queryFn: runsApi.list,
@@ -27,8 +30,8 @@ export function RunsPage() {
   return (
     <div className="flex h-full flex-col">
       <PageHeader
-        title="Runs"
-        subtitle="Live and historical workflow runs."
+        title={labels.yajnas}
+        subtitle={`Live and historical ${labels.sutra.toLowerCase()} runs.`}
         actions={
           <button
             type="button"
@@ -40,23 +43,23 @@ export function RunsPage() {
           </button>
         }
       />
-      <div className="relative z-10 flex-1 overflow-y-auto p-7">
+      <div className="relative z-10 min-h-0 flex-1 overflow-y-auto p-7">
         {isLoading ? (
           <div className="text-sm text-ink-400">Loading…</div>
         ) : error ? (
           <ErrorBanner error={error} />
         ) : !data || data.length === 0 ? (
           <EmptyState
-            title="No runs yet"
-            description="Open a workflow and hit Run to start one."
+            title={`No ${labels.yajnas.toLowerCase()} yet`}
+            description={`Open a ${labels.sutra.toLowerCase()} and run one to begin.`}
           />
         ) : (
           <table className="w-full table-fixed text-sm">
             <thead className="text-left text-xs uppercase tracking-wider text-ink-500">
               <tr>
-                <th className="px-3 py-2 font-medium">Status</th>
-                <th className="px-3 py-2 font-medium">Run</th>
-                <th className="px-3 py-2 font-medium">Workflow</th>
+                <th className="px-3 py-2 font-medium">{labels.status}</th>
+                <th className="px-3 py-2 font-medium">{labels.yajna}</th>
+                <th className="px-3 py-2 font-medium">{labels.sutra}</th>
                 <th className="px-3 py-2 font-medium">Started</th>
                 <th className="px-3 py-2 font-medium">Ended</th>
               </tr>
@@ -69,7 +72,7 @@ export function RunsPage() {
                     <td className="rounded-l-md px-3 py-2.5">
                       <span className={["badge", styles.ring, styles.text].join(" ")}>
                         <span className={["h-1.5 w-1.5 rounded-full", styles.dot].join(" ")} />
-                        {r.status}
+                        {runStatusLabel(r.status)}
                       </span>
                     </td>
                     <td className="px-3 py-2.5">

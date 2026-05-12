@@ -24,7 +24,8 @@ export type ThemeFamily =
   | "neon-grunge"
   | "skeuomorphic"
   | "retro-futurism"
-  | "minimalism";
+  | "minimalism"
+  | "hdfc";
 
 export type ThemeMode = "light" | "dark";
 
@@ -103,6 +104,22 @@ export const THEMES: readonly ThemeMeta[] = [
     mode: "dark",
     label: "Minimalism · dark",
     description: "Near-black with hairline grey separators.",
+  },
+  {
+    id: "hdfc-light",
+    family: "hdfc",
+    familyLabel: "HDFC",
+    mode: "light",
+    label: "HDFC · light",
+    description: "Bank-grade paper white, signature red, deep navy ink.",
+  },
+  {
+    id: "hdfc-dark",
+    family: "hdfc",
+    familyLabel: "HDFC",
+    mode: "dark",
+    label: "HDFC · dark",
+    description: "Vault-night navy with a signal-red pulse.",
   },
 ] as const;
 

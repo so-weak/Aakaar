@@ -8,6 +8,7 @@ import type { User } from "@/api/types";
 import { useAuth } from "@/auth/AuthContext";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { PageHeader } from "@/components/PageHeader";
+import { useLabels } from "@/i18n/LanguageProvider";
 import { formatISTDate } from "@/lib/datetime";
 
 type Role = "tenant_admin" | "tenant_user";
@@ -15,6 +16,7 @@ type Role = "tenant_admin" | "tenant_user";
 export function AdminUsersPage() {
   const queryClient = useQueryClient();
   const { claims } = useAuth();
+  const labels = useLabels();
   const usersQ = useQuery({ queryKey: ["admin", "users"], queryFn: adminApi.listUsers });
 
   const [email, setEmail] = useState("");
@@ -48,9 +50,9 @@ export function AdminUsersPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <PageHeader title="Users" subtitle="Tenant members. Admins can invite, edit, and suspend." />
-      <div className="relative z-10 grid flex-1 grid-cols-3 gap-6 overflow-hidden p-7">
-        <section className="col-span-2 overflow-y-auto">
+      <PageHeader title={labels.sadhakas} subtitle={`Members of your ${labels.mandala.toLowerCase()}. The ${labels.acharya.toLowerCase()} may invite, edit, and suspend.`} />
+      <div className="relative z-10 grid min-h-0 flex-1 grid-cols-3 gap-6 overflow-hidden p-7">
+        <section className="col-span-2 min-h-0 overflow-y-auto">
           {usersQ.error ? <ErrorBanner error={usersQ.error} /> : null}
           {suspend.error ? <ErrorBanner error={suspend.error} /> : null}
           {reactivate.error ? <ErrorBanner error={reactivate.error} /> : null}
@@ -148,7 +150,7 @@ export function AdminUsersPage() {
         <aside className="card h-fit p-5">
           <span className="stamp mb-4">member press</span>
           <h2 className="mb-4 text-base font-black uppercase tracking-wide text-ink-50">
-            Invite a user
+            Initiate a {labels.sadhaka.toLowerCase()}
           </h2>
           <form onSubmit={onSubmit} className="space-y-3">
             <label className="block">
@@ -179,13 +181,13 @@ export function AdminUsersPage() {
                 value={role}
                 onChange={(e) => setRole(e.target.value as Role)}
               >
-                <option value="tenant_user">Tenant user</option>
-                <option value="tenant_admin">Tenant admin</option>
+                <option value="tenant_user">{labels.sadhaka}</option>
+                <option value="tenant_admin">{labels.acharya}</option>
               </select>
             </label>
             {create.error ? <ErrorBanner error={create.error} /> : null}
             <button type="submit" className="btn-primary w-full" disabled={create.isPending}>
-              {create.isPending ? "Creating…" : "Create user"}
+              {create.isPending ? "Initiating…" : `Initiate ${labels.sadhaka.toLowerCase()}`}
             </button>
           </form>
         </aside>
@@ -214,6 +216,7 @@ function EditUserModal({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const labels = useLabels();
   const [role, setRole] = useState<Role>(
     user.role === "tenant_admin" ? "tenant_admin" : "tenant_user",
   );
@@ -238,10 +241,10 @@ function EditUserModal({
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-ink-950/80 backdrop-blur">
       <div className="card w-full max-w-md p-5">
-        <h3 className="mb-1 text-base font-semibold text-ink-50">Edit user</h3>
+        <h3 className="mb-1 text-base font-semibold text-ink-50">Edit {labels.sadhaka.toLowerCase()}</h3>
         <p className="mb-4 text-xs text-ink-400">
           Editing <span className="font-mono text-ink-200">{user.email}</span>. Email cannot be
-          changed; create a new user instead.
+          changed; initiate a new {labels.sadhaka.toLowerCase()} instead.
         </p>
         <form onSubmit={onSubmit} className="space-y-3">
           <label className="block">
@@ -251,8 +254,8 @@ function EditUserModal({
               value={role}
               onChange={(e) => setRole(e.target.value as Role)}
             >
-              <option value="tenant_user">Tenant user</option>
-              <option value="tenant_admin">Tenant admin</option>
+              <option value="tenant_user">{labels.sadhaka}</option>
+              <option value="tenant_admin">{labels.acharya}</option>
             </select>
           </label>
           <label className="block">

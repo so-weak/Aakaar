@@ -219,13 +219,20 @@ class LocalExecutor:
         defaults = (per_alias.get(alias) or {}).get("input_defaults") or {}
         if not defaults:
             return inputs
-        # Don't overwrite anything the planner explicitly set; only fill
-        # holes. Display-only fields like `display_name` aren't part of
-        # any capability's input_schema, so they're harmless to copy and
-        # get filtered out at the input-validation step anyway.
+        # Fill holes from the grant. A "hole" means: key missing OR value
+        # is None or "". The planner sometimes emits `login_url: null`
+        # explicitly (LLMs are eager to include every declared field even
+        # when they don't know the value); treating those nulls as "set"
+        # would override the per-tenant default and surface as a runtime
+        # error. Real overrides (a non-empty value the planner deliberately
+        # chose) still win. Display-only fields like `display_name` aren't
+        # part of any capability's input_schema, so they're harmless to
+        # copy and get filtered out at the input-validation step anyway.
         merged: dict[str, Any] = dict(inputs)
         for k, v in defaults.items():
-            merged.setdefault(k, v)
+            existing = merged.get(k)
+            if existing is None or existing == "":
+                merged[k] = v
         return merged
 
     async def _maybe_emit_live_screen(self, node: Node, ctx: RunContext) -> None:

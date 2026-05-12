@@ -7,10 +7,12 @@ import { capabilities as capabilitiesApi, superuser as superuserApi } from "@/ap
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { PageHeader } from "@/components/PageHeader";
 import { VaultSections, type VaultApi } from "@/components/Vault";
+import { useLabels } from "@/i18n/LanguageProvider";
 import { formatISTDate } from "@/lib/datetime";
 
 export function SuperuserTenantDetailPage() {
   const { id = "" } = useParams<{ id: string }>();
+  const labels = useLabels();
 
   const tenantsQ = useQuery({
     queryKey: ["superuser", "tenants"],
@@ -47,21 +49,21 @@ export function SuperuserTenantDetailPage() {
   return (
     <div className="flex h-full flex-col">
       <PageHeader
-        title={tenant ? `Tenant · ${tenant.name}` : "Tenant"}
+        title={tenant ? `${labels.mandala} · ${tenant.name}` : labels.mandala}
         subtitle={
           tenant ? `slug: ${tenant.slug} · status: ${tenant.status}` : "Loading…"
         }
         actions={
           <Link to="/superuser/tenants" className="btn-ghost">
             <ArrowLeft size={14} />
-            All tenants
+            All {labels.mandalas.toLowerCase()}
           </Link>
         }
       />
 
-      <div className="relative z-10 flex-1 space-y-8 overflow-y-auto p-7">
+      <div className="relative z-10 min-h-0 flex-1 space-y-8 overflow-y-auto p-7">
         <section>
-          <h2 className="panel-title mb-3">Users</h2>
+          <h2 className="panel-title mb-3">{labels.sadhakas}</h2>
           {usersQ.error ? <ErrorBanner error={usersQ.error} /> : null}
           <table className="w-full text-sm">
             <thead className="text-left text-xs uppercase tracking-wider text-ink-500">
@@ -98,7 +100,7 @@ export function SuperuserTenantDetailPage() {
             </tbody>
           </table>
           {usersQ.data && usersQ.data.length === 0 ? (
-            <p className="mt-3 text-sm text-ink-500">No users in this tenant.</p>
+            <p className="mt-3 text-sm text-ink-500">No {labels.sadhakas.toLowerCase()} in this {labels.mandala.toLowerCase()}.</p>
           ) : null}
         </section>
 

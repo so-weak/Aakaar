@@ -19,11 +19,13 @@ import type { ChatSession, RawChatResponse } from "@/api/types";
 import { DagViewer } from "@/components/DagViewer";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { PageHeader } from "@/components/PageHeader";
+import { useLabels } from "@/i18n/LanguageProvider";
 
 export function ChatPage() {
   const { id: routeId } = useParams<{ id?: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const labels = useLabels();
 
   const sessionsQ = useQuery({
     queryKey: ["chat-sessions"],
@@ -51,10 +53,10 @@ export function ChatPage() {
   return (
     <div className="flex h-full flex-col">
       <PageHeader
-        title="Chat"
-        subtitle="Iterate on a workflow with the planner. Sessions persist across reloads."
+        title={labels.samvada}
+        subtitle={`Voice your ${labels.sankalpa.toLowerCase()}; the planner shapes a ${labels.sutra.toLowerCase()}. Persists across reloads.`}
       />
-      <div className="grid flex-1 grid-cols-[14rem_1fr] overflow-hidden">
+      <div className="grid min-h-0 flex-1 grid-cols-[14rem_1fr] overflow-hidden">
         <SessionList
           sessions={sessionsQ.data ?? []}
           activeId={activeId}
@@ -66,7 +68,7 @@ export function ChatPage() {
           <SessionPane key={activeId} sessionId={activeId} />
         ) : (
           <div className="grid place-items-center text-sm text-ink-500">
-            {sessionsQ.isLoading ? "Loading sessions…" : "No active session."}
+            {sessionsQ.isLoading ? `Loading ${labels.samvadas.toLowerCase()}…` : `No active ${labels.samvada.toLowerCase()}.`}
           </div>
         )}
       </div>
@@ -87,21 +89,22 @@ function SessionList({
   onNew: () => void;
   isCreating: boolean;
 }) {
+  const labels = useLabels();
   return (
     <aside className="flex flex-col border-r border-ink-800 bg-ink-900/30">
       <div className="flex items-center justify-between gap-2 border-b border-ink-800 px-3 py-2">
-        <span className="panel-title">Sessions</span>
+        <span className="panel-title">{labels.samvadas}</span>
         <button
           type="button"
           className="btn-ghost text-xs"
           onClick={onNew}
           disabled={isCreating}
-          title="New session"
+          title={`New ${labels.samvada.toLowerCase()}`}
         >
           <Plus size={14} /> New
         </button>
       </div>
-      <ul className="flex-1 overflow-y-auto p-2">
+      <ul className="min-h-0 flex-1 overflow-y-auto p-2">
         {sessions.map((s) => (
           <li key={s.id}>
             <button
@@ -126,7 +129,7 @@ function SessionList({
           </li>
         ))}
         {sessions.length === 0 ? (
-          <li className="px-3 py-4 text-xs text-ink-500">No sessions yet.</li>
+          <li className="px-3 py-4 text-xs text-ink-500">No {labels.samvadas.toLowerCase()} yet.</li>
         ) : null}
       </ul>
     </aside>
@@ -135,6 +138,7 @@ function SessionList({
 
 function SessionPane({ sessionId }: { sessionId: string }) {
   const queryClient = useQueryClient();
+  const labels = useLabels();
   const [input, setInput] = useState("");
   const [confirmingSave, setConfirmingSave] = useState(false);
   const [name, setName] = useState("");
@@ -192,10 +196,10 @@ function SessionPane({ sessionId }: { sessionId: string }) {
   }
 
   return (
-    <div className="grid h-full grid-cols-2 overflow-hidden">
+    <div className="grid h-full min-h-0 grid-cols-2 overflow-hidden">
       {/* Conversation column */}
-      <section className="flex h-full flex-col border-r border-ink-800">
-        <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-6 py-6">
+      <section className="flex h-full min-h-0 flex-col border-r border-ink-800">
+        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-6 py-6">
           {session.messages.length === 0 ? (
             <div className="text-sm text-ink-400">
               <p>Try something like:</p>
@@ -234,7 +238,7 @@ function SessionPane({ sessionId }: { sessionId: string }) {
                 onSubmit(e as unknown as FormEvent);
               }
             }}
-            placeholder="Describe a workflow or refine the current draft… (⌘+Enter)"
+            placeholder={`Voice a ${labels.sankalpa.toLowerCase()}, or refine the current draft… (⌘+Enter)`}
             rows={2}
             className="input resize-none"
           />
@@ -245,7 +249,7 @@ function SessionPane({ sessionId }: { sessionId: string }) {
       </section>
 
       {/* Draft column */}
-      <section className="flex h-full flex-col">
+      <section className="flex h-full min-h-0 flex-col">
         <DraftHeader
           session={session}
           name={name}
@@ -264,7 +268,7 @@ function SessionPane({ sessionId }: { sessionId: string }) {
           }}
           isSaving={save.isPending}
           onDelete={() => {
-            if (window.confirm("Delete this chat session? Messages and draft will be lost.")) {
+            if (window.confirm(`Delete this ${labels.samvada.toLowerCase()}? Messages and draft ${labels.sutra.toLowerCase()} will be lost.`)) {
               remove.mutate();
             }
           }}
@@ -274,14 +278,14 @@ function SessionPane({ sessionId }: { sessionId: string }) {
             <ErrorBanner error={save.error} />
           </div>
         ) : null}
-        <div className="flex-1 overflow-hidden">
+        <div className="min-h-0 flex-1 overflow-hidden">
           {session.draft_dag ? (
             <DagViewer dag={session.draft_dag} />
           ) : (
             <div className="grid h-full place-items-center px-6 text-center text-sm text-ink-500">
               <div>
                 <MessageSquare size={28} className="mx-auto text-ink-700" />
-                <p className="mt-3">The DAG will appear here once the planner replies.</p>
+                <p className="mt-3">The {labels.yantra.toLowerCase()} will appear here once the planner replies.</p>
               </div>
             </div>
           )}
@@ -323,12 +327,14 @@ function DraftHeader({
   isSaving: boolean;
   onDelete: () => void;
 }) {
+  const labels = useLabels();
   const isFirstSave = session.workflow_id == null;
   const canSave = session.draft_dag != null && (isFirstSave || session.is_dirty);
+  const sutraLower = labels.sutra.toLowerCase();
   const buttonLabel = isFirstSave
-    ? "Save workflow"
+    ? `Save ${sutraLower}`
     : session.is_dirty
-      ? `Update workflow (v${(session.saved_version ?? 0) + 1})`
+      ? `Update ${sutraLower} (v${(session.saved_version ?? 0) + 1})`
       : `Saved · v${session.saved_version}`;
 
   return (
@@ -337,7 +343,7 @@ function DraftHeader({
         {isFirstSave ? (
           <input
             className="input max-w-xs"
-            placeholder="Workflow name"
+            placeholder={`${labels.sutra} name`}
             value={name}
             onChange={(e) => setName(e.target.value)}
           />
@@ -356,7 +362,7 @@ function DraftHeader({
           type="button"
           className="btn-ghost text-rose-300 hover:bg-rose-500/10"
           onClick={onDelete}
-          title="Delete session"
+          title={`Delete ${labels.samvada.toLowerCase()}`}
         >
           <Trash2 size={14} />
         </button>
@@ -389,6 +395,7 @@ function SaveConfirmModal({
   onConfirm: () => void;
   isSaving: boolean;
 }) {
+  const labels = useLabels();
   const isFirstSave = session.workflow_id == null;
   const dag = session.draft_dag;
   const nodeCount = dag?.nodes.length ?? 0;
@@ -398,12 +405,12 @@ function SaveConfirmModal({
     <div className="fixed inset-0 z-50 grid place-items-center bg-ink-950/80 backdrop-blur">
       <div className="card w-full max-w-md p-5">
         <h3 className="mb-2 text-base font-semibold text-ink-50">
-          {isFirstSave ? "Save workflow" : "Update saved workflow"}
+          {isFirstSave ? `Save ${labels.sutra.toLowerCase()}` : `Update saved ${labels.sutra.toLowerCase()}`}
         </h3>
         <p className="text-sm text-ink-300">
           {isFirstSave
-            ? "Persist the current draft as a new workflow. Future runs will execute this DAG."
-            : `This will write a new version (v${(session.saved_version ?? 0) + 1}) of the saved workflow. Existing runs of older versions are unaffected.`}
+            ? `Persist the current draft as a new ${labels.sutra.toLowerCase()}. Future ${labels.yajnas.toLowerCase()} will use this ${labels.yantra.toLowerCase()}.`
+            : `This will write a new version (v${(session.saved_version ?? 0) + 1}) of the saved ${labels.sutra.toLowerCase()}. Existing ${labels.yajnas.toLowerCase()} of older versions are unaffected.`}
         </p>
         <div className="mt-3 rounded-md border border-ink-800 bg-ink-900/40 px-3 py-2 text-xs text-ink-400">
           <div>
@@ -456,13 +463,14 @@ function UserBubble({ text }: { text: string }) {
 }
 
 function PlannerBubble({ response }: { response: RawChatResponse }) {
+  const labels = useLabels();
   if (response.kind === "dag" && response.dag) {
     const dag = response.dag;
     return (
       <div className="flex justify-start">
         <div className="card max-w-[85%] px-4 py-3 [overflow-wrap:anywhere]">
           <div className="mb-2 flex items-center gap-2 text-xs font-medium text-emerald-300">
-            <CheckCircle2 size={14} /> Drafted a workflow
+            <CheckCircle2 size={14} /> Drafted a {labels.sutra.toLowerCase()}
           </div>
           <p className="break-words text-sm text-ink-100">{response.rationale}</p>
           <p className="mt-2 text-xs text-ink-500">

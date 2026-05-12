@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -137,35 +138,70 @@ async def handler(ctx: ActivityContext, inputs: dict[str, Any]) -> dict[str, Any
     # what they want.
     if not target_hint:
         file = await sess.download(trigger_selector=trigger_selector, url=url)
-        key = f"runs/{ctx.run_id}/downloads/{uuid.uuid4().hex}_{file.filename}"
-        obj = ctx.object_store.put(str(ctx.tenant_id), key, file.content)
-        logger.info(
-            "cap.file_download ok uri=%s filename=%s bytes=%d",
-            obj.uri,
-            file.filename,
-            len(file.content),
+    else:
+        # target_hint path — try discovery, click, see if a download
+        # fires. Many sites bury reports behind a section page (e.g.
+        # nbbl's "Master Data" → "Biller Master"); the first picker hit
+        # may navigate instead of triggering a download. Catch that,
+        # re-scan the new page, and try the next match. Capped to a
+        # small number of iterations so a misconfigured page can't loop
+        # forever.
+        logger.debug("cap.file_download target_hint=%r", target_hint)
+        file = await _download_with_nav_recovery(
+            ctx, sess, target_hint=target_hint, max_steps=3
         )
-        return {"uri": obj.uri, "filename": file.filename}
 
-    # target_hint path — try discovery, click, see if a download fires.
-    # Many sites bury reports behind a section page (e.g. nbbl's "Master
-    # Data" → "Biller Master"); the first picker hit may navigate
-    # instead of triggering a download. Catch that, re-scan the new
-    # page, and try the next match. Capped to a small number of
-    # iterations so a misconfigured page can't loop forever.
-    logger.debug("cap.file_download target_hint=%r", target_hint)
-    file = await _download_with_nav_recovery(
-        ctx, sess, target_hint=target_hint, max_steps=3
-    )
     key = f"runs/{ctx.run_id}/downloads/{uuid.uuid4().hex}_{file.filename}"
     obj = ctx.object_store.put(str(ctx.tenant_id), key, file.content)
+    mirror_path = _mirror_to_disk(ctx.download_mirror_dir, file.filename, file.content)
     logger.info(
-        "cap.file_download ok uri=%s filename=%s bytes=%d (target_hint)",
+        "cap.file_download ok uri=%s filename=%s bytes=%d mirror=%s",
         obj.uri,
         file.filename,
         len(file.content),
+        mirror_path or "-",
     )
     return {"uri": obj.uri, "filename": file.filename}
+
+
+def _mirror_to_disk(
+    mirror_dir: Path | None, filename: str, content: bytes
+) -> Path | None:
+    """Write `content` to `mirror_dir` on the worker host. Returns the
+    final path, or None if mirroring is disabled or fails.
+
+    Filename is sanitized to its basename so a malicious server can't
+    write outside the mirror dir via "../etc/passwd". On collision we
+    append "(1)", "(2)", etc. — same convention as a browser. Errors
+    are swallowed (logged) because the object store already holds the
+    canonical copy; a broken mirror must not fail the run.
+    """
+    if mirror_dir is None:
+        return None
+    try:
+        base = Path(filename).name or "download.bin"
+        mirror_dir.mkdir(parents=True, exist_ok=True)
+        target = mirror_dir / base
+        if target.exists():
+            stem = target.stem
+            suffix = target.suffix
+            n = 1
+            while True:
+                candidate = mirror_dir / f"{stem} ({n}){suffix}"
+                if not candidate.exists():
+                    target = candidate
+                    break
+                n += 1
+        target.write_bytes(content)
+        return target
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "cap.file_download: mirror to %s failed for %r",
+            mirror_dir,
+            filename,
+            exc_info=True,
+        )
+        return None
 
 
 async def _download_with_nav_recovery(

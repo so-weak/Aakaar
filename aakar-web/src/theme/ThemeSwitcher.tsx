@@ -20,6 +20,7 @@ const FAMILY_ORDER: ThemeFamily[] = [
   "skeuomorphic",
   "retro-futurism",
   "minimalism",
+  "hdfc",
 ];
 
 function groupedThemes(): Array<{
@@ -176,4 +177,6 @@ const SWATCH: Record<ThemeMeta["id"], [string, string, string]> = {
   "retro-futurism-light": ["#fff5fb", "#e840b2", "#3cb4dc"],
   "minimalism-light": ["#ffffff", "#08090c", "#be421e"],
   "minimalism-dark": ["#0e0e0d", "#f8f8f7", "#dc6e3c"],
+  "hdfc-light": ["#ffffff", "#004c8f", "#ed232a"],
+  "hdfc-dark": ["#09162f", "#4fa3e0", "#ff3d44"],
 };

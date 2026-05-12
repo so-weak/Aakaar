@@ -5,11 +5,13 @@ import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { ApiError } from "@/api/client";
 import { useAuth } from "@/auth/AuthContext";
 import { MorphLogo } from "@/components/MorphLogo";
+import { useLabels } from "@/i18n/LanguageProvider";
 
 export function LoginPage() {
   const { login, claims, loading } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const labels = useLabels();
   const from = (location.state as { from?: string } | null)?.from ?? "/";
 
   const [email, setEmail] = useState("");
@@ -52,7 +54,7 @@ export function LoginPage() {
           <div className="text-center">
             <div className="headline text-4xl text-ink-50">Aakar</div>
             <div className="mt-2 font-mono text-[11px] uppercase tracking-[0.28em] text-accent-200">
-              workflow platform
+              the workshop of forms
             </div>
           </div>
         </div>
@@ -60,7 +62,7 @@ export function LoginPage() {
         <form onSubmit={onSubmit} className="card space-y-4 p-6">
           <div>
             <span className="stamp">secure desk</span>
-            <h1 className="headline mt-3 text-xl text-ink-50">Sign in</h1>
+            <h1 className="headline mt-3 text-xl text-ink-50">{labels.pravesha}</h1>
           </div>
 
           <label className="block">
@@ -95,7 +97,7 @@ export function LoginPage() {
           ) : null}
 
           <button type="submit" className="btn-primary w-full" disabled={loading}>
-            {loading ? "Signing in…" : "Sign in"}
+            {loading ? labels.praveshing : labels.pravesha}
           </button>
         </form>
       </div>

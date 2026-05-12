@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 
 import { useAuth } from "@/auth/AuthContext";
 import { ProtectedRoute } from "@/auth/ProtectedRoute";
+import { EasterEggs } from "@/components/EasterEggs";
 import { Layout } from "@/components/Layout";
 import { AdminGrantsPage } from "@/pages/AdminGrants";
 import { AdminUsersPage } from "@/pages/AdminUsers";
@@ -20,7 +21,9 @@ import { WorkflowsPage } from "@/pages/Workflows";
 
 export default function App() {
   return (
-    <Routes>
+    <>
+      <EasterEggs />
+      <Routes>
       <Route path="/login" element={<LoginPage />} />
 
       <Route
@@ -94,7 +97,8 @@ export default function App() {
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+      </Routes>
+    </>
   );
 }
 

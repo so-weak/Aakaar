@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from aakar.shared.registry import Registry
@@ -61,3 +62,10 @@ class ActivityContext:
     login-form selector among several plausible candidates). Capabilities
     must NEVER use this for action selection — that violates the spine.
     Use it only for narrow, read-only judgments on already-fetched data."""
+
+    download_mirror_dir: Path | None = None
+    """When set, cap.file_download writes a sibling copy of every
+    downloaded file into this directory on the worker host. Object
+    storage remains the canonical location; this is a deployment-side
+    convenience (e.g. point it at `~/Downloads` in dev). None disables
+    mirroring."""

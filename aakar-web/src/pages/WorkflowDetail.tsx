@@ -9,12 +9,14 @@ import { useAuth } from "@/auth/AuthContext";
 import { DagViewer } from "@/components/DagViewer";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { PageHeader } from "@/components/PageHeader";
+import { useLabels } from "@/i18n/LanguageProvider";
 
 export function WorkflowDetailPage() {
   const { id = "" } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { claims } = useAuth();
+  const labels = useLabels();
 
   const workflowQ = useQuery({
     queryKey: ["workflow", id],
@@ -89,7 +91,7 @@ export function WorkflowDetailPage() {
               onClick={() => start.mutate()}
               disabled={start.isPending}
             >
-              <Play size={15} /> Run
+              <Play size={15} /> Run {labels.yajna.toLowerCase()}
             </button>
           </>
         }

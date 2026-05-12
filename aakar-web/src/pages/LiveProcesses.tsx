@@ -14,6 +14,7 @@ import { ErrorBanner } from "@/components/ErrorBanner";
 import { LiveDagViewer } from "@/components/LiveDagViewer";
 import { LiveScreenPanel } from "@/components/LiveScreenPanel";
 import { PageHeader } from "@/components/PageHeader";
+import { useLabels, useRunStatusLabel } from "@/i18n/LanguageProvider";
 import { formatISTTime } from "@/lib/datetime";
 
 /**
@@ -27,6 +28,7 @@ import { formatISTTime } from "@/lib/datetime";
  */
 export function LiveProcessesPage() {
   const { claims } = useAuth();
+  const labels = useLabels();
   const isSuper = claims?.role === "superuser";
 
   const runsQ = useQuery({
@@ -56,11 +58,11 @@ export function LiveProcessesPage() {
   return (
     <div className="flex h-full flex-col">
       <PageHeader
-        title="Live processes"
+        title={labels.pratyaksha}
         subtitle={
           isSuper
-            ? `Cross-tenant view · ${runs.length} active`
-            : `${runs.length} active in your tenant`
+            ? `All ${labels.mandalas.toLowerCase()} · ${runs.length} ${labels.running.toLowerCase()}`
+            : `${runs.length} ${labels.running.toLowerCase()} in your ${labels.mandala.toLowerCase()}`
         }
         actions={
           <span className="font-mono text-[10px] uppercase tracking-[0.22em] text-signal-cyan">
@@ -70,18 +72,18 @@ export function LiveProcessesPage() {
         }
       />
 
-      <div className="relative z-10 flex-1 overflow-y-auto p-7">
+      <div className="relative z-10 min-h-0 flex-1 overflow-y-auto p-7">
         {runsQ.error ? <ErrorBanner error={runsQ.error} /> : null}
 
         {runs.length === 0 && !runsQ.isLoading ? (
           <div className="card mx-auto max-w-md p-8 text-center">
             <h3 className="mb-1 text-base font-semibold text-ink-100">
-              No active runs
+              No {labels.yajnas.toLowerCase()} {labels.running.toLowerCase()}
             </h3>
             <p className="text-sm text-ink-400">
               {isSuper
-                ? "Nothing is running across any tenant right now."
-                : "Nothing is running. Start a workflow from Workflows or Chat."}
+                ? `Nothing is running across any ${labels.mandala.toLowerCase()} right now.`
+                : `Nothing is running. Start a ${labels.sutra.toLowerCase()} from the ${labels.sutras.toLowerCase()} list or open the ${labels.samvada.toLowerCase()}.`}
             </p>
           </div>
         ) : (
@@ -207,6 +209,7 @@ function RunTile({
 }
 
 function RunStatusBadge({ status }: { status: RunStatus }) {
+  const runStatusLabel = useRunStatusLabel();
   const map: Record<RunStatus, string> = {
     queued: "ring-ink-700 text-ink-300",
     running: "ring-signal-cyan/40 text-signal-cyan",
@@ -215,5 +218,5 @@ function RunStatusBadge({ status }: { status: RunStatus }) {
     failed: "ring-rose-400/40 text-rose-300",
     cancelled: "ring-ink-700 text-ink-400",
   };
-  return <span className={`badge ${map[status]}`}>{status}</span>;
+  return <span className={`badge ${map[status]}`}>{runStatusLabel(status)}</span>;
 }

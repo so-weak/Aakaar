@@ -17,26 +17,32 @@ import {
 
 import { useAuth } from "@/auth/AuthContext";
 import { MorphLogo } from "@/components/MorphLogo";
+import { LanguageSwitcher } from "@/i18n/LanguageSwitcher";
+import { useLabels } from "@/i18n/LanguageProvider";
+import type { LabelMap } from "@/i18n/labels";
 import { ThemeSwitcher } from "@/theme/ThemeSwitcher";
 
 interface NavItem {
   to: string;
-  label: string;
+  labelKey: keyof LabelMap;
   icon: typeof Activity;
   visibleTo: ("superuser" | "tenant_admin" | "tenant_user")[];
 }
 
+// Nav items reference label *keys* — the label string is resolved against
+// the active language at render time so flipping the language switcher
+// re-labels the sidebar instantly without a remount.
 const NAV: NavItem[] = [
-  { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard, visibleTo: ["superuser", "tenant_admin", "tenant_user"] },
-  { to: "/chat", label: "Chat", icon: MessageSquare, visibleTo: ["tenant_admin", "tenant_user"] },
-  { to: "/workflows", label: "Workflows", icon: Workflow, visibleTo: ["tenant_admin", "tenant_user"] },
-  { to: "/runs", label: "Runs", icon: Activity, visibleTo: ["tenant_admin", "tenant_user"] },
-  { to: "/live", label: "Live", icon: Activity, visibleTo: ["tenant_admin", "superuser"] },
-  { to: "/capabilities", label: "Capabilities", icon: Network, visibleTo: ["superuser", "tenant_admin", "tenant_user"] },
-  { to: "/admin/users", label: "Users", icon: Users, visibleTo: ["tenant_admin"] },
-  { to: "/admin/grants", label: "Vault", icon: KeyRound, visibleTo: ["tenant_admin"] },
-  { to: "/superuser/tenants", label: "Tenants", icon: ShieldCheck, visibleTo: ["superuser"] },
-  { to: "/superuser/users", label: "All users", icon: Users, visibleTo: ["superuser"] },
+  { to: "/dashboard", labelKey: "darshana", icon: LayoutDashboard, visibleTo: ["superuser", "tenant_admin", "tenant_user"] },
+  { to: "/chat", labelKey: "samvada", icon: MessageSquare, visibleTo: ["tenant_admin", "tenant_user"] },
+  { to: "/workflows", labelKey: "sutras", icon: Workflow, visibleTo: ["tenant_admin", "tenant_user"] },
+  { to: "/runs", labelKey: "yajnas", icon: Activity, visibleTo: ["tenant_admin", "tenant_user"] },
+  { to: "/live", labelKey: "pratyaksha", icon: Activity, visibleTo: ["tenant_admin", "superuser"] },
+  { to: "/capabilities", labelKey: "vidyas", icon: Network, visibleTo: ["superuser", "tenant_admin", "tenant_user"] },
+  { to: "/admin/users", labelKey: "sadhakas", icon: Users, visibleTo: ["tenant_admin"] },
+  { to: "/admin/grants", labelKey: "kosha", icon: KeyRound, visibleTo: ["tenant_admin"] },
+  { to: "/superuser/tenants", labelKey: "mandalas", icon: ShieldCheck, visibleTo: ["superuser"] },
+  { to: "/superuser/users", labelKey: "sadhakas", icon: Users, visibleTo: ["superuser"] },
 ];
 
 const COLLAPSED_KEY = "aakar.sidebar.collapsed";
@@ -44,6 +50,7 @@ const COLLAPSED_KEY = "aakar.sidebar.collapsed";
 export function Layout() {
   const { claims, logout } = useAuth();
   const navigate = useNavigate();
+  const labels = useLabels();
 
   // Persisted in sessionStorage so each tab keeps its own preference,
   // matching how we store the auth session.
@@ -101,7 +108,7 @@ export function Layout() {
             <NavLink
               key={item.to}
               to={item.to}
-              title={collapsed ? item.label : undefined}
+              title={collapsed ? labels[item.labelKey] : undefined}
               className={({ isActive }) =>
                 [
                   "nav-item group",
@@ -114,7 +121,7 @@ export function Layout() {
                 size={17}
                 className="nav-icon shrink-0 transition group-hover:text-accent-200"
               />
-              {collapsed ? null : <span>{item.label}</span>}
+              {collapsed ? null : <span>{labels[item.labelKey]}</span>}
             </NavLink>
           ))}
         </nav>
@@ -128,7 +135,7 @@ export function Layout() {
           {collapsed ? (
             <div
               className="mb-2 grid h-9 w-full place-items-center rounded-control border border-ink-700 bg-ink-900/70 font-mono text-[11px] font-bold uppercase text-signal-cyan"
-              title={`${claims.email} · ${roleLabel(claims)}`}
+              title={`${claims.email} · ${roleLabel(claims, labels)}`}
             >
               {initials(claims.email)}
             </div>
@@ -138,10 +145,14 @@ export function Layout() {
                 {claims.email}
               </div>
               <div className="mt-1 font-mono text-[10px] uppercase tracking-[0.18em] text-signal-cyan">
-                {roleLabel(claims)}
+                {roleLabel(claims, labels)}
               </div>
             </div>
           )}
+
+          <div className="mb-1.5">
+            <LanguageSwitcher collapsed={collapsed} />
+          </div>
 
           <div className="mb-1.5">
             <ThemeSwitcher collapsed={collapsed} />
@@ -157,10 +168,10 @@ export function Layout() {
               logout();
               navigate("/login");
             }}
-            title={collapsed ? "Log out" : undefined}
+            title={collapsed ? labels.nirgama : undefined}
           >
             <LogOut size={15} />
-            {collapsed ? null : "Log out"}
+            {collapsed ? null : labels.nirgama}
           </button>
           <button
             type="button"
@@ -186,7 +197,7 @@ export function Layout() {
 
       <main className="relative flex flex-1 flex-col overflow-hidden">
         <div className="pointer-events-none absolute right-8 top-6 z-0 hidden font-mono text-[10px] uppercase tracking-[0.35em] text-ink-700 lg:block">
-          natural language / dag / action
+          sankalpa / yantra / kriya
         </div>
         <Outlet />
       </main>
@@ -196,22 +207,25 @@ export function Layout() {
 
 /**
  * Compose the role label shown in the sidebar.
- *  - superuser              → "superuser"
- *  - tenant_admin in PayOps → "PayOps admin"
- *  - tenant_user in PayOps  → "PayOps user"
+ *  - superuser              → "Pracharya"
+ *  - tenant_admin in PayOps → "PayOps Acharya"
+ *  - tenant_user in PayOps  → "PayOps Sadhaka"
  *
  * Falls back to the raw role if no tenant label is known (e.g. a token
  * minted before the backend started returning tenant info).
  */
-function roleLabel(claims: {
-  role: "superuser" | "tenant_admin" | "tenant_user";
-  tenant_name?: string | null;
-  tenant_slug?: string | null;
-}): string {
-  if (claims.role === "superuser") return "superuser";
+function roleLabel(
+  claims: {
+    role: "superuser" | "tenant_admin" | "tenant_user";
+    tenant_name?: string | null;
+    tenant_slug?: string | null;
+  },
+  labels: LabelMap,
+): string {
+  if (claims.role === "superuser") return labels.pracharya;
   const label = claims.tenant_name || claims.tenant_slug;
-  if (!label) return claims.role.replace("_", " ");
-  const suffix = claims.role === "tenant_admin" ? "admin" : "user";
+  const suffix = claims.role === "tenant_admin" ? labels.acharya : labels.sadhaka;
+  if (!label) return suffix;
   return `${label} ${suffix}`;
 }
 

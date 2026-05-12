@@ -5,6 +5,7 @@ import './LoginPage.css'
 const VALID_USERNAME = 'admin'
 const VALID_PASSWORD = 'nbbl@123'
 const CAPTCHA_VALUE = 'E5HYVW'
+const CAPTCHA_ENABLED = import.meta.env.VITE_LOGIN_CAPTCHA_ENABLED !== 'false'
 
 export default function LoginPage({ onLogin }) {
   const navigate = useNavigate()
@@ -17,11 +18,11 @@ export default function LoginPage({ onLogin }) {
     e.preventDefault()
     setError('')
 
-    if (!username || !password || !captchaInput) {
+    if (!username || !password || (CAPTCHA_ENABLED && !captchaInput)) {
       setError('Please fill in all fields.')
       return
     }
-    if (captchaInput.toUpperCase() !== CAPTCHA_VALUE) {
+    if (CAPTCHA_ENABLED && captchaInput.toUpperCase() !== CAPTCHA_VALUE) {
       setError('Captcha does not match. Please try again.')
       setCaptchaInput('')
       return
@@ -68,24 +69,26 @@ export default function LoginPage({ onLogin }) {
             />
           </label>
 
-          <div className="field">
-            <span className="field-label">Captcha</span>
-            <div className="captcha-row">
-              <img
-                src="/captcha.png"
-                alt="Captcha"
-                className="captcha-image"
+          {CAPTCHA_ENABLED && (
+            <div className="field">
+              <span className="field-label">Captcha</span>
+              <div className="captcha-row">
+                <img
+                  src="/captcha.png"
+                  alt="Captcha"
+                  className="captcha-image"
+                />
+              </div>
+              <input
+                type="text"
+                value={captchaInput}
+                onChange={(e) => setCaptchaInput(e.target.value)}
+                placeholder="Enter captcha shown above"
+                className="captcha-input"
+                maxLength={6}
               />
             </div>
-            <input
-              type="text"
-              value={captchaInput}
-              onChange={(e) => setCaptchaInput(e.target.value)}
-              placeholder="Enter captcha shown above"
-              className="captcha-input"
-              maxLength={6}
-            />
-          </div>
+          )}
 
           {error && <div className="login-error">{error}</div>}
 

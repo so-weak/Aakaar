@@ -99,8 +99,18 @@ async def test_file_upload_full_flow(tmp_path: Path) -> None:
     assert tail[0][1]["selector"] == "input[type='file']"
     assert tail[2][1]["selector"] == "button#upload"
     assert tail[3][1]["selector"] == "div.toast.success"
-    # Playwright receives a temp file path; it gets unlinked after upload.
-    assert "tmp" in str(local_path).lower() or "temp" in str(local_path).lower()
+    # Playwright receives a path whose basename is the user-facing filename
+    # (so the third-party server records `upload.csv`, not `tmpXXXXXX.csv`),
+    # and the staging directory lives under the system temp dir.
+    import tempfile as _tempfile
+    assert local_path.name == "upload.csv"
+    assert local_path.parent.name.startswith("aakar-upload-")
+    assert str(local_path).startswith(_tempfile.gettempdir())
+    # The staging dir is removed in the handler's `finally` after the
+    # upload completes — no leftover files.
+    assert not local_path.parent.exists(), (
+        f"staging dir not cleaned up: {local_path.parent}"
+    )
 
 
 @pytest.mark.asyncio
@@ -161,6 +171,35 @@ async def test_file_upload_minimal_no_submit_no_success(tmp_path: Path) -> None:
     assert [c[0] for c in tail] == ["wait_for", "upload"]
     assert tail[0][1]["selector"] == "#picker"
     assert tail[1][1]["selector"] == "#picker"
+
+
+def test_user_facing_basename_recovers_original_filename() -> None:
+    """Storage keys are `<uuid32hex>_<original>.ext` (file.read_local +
+    cap.file_download both write that shape). When we stage for upload
+    we want the original name back so the third party records something
+    a human can recognise — `biller_transactions_2026_05.csv`, not
+    `tmpXXXXXX.csv` and not `<uuid>_biller_transactions_2026_05.csv`."""
+    from aakar.capabilities.file_upload import _user_facing_basename
+
+    uuid_prefixed = (
+        "aakar://t/6ce6045c-877e-4cd8-a222-a1375202ecc1/runs/"
+        "f4f1f8b5-e09d-422f-8726-910268b1765f/downloads/"
+        "72e283765f6347f6abc12345abc12345_biller_transactions_2026_05.csv"
+    )
+    assert _user_facing_basename(uuid_prefixed) == "biller_transactions_2026_05.csv"
+
+    # Already-clean key (no uuid prefix) — keep as-is.
+    plain = "aakar://t/abc/stage/upload.csv"
+    assert _user_facing_basename(plain) == "upload.csv"
+
+    # A 32-hex-only filename (no underscore-separated original) should
+    # be kept verbatim — we don't strip the uuid in that case because
+    # there's nothing else to fall back to.
+    hex_only = "aakar://t/abc/runs/r/downloads/72e283765f6347f6abc12345abc12345.csv"
+    assert _user_facing_basename(hex_only) == "72e283765f6347f6abc12345abc12345.csv"
+
+    # Degenerate URI — defensive fallback.
+    assert _user_facing_basename("") == "upload.bin"
 
 
 def test_file_upload_rejects_non_managed_uri() -> None:

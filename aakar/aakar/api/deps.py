@@ -131,6 +131,7 @@ class AppDependencies:
             object_store=self.object_store,
             vault=self.vault,
             browser_pool=self.browser_pool,
+            download_mirror_dir=self.settings.download_mirror_dir,
         )
         logger.debug("AppDependencies: ready")
 

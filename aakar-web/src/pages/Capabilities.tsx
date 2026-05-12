@@ -6,6 +6,7 @@ import type { CapabilityDefinitionResponse, NodeKind } from "@/api/types";
 import { useAuth } from "@/auth/AuthContext";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { PageHeader } from "@/components/PageHeader";
+import { useLabels } from "@/i18n/LanguageProvider";
 
 const KIND_ORDER: NodeKind[] = ["capability", "action", "control"];
 
@@ -17,6 +18,7 @@ const KIND_BADGES: Record<NodeKind, string> = {
 
 export function CapabilitiesPage() {
   const { claims } = useAuth();
+  const labels = useLabels();
   const isSuperuser = claims?.role === "superuser";
 
   const { data, isLoading, error } = useQuery({
@@ -25,7 +27,7 @@ export function CapabilitiesPage() {
   });
 
   const headings: Record<NodeKind, string> = {
-    capability: isSuperuser ? "All capabilities" : "Granted capabilities",
+    capability: isSuperuser ? `All ${labels.vidyas}` : `Granted ${labels.vidyas}`,
     action: "Action primitives",
     control: "Control nodes",
   };
@@ -43,14 +45,14 @@ export function CapabilitiesPage() {
   return (
     <div className="flex h-full flex-col">
       <PageHeader
-        title="Capabilities"
+        title={labels.vidyas}
         subtitle={
           isSuperuser
-            ? "Every capability registered in the codebase, plus action and control primitives. Capabilities still need a per-tenant grant before a tenant can plan with them."
-            : "What the planner can reach for. Capabilities are tenant-granted; primitives are always available."
+            ? `Every ${labels.vidya.toLowerCase()} registered in the codebase, plus action and control primitives. Each ${labels.vidya.toLowerCase()} still requires a per-${labels.mandala.toLowerCase()} ${labels.adhikara.toLowerCase()} before it can be planned with.`
+            : `What the planner may reach for. ${labels.vidyas} are granted to your ${labels.mandala.toLowerCase()}; primitives are always available.`
         }
       />
-      <div className="relative z-10 flex-1 overflow-y-auto p-7">
+      <div className="relative z-10 min-h-0 flex-1 overflow-y-auto p-7">
         {isLoading ? (
           <div className="text-sm text-ink-400">Loading…</div>
         ) : error ? (

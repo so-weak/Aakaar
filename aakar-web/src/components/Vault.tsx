@@ -17,7 +17,7 @@ import { formatISTDate } from "@/lib/datetime";
  *
  * The page hands in a `VaultApi` adapter; this component is unaware of
  * which endpoints back it. That keeps the UX identical for both
- * personas — Brahma sets up AARYA's vault using the same form a tenant
+ * personas — the Pracharya sets up AARYA's vault using the same form a tenant
  * admin uses afterwards.
  */
 
@@ -163,8 +163,8 @@ function SitesSection({
             <Globe size={14} className="text-signal-cyan" /> Sites
           </h2>
           <p className="mt-0.5 text-xs text-ink-500">
-            One row per website your workflows log into. Username and
-            password are stored in the vault and never returned by the API.
+            One row per site this tenant uses. Username and password rest
+            in the vault and never leave the server.
           </p>
         </div>
         <button
@@ -183,7 +183,7 @@ function SitesSection({
           <Globe size={20} className="mx-auto mb-2 text-ink-700" />
           <div className="text-sm text-ink-300">No sites yet.</div>
           <div className="mt-1 text-xs text-ink-500">
-            Add a site to let workflows log into it.
+            Add a site so workflows can log into it.
           </div>
         </div>
       ) : (

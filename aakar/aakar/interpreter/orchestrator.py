@@ -22,6 +22,7 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from aakar.db.models import Run, RunStatus
@@ -49,6 +50,7 @@ class RunOrchestrator:
     object_store: ObjectStorage
     vault: Vault
     browser_pool: Any = None
+    download_mirror_dir: Path | None = None
     _tasks: dict[uuid.UUID, asyncio.Task[RunOutcome]] = field(default_factory=dict)
 
     def schedule(
@@ -105,6 +107,7 @@ class RunOrchestrator:
             vault=self.vault,
             granted_capabilities=granted_caps,
             browser_pool=self.browser_pool,
+            download_mirror_dir=self.download_mirror_dir,
         )
         ctx = RunContext(run_id=run_id, tenant_id=tenant_id, activity_ctx=activity_ctx)
         try:

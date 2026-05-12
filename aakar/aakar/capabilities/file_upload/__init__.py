@@ -12,6 +12,8 @@ upstream node (typically `cap.web_login`).
 from __future__ import annotations
 
 import logging
+import re
+import shutil
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -25,6 +27,32 @@ from aakar.shared.registry import CapabilityDefinition
 
 logger = logging.getLogger(__name__)
 CAP_REF = "cap.file_upload"
+
+
+# Object-store keys are stored as '<uuid32hex>_<original_name>.ext' by
+# `file.read_local` and `cap.file_download` (see activities/file.py and
+# file_download/__init__.py). When we stage a copy for the browser to
+# upload, we want the third-party server to record the *original* name,
+# not the uuid-prefixed storage key — otherwise an admin staring at a
+# recon-upload history table sees `tmpXXXXXX.csv` instead of the file
+# they meant to send.
+_STORED_NAME_RE = re.compile(r"^[0-9a-fA-F]{32}_(.+)$")
+
+
+def _user_facing_basename(file_uri: str) -> str:
+    """Recover the human-readable basename embedded in a managed-storage
+    URI. The URI's last path segment is either `<uuid32hex>_<name>.ext`
+    (when the original name was known at write-time) or a bare uuid; we
+    return the `<name>.ext` half when the prefix matches, otherwise the
+    raw last segment. Falls back to `'upload.bin'` if the URI has no
+    usable basename at all (defensive — shouldn't happen in practice)."""
+    base = file_uri.rsplit("/", 1)[-1] if "/" in file_uri else file_uri
+    if not base:
+        return "upload.bin"
+    m = _STORED_NAME_RE.match(base)
+    if m:
+        return m.group(1)
+    return base
 
 
 class _Inputs(BaseModel):
@@ -115,20 +143,22 @@ async def handler(ctx: ActivityContext, inputs: dict[str, Any]) -> dict[str, Any
     timeout = int(inputs.get("timeout_ms", 30000))
     file_input_selector = inputs["file_input_selector"]
 
-    # Preserve the original suffix on the temp file. Servers (and our
-    # admin-app's recon endpoint among them) typically validate the
-    # uploaded filename's extension; a tempfile with no extension fails
-    # the check even when the bytes are perfectly valid CSV/ZIP.
-    suffix = Path(file_uri).suffix
-    fd = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
-    try:
-        fd.write(data)
-    finally:
-        fd.close()
+    # Stage the bytes under the user-facing basename so the third-party
+    # server records the original filename (e.g. `biller_transactions_
+    # 2026_05_report.csv`), not the uuid-prefixed storage key or a
+    # `tmpXXXXXX.csv` from NamedTemporaryFile. Playwright's set_input_
+    # files() uses the basename of the path it's given as the multipart
+    # filename. We isolate the file in its own directory so the basename
+    # is reliably the one we picked, and clean the whole directory in
+    # `finally`.
+    display_name = _user_facing_basename(file_uri)
+    staging_dir = Path(tempfile.mkdtemp(prefix="aakar-upload-"))
+    staged_path = staging_dir / display_name
+    staged_path.write_bytes(data)
 
     try:
         await sess.wait_for(file_input_selector, timeout_ms=timeout)
-        await sess.upload(file_input_selector, fd.name)
+        await sess.upload(file_input_selector, str(staged_path))
 
         submit_selector = inputs.get("submit_selector")
         submit_label = inputs.get("submit_label")
@@ -220,7 +250,10 @@ async def handler(ctx: ActivityContext, inputs: dict[str, Any]) -> dict[str, Any
                     f"not appear within {timeout}ms"
                 )
     finally:
-        Path(fd.name).unlink(missing_ok=True)
+        shutil.rmtree(staging_dir, ignore_errors=True)
 
-    logger.info("cap.file_upload ok run_id=%s uri=%s", ctx.run_id, file_uri)
+    logger.info(
+        "cap.file_upload ok run_id=%s uri=%s display_name=%s",
+        ctx.run_id, file_uri, display_name,
+    )
     return {"file_uri": file_uri}

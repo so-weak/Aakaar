@@ -23,6 +23,7 @@ import { ErrorBanner } from "@/components/ErrorBanner";
 import { LiveDagViewer } from "@/components/LiveDagViewer";
 import { LiveScreenPanel } from "@/components/LiveScreenPanel";
 import { PageHeader } from "@/components/PageHeader";
+import { useLabels, useRunStatusLabel } from "@/i18n/LanguageProvider";
 import { formatISTDateTime, formatISTTime } from "@/lib/datetime";
 import { useObjectBlob } from "@/lib/objectBlob";
 
@@ -30,6 +31,7 @@ export function RunDetailPage() {
   const { id = "" } = useParams<{ id: string }>();
   const [view, setView] = useState<"graph" | "timeline">("graph");
   const { claims } = useAuth();
+  const labels = useLabels();
   const isSuper = claims?.role === "superuser";
 
   const { data, isLoading, error } = useQuery<RunDetail>({
@@ -79,10 +81,10 @@ export function RunDetailPage() {
   return (
     <div className="flex h-full flex-col">
       <PageHeader
-        title={`Run ${run.id.slice(0, 8)}`}
+        title={`${labels.yajna} ${run.id.slice(0, 8)}`}
         subtitle={
           <>
-            Workflow{" "}
+            {labels.sutra}{" "}
             <span className="font-mono text-ink-300">
               {run.workflow_id.slice(0, 8)}
             </span>{" "}
@@ -97,15 +99,15 @@ export function RunDetailPage() {
         }
       />
 
-      <div className="relative z-10 grid flex-1 grid-cols-3 gap-0 overflow-hidden">
-        <section className="col-span-2 flex flex-col overflow-hidden border-r border-ink-700/80">
+      <div className="relative z-10 grid min-h-0 flex-1 grid-cols-3 gap-0 overflow-hidden">
+        <section className="col-span-2 flex min-h-0 flex-col overflow-hidden border-r border-ink-700/80">
           {view === "graph" ? (
-            <div className="flex flex-1 flex-col overflow-hidden">
-              <div className="flex flex-[3] flex-col overflow-hidden">
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+              <div className="flex min-h-0 flex-[3] flex-col overflow-hidden">
                 <div className="border-b border-ink-700/80 bg-ink-950/45 px-6 py-3 panel-title">
                   Graph view · live step indicator
                 </div>
-                <div className="flex-1 overflow-hidden">
+                <div className="min-h-0 flex-1 overflow-hidden">
                   {versionQ.data ? (
                     <LiveDagViewer
                       dag={versionQ.data.dag}
@@ -121,7 +123,7 @@ export function RunDetailPage() {
                   )}
                 </div>
               </div>
-              <div className="flex flex-[2] flex-col overflow-hidden border-t border-ink-700/80">
+              <div className="flex min-h-0 flex-[2] flex-col overflow-hidden border-t border-ink-700/80">
                 <LiveScreenPanel events={events} />
               </div>
             </div>
@@ -130,7 +132,7 @@ export function RunDetailPage() {
               <div className="border-b border-ink-700/80 bg-ink-950/45 px-6 py-3 panel-title">
                 Timeline · detailed event log
               </div>
-              <div className="flex-1 overflow-y-auto px-6 py-4">
+              <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
                 {events.length === 0 ? (
                   <div className="text-sm text-ink-400">No events yet.</div>
                 ) : (
@@ -145,7 +147,7 @@ export function RunDetailPage() {
           )}
         </section>
 
-        <aside className="flex flex-col overflow-y-auto bg-ink-950/45 px-5 py-5 backdrop-blur">
+        <aside className="flex min-h-0 flex-col overflow-y-auto bg-ink-950/45 px-5 py-5 backdrop-blur">
           {pending_prompts.length > 0 ? (
             <section className="mb-5">
               <h3 className="panel-title mb-2 text-amber-300">
@@ -233,6 +235,7 @@ function ViewToggle({
 }
 
 function StatusPill({ status }: { status: RunDetail["run"]["status"] }) {
+  const runStatusLabel = useRunStatusLabel();
   const map = {
     queued: "ring-ink-700 text-ink-300",
     running: "ring-accent-500/40 text-accent-300",
@@ -241,7 +244,7 @@ function StatusPill({ status }: { status: RunDetail["run"]["status"] }) {
     failed: "ring-rose-400/40 text-rose-300",
     cancelled: "ring-ink-700 text-ink-400",
   } as const;
-  return <span className={`badge ${map[status]}`}>{status}</span>;
+  return <span className={`badge ${map[status]}`}>{runStatusLabel(status)}</span>;
 }
 
 function EventRow({ event }: { event: RunEvent }) {

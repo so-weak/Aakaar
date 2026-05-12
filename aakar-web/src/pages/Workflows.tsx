@@ -6,9 +6,11 @@ import { workflows as workflowsApi } from "@/api";
 import { EmptyState } from "@/components/EmptyState";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { PageHeader } from "@/components/PageHeader";
+import { useLabels } from "@/i18n/LanguageProvider";
 import { formatISTDateTime } from "@/lib/datetime";
 
 export function WorkflowsPage() {
+  const labels = useLabels();
   const { data, isLoading, error } = useQuery({
     queryKey: ["workflows"],
     queryFn: workflowsApi.list,
@@ -17,28 +19,28 @@ export function WorkflowsPage() {
   return (
     <div className="flex h-full flex-col">
       <PageHeader
-        title="Workflows"
-        subtitle="Saved workflows for your tenant. Anyone can run them; only the creator can edit."
+        title={labels.sutras}
+        subtitle={`Saved ${labels.sutras.toLowerCase()} for your ${labels.mandala.toLowerCase()}. Any ${labels.sadhaka.toLowerCase()} may run one; only the author may edit.`}
         actions={
           <Link to="/chat" className="btn-primary">
             <Plus size={15} />
-            New from chat
+            New from {labels.samvada.toLowerCase()}
           </Link>
         }
       />
 
-      <div className="relative z-10 flex-1 overflow-y-auto p-7">
+      <div className="relative z-10 min-h-0 flex-1 overflow-y-auto p-7">
         {isLoading ? (
           <div className="text-sm text-ink-400">Loading…</div>
         ) : error ? (
           <ErrorBanner error={error} />
         ) : !data || data.length === 0 ? (
           <EmptyState
-            title="No workflows yet"
-            description="Use the chat to draft your first workflow."
+            title={`No ${labels.sutras.toLowerCase()} yet`}
+            description={`Open the ${labels.samvada.toLowerCase()} to compose your first ${labels.sutra.toLowerCase()}.`}
             action={
               <Link to="/chat" className="btn-primary">
-                Start chatting
+                Open {labels.samvada.toLowerCase()}
               </Link>
             }
           />

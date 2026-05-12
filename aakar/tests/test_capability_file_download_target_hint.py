@@ -81,6 +81,89 @@ def test_normalization_handles_em_dash_and_month_alias() -> None:
     assert ranked[-1].selector == "#c"
 
 
+def test_generic_button_text_lets_row_context_drive_match() -> None:
+    """Regression for the NBBL Reports page shape: every card has a
+    button whose text is literally 'Download CSV', the report title sits
+    in the card's row_context, and a 'Transactions' filter pill lives
+    elsewhere on the page. Without the generic-text down-weight, the
+    filter pill's one-token match ('transactions') used to land inside
+    the ambiguity window and trip the HITL picker. With the down-weight
+    in place, the card whose row_context covers the hint wins clearly.
+    """
+    raw = [
+        # Filter pill — text is the only signal it offers, scores ~0.13
+        # against "Biller Transactions May 2026 csv report" (just the
+        # one shared token). Not generic per se, so its text score is
+        # kept; we want it to LOSE on its own merits anyway.
+        {"selector": ".pill[data-cat='Transactions']", "tag": "button", "role": "button",
+         "text": "Transactions", "aria_label": None,
+         "href": None, "row_context": None},
+        # The right answer: row_context contains the title; button text
+        # is the generic "Download CSV".
+        {"selector": "article.report-card:nth-of-type(1) button.download-btn",
+         "tag": "button", "role": "button",
+         "text": "Download CSV", "aria_label": None,
+         "href": None,
+         "row_context": "Transactions 12 rows Biller Transactions — May 2026 "
+                        "All BBPS transactions processed via NBBL "
+                        "Period May 2026 Updated 2026-05-07 09:15 IST Download CSV"},
+        # A sibling card — also generic text, row_context shares fewer
+        # hint tokens (different report).
+        {"selector": "article.report-card:nth-of-type(2) button.download-btn",
+         "tag": "button", "role": "button",
+         "text": "Download CSV", "aria_label": None,
+         "href": None,
+         "row_context": "Settlement 12 rows Settlement Summary — May 2026 "
+                        "Cycle-wise settlement summary Period May 2026 Download CSV"},
+    ]
+    ranked = rank_candidates(
+        raw, target_hint="Biller Transactions May 2026 csv report"
+    )
+    assert ranked[0].selector.startswith("article.report-card:nth-of-type(1)")
+    pick = decide(ranked)
+    # Down-weight should clear the ambiguity: the right card wins
+    # outright, no picker needed.
+    assert pick.chosen is not None
+    assert pick.chosen.selector.startswith("article.report-card:nth-of-type(1)")
+    assert pick.ambiguous == []
+
+
+def test_generic_text_without_row_context_still_scores() -> None:
+    """If a generic-text button has no row_context to fall back on (e.g.
+    a global 'Download all' floating button), we still score it against
+    its text — otherwise we'd silently drop it from contention.
+    """
+    raw = [
+        {"selector": "#floating-download", "tag": "button", "role": "button",
+         "text": "Download", "aria_label": None, "href": None,
+         "row_context": None},
+    ]
+    ranked = rank_candidates(raw, target_hint="Download report")
+    # text "Download" shares the "download" token with the hint.
+    # Without the down-weight applying (no row_context), the score is
+    # non-zero so the candidate stays in contention.
+    assert ranked and ranked[0].score > 0.0
+
+
+def test_aria_label_survives_generic_text_downweight() -> None:
+    """If the site author wired an accessible aria-label on a generic
+    button, we still score against it — the down-weight only drops the
+    visible-text score, not the aria signal.
+    """
+    raw = [
+        {"selector": "#btn", "tag": "button", "role": "button",
+         "text": "Download CSV",
+         "aria_label": "Download Biller Transactions May 2026 CSV",
+         "href": None,
+         "row_context": "Some unrelated card text"},
+    ]
+    ranked = rank_candidates(
+        raw, target_hint="Biller Transactions May 2026"
+    )
+    # aria_label is a full substring match → score 1.0.
+    assert ranked[0].score == pytest.approx(1.0)
+
+
 def test_decide_clear_winner() -> None:
     cs = [
         Candidate(selector="#a", tag="a", role="link",
