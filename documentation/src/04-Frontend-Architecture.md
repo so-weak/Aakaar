@@ -1,6 +1,6 @@
-# Aakar — Frontend Architecture (v1)
+# AAKAAR — Frontend Architecture (v1)
 
-> `aakar-web` is the single SPA that serves both the Pracharya (principal / superuser) and the Mandala's Sadhakas. This document focuses on it. Mythic terms appear with English in parens on first occurrence per section.
+> `aakar-web` is the single SPA that serves both superusers and tenant users. This document focuses on it. The mythic Sanskrit vocabulary (Pracharya, Mandala, Yajna, …) is available as a UI language option but the design and engineering vocabulary throughout this doc is plain English.
 
 ---
 
@@ -18,48 +18,51 @@
 | Graph | xyflow (React Flow) plus dagre |
 | Charts | Recharts |
 | Icons | lucide-react |
-| Pravesha (auth) storage | sessionStorage (per tab) |
+| Auth storage | sessionStorage (per tab) |
+| i18n | tiny hand-rolled label map (`src/i18n/labels.ts`) — English default, five alternate languages |
+| Themes | CSS-variable scoped per `[data-theme]` — 5 families × light/dark = 10 themes |
 
 ## 2. App shell and routing
 
 ```mermaid
 flowchart TD
   R["index.html"] --> M["main.tsx mounts App"]
-  M --> P["AuthProvider"]
-  P --> Q["QueryClientProvider"]
-  Q --> RT["BrowserRouter"]
+  M --> P["LanguageProvider"]
+  P --> Q["ThemeProvider"]
+  Q --> A["AuthProvider"]
+  A --> RT["BrowserRouter"]
   RT --> RTS["Routes"]
   RTS --> PUB["Public: /login"]
-  RTS --> PRT["Protected: Darshana, Samvada, Yajnas, Pratyaksha, Kosha, Sadhakas, Pracharya's Mandalas"]
+  RTS --> PRT["Protected: /, /chat, /workflows, /runs, /runs/:id, /live, /capabilities, /admin/*, /superuser/*"]
   PRT --> L["Layout (sidebar + topbar)"]
   L --> O["Outlet for the active page"]
 ```
 
-A `RequireAuth` wrapper guards the protected branch. If no token is present, it redirects to `/login` (Pravesha) while preserving the intended location for post-Pravesha redirect.
+A `RequireAuth` wrapper guards the protected branch. If no token is present, it redirects to `/login` while preserving the intended location for post-login redirect.
 
-## 3. Pravesha (login) flow
+## 3. Auth flow
 
 ```mermaid
 sequenceDiagram
   autonumber
-  participant U as Sadhaka
-  participant L as Login page (Pravesha)
+  participant U as User
+  participant L as Login page
   participant A as Auth API
   participant S as sessionStorage
   participant Q as Query cache
-  participant H as Home (Darshana)
+  participant H as Home
 
   U->>L: submit email + password
-  L->>A: POST /api/auth/login
-  A-->>L: 200 with access token + Sadhaka info
-  L->>S: write token + Sadhaka
-  L->>Q: setQueryData("me", sadhaka)
+  L->>A: POST /auth/login
+  A-->>L: 200 with access token + user
+  L->>S: write token + user
+  L->>Q: setQueryData("me", user)
   L->>H: navigate to redirect path
   H->>Q: useQuery("me")
-  Q-->>H: cached Sadhaka
+  Q-->>H: cached user
 ```
 
-Per-tab isolation is the reason for sessionStorage rather than localStorage: opening a second tab as a different Sadhaka (or as the Pracharya) does not clobber the first tab's session.
+Per-tab isolation is the reason for sessionStorage rather than localStorage: opening a second tab as a different role does not clobber the first tab's session.
 
 ## 4. API client
 
@@ -83,7 +86,7 @@ api.interceptors.response.use(
 );
 ```
 
-Every page imports typed wrappers (`api.runs.list`, `api.runs.get`, ...). Wrappers narrow request and response types to the shapes in `src/api/types.ts`. Wire field names stay English (`tenant_id`, `run.status`) so the backend contract is untouched.
+Every page imports typed wrappers (`api.runs.list`, `api.runs.get`, ...). Wrappers narrow request and response types to the shapes in `src/api/types.ts`. Wire field names stay English on both sides (`tenant_id`, `run.status`, etc.) so the backend contract is untouched.
 
 ## 5. TanStack Query patterns
 
@@ -103,71 +106,71 @@ Conventions:
 
 - Query keys are arrays. First element is the resource: `["runs"]`, `["runs", id]`, `["chat", "sessions"]`.
 - Mutations always invalidate the relevant list query on success rather than manually patching cache entries.
-- SSE subscriptions for live Smritis are managed outside Query; they push into a Zustand-style local store keyed by Yajna id.
+- SSE subscriptions for live run events are managed outside Query; they push into a Zustand-style local store keyed by run id.
 
 ## 6. Pages
 
-### 6.1 Darshana (Dashboard)
+### 6.1 Dashboard
 
 Lands at `/`. Three kinds of cards:
 
-- **KPI strip** — Yajnas last 24h, Siddhi 7d, Vighna 7d, Pravriti (running) right now.
-- **Trend** — Yajna volume over the last 30 days, stacked by Avastha.
-- **Vidya usage** — top Vidyas by invocation, vighnas highlighted.
+- **KPI strip** — runs last 24h, succeeded 7d, failed 7d, running right now.
+- **Trend** — run volume over the last 30 days, stacked by status.
+- **Capability usage** — top capabilities by invocation, failures highlighted.
 
-The Pracharya additionally sees a per-Mandala stacked bar of the last 24 hours.
+Superusers additionally see a per-tenant stacked bar of the last 24 hours.
 
 ```mermaid
 flowchart TD
-  D["Darshana"] --> C1["KpiStrip"]
+  D["Dashboard"] --> C1["KpiStrip"]
   D --> C2["TrendChart"]
-  D --> C3["VidyaUsageChart"]
+  D --> C3["CapabilityChart"]
   C1 --> Q1["useQuery dashboard"]
   C2 --> Q2["useQuery daily_volume"]
   C3 --> Q3["useQuery capability_usage"]
 ```
 
-### 6.2 Samvada (Chat)
+### 6.2 Chat
 
-`/chat` is the Sadhaka's primary surface. Layout:
+`/chat` is the user's primary surface. Layout:
 
-- Left: list of Samvadas with a "New" button.
-- Center: Vachana (message) thread with Drashtri Yantra previews inline.
-- Right: Pratyaksha (live) screen panel that activates when a Yajna starts.
+- Left: list of chat sessions with a "New" button.
+- Center: message thread with planner DAG previews inline.
+- Right: live screen panel that activates when a run starts.
 
-Long file paths and URLs in Vachanas wrap on whitespace and `/`. Code-block detection prevents wrap inside fenced blocks.
+Long file paths and URLs in messages wrap on whitespace and `/`. Code-block detection prevents wrap inside fenced blocks.
 
 ```mermaid
 sequenceDiagram
   autonumber
-  participant U as Sadhaka
-  participant CP as Samvada page
+  participant U as User
+  participant CP as Chat page
   participant A as Chat API
   participant R as Runs API
   participant L as Live store
 
-  U->>CP: voice Sankalpa
+  U->>CP: voice prompt
   CP->>A: POST /chat
-  A-->>CP: Vachana + Yantra preview
-  U->>CP: click Offer Yajna
-  CP->>R: POST /runs
-  R-->>CP: yajna_id
+  A-->>CP: planner reply + DAG preview
+  U->>CP: click Run
+  CP->>R: POST /workflows/:id/runs
+  R-->>CP: run id
   CP->>L: subscribe SSE
-  L-->>CP: Smritis
+  L-->>CP: run events
   CP-->>U: render screenshots and progress
 ```
 
-### 6.3 Yajna detail (`/runs/:id`)
+### 6.3 Run detail (`/runs/:id`)
 
-Shows the Yantra view (xyflow + dagre auto-layout), a Smriti timeline, and an artifacts list. Selecting a node scrolls the Smriti timeline to its events and opens the latest screenshot.
+Shows the DAG view (xyflow + dagre auto-layout), an event timeline, and an artifacts list. Selecting a node scrolls the event timeline to its events and opens the latest screenshot.
 
-### 6.4 Pratyaksha (Live)
+### 6.4 Live processes
 
-`/live` is a Mandala-wide grid of in-flight Yajnas. Each tile shows Avastha, current node, and a thumbnail of the most recent screenshot. Tiles link to Yajna detail.
+`/live` is a tenant-wide grid of in-flight runs. Each tile shows status, current node, and a thumbnail of the most recent screenshot. Tiles link to run detail.
 
-### 6.5 Kosha (Vault)
+### 6.5 Vault
 
-`/admin/grants` is a site-centric layout: the left rail lists sites the Mandala has used; the right pane lists Sadhaka handles registered for the selected site, with rotation hints. Only the Acharya can edit.
+`/admin/grants` is a site-centric layout: the left rail lists sites the tenant has used; the right pane lists user handles registered for the selected site, with rotation hints. Only `tenant_admin` can edit.
 
 ## 7. Components inventory
 
@@ -176,96 +179,104 @@ Shows the Yantra view (xyflow + dagre auto-layout), a Smriti timeline, and an ar
 | `Layout` | shell with sidebar, topbar, and outlet |
 | `MorphLogo` | branded logo |
 | `RequireAuth` | route guard |
-| `MessageBubble` | renders Sadhaka or Drashtri Vachana with markdown and code |
-| `DagPreview` | small read-only Yantra used in Samvada |
-| `DagView` | full Yajna-detail xyflow with selection |
-| `EventTimeline` | scrollable Smriti list with kind icons |
-| `LiveScreenPanel` | Pratyaksha stream plus Aahvaana handler |
+| `MessageBubble` | renders user or planner message with markdown and code |
+| `DagPreview` | small read-only xyflow used in chat |
+| `DagView` | full run-detail xyflow with selection |
+| `EventTimeline` | scrollable run-event list with kind icons |
+| `LiveScreenPanel` | screenshot stream plus signal handler |
 | `SignalCard` | renders captcha, picker, or otp prompt and POSTs the resolution |
 | `IstTimestamp` | formats ISO datetimes in IST |
 | `Toast` | non-blocking notifications |
+| `LanguageSwitcher` | sidebar popover for the i18n layer |
+| `ThemeSwitcher` | sidebar popover for theme families |
+| `EasterEggs` | tasteful client-side delights (Konami, type-word, triple-click) |
 
-## 8. Yantra (DAG) views
+## 8. DAG views
 
 ```mermaid
 flowchart LR
-  IN["Yantra JSON"] --> ML["dagre layout"]
+  IN["DAG JSON"] --> ML["dagre layout"]
   ML --> NX["nodes with x,y"]
   NX --> RF["xyflow render"]
   RF --> SEL["selection state"]
-  SEL --> ET["scroll EventTimeline to node Smritis"]
+  SEL --> ET["scroll EventTimeline to node events"]
 ```
 
-Node colors map to Avastha: gray (Pratiksha), blue (Pravriti), green (Siddha), red (Vighna), amber (Aahvaana). Custom node renderers display the Vidya ref and elapsed time.
+Node colors map to status: gray (queued), blue (running), green (succeeded), red (failed), amber (paused). Custom node renderers display the capability ref and elapsed time. `colorMode` and `<Background>` dot color follow the active theme via the `useTheme()` hook, so a light-mode session shows dark dots on white instead of cream-on-white invisibility.
 
-## 9. Pratyaksha (live screen) panel
+## 9. Live screen panel
 
 ```mermaid
 sequenceDiagram
   autonumber
   participant API as /runs/{id}/events SSE
-  participant SP as Pratyaksha panel
+  participant SP as Live screen panel
   participant SC as SignalCard
 
   API-->>SP: node.screenshot
   SP-->>SP: render image
-  API-->>SP: aahvaana.published(captcha)
+  API-->>SP: signal.published(captcha)
   SP-->>SC: mount captcha card
   SC->>API: POST /signals/{id}/resolve
-  API-->>SP: aahvaana.resolved
+  API-->>SP: signal.resolved
   SP-->>SP: dismiss card
 ```
 
-The panel debounces screenshot rendering (about 60 ms) so a fast-moving Yajna does not flicker the canvas.
+The panel debounces screenshot rendering (about 60 ms) so a fast-moving run does not flicker the canvas.
 
-## 10. Darshana charts
+## 10. Dashboard charts
 
-Recharts components are wrapped in a thin `Chart` boundary that handles loading and empty states. v1 uses three chart types: `BarChart` for Vidya usage, `LineChart` for daily Yajna counts, and a small Avastha-badge list for site health.
+Recharts components are wrapped in a thin `Chart` boundary that handles loading and empty states. v1 uses three chart types: `BarChart` for capability usage, `LineChart` for daily run counts, and a small status-badge list for site health.
 
 ## 11. IST timestamps
 
-The backend stores UTC. The frontend formats in `Asia/Kolkata` for display because operators are in India and the Sakshi is read by ops in IST. The `IstTimestamp` component is the single source of truth for formatting; raw `Date.toLocaleString` is forbidden by lint.
+The backend stores UTC. The frontend formats in `Asia/Kolkata` for display because operators are in India and the audit log is read by ops in IST. The `IstTimestamp` component is the single source of truth for formatting; raw `Date.toLocaleString` is forbidden by lint.
 
-## 12. Type model
+## 12. i18n and themes
+
+- **i18n** (`src/i18n/labels.ts`). Six languages: English (default), Hindi (Latin), Hindi (Devanagari), Bengali, Tamil, Kannada. Every operator-facing noun is a key in a single table. Pages call `useLabels()` and read `labels.tenant`, `labels.run`, etc. — never literals. Wire formats and code identifiers are unchanged across languages.
+- **Themes** (`src/styles/themes.css`, `src/theme/ThemeProvider.tsx`). 5 families × light/dark = 10 themes, scoped via `[data-theme="<id>"]`. Components reference theme tokens (`bg-ink-950`, `text-accent-300`) and inherit the active palette. xyflow's pane background and edge strokes follow the active mode through `colorMode` + computed JS color props.
+
+## 13. Type model
 
 ```mermaid
 classDiagram
-  class Sadhaka {
+  class User {
     +string id
     +string email
     +string role
-    +string mandala_id
+    +string tenant_id
   }
-  class Mandala {
+  class Tenant {
     +string id
     +string slug
     +string display_name
   }
-  class Yajna {
+  class Run {
     +string id
     +string status
     +string workflow_version_id
     +datetime started_at
     +datetime ended_at
   }
-  class Smriti {
+  class RunEvent {
     +string id
     +string kind
     +map payload
     +datetime emitted_at
   }
-  class VidyaSummary {
+  class CapabilitySummary {
     +string id
     +string name
     +string description
   }
-  Sadhaka --> Mandala
-  Yajna --> Smriti
+  User --> Tenant
+  Run --> RunEvent
 ```
 
-`src/api/types.ts` mirrors the backend's Pydantic shapes by hand. Field names on the wire stay English (`tenant_id`, `user_id`, `run.status`). The mythic surface is rendered via the `src/lib/mythic.ts` glossary helper.
+`src/api/types.ts` mirrors the backend's Pydantic shapes by hand. Drift between the two is caught in a small contract test; v1 has no codegen.
 
-## 13. Build and deploy
+## 14. Build and deploy
 
 | Concern | v1 |
 | --- | --- |
@@ -274,17 +285,19 @@ classDiagram
 | Hosting | served as static files behind the same nginx that fronts the API |
 | API base URL | `/api` (same origin), proxied by Vite in dev |
 
-## 14. Conventions
+The admin-app is deployed independently on its own subdomain (or port), with its own nginx and API service.
+
+## 15. Conventions
 
 - One component per file. File name matches the default export.
 - Hooks live next to the component that uses them unless reused; reused hooks go to `src/hooks/`.
-- Tailwind utility classes are preferred over CSS modules.
+- Tailwind utility classes are preferred over CSS modules; CSS modules exist only for legacy admin-app pages.
 - All forms go through React Hook Form. Manual `onChange` plumbing is forbidden by lint for any form field.
 - Never put credentials or secrets in URLs, query params, or analytics events.
-- All user-facing strings flow through `src/lib/mythic.ts` (the glossary) so the bilingual rule (mythic primary, English in parens on first per-page occurrence) is enforced in one place.
+- All operator-facing nouns flow through `useLabels()`. Literal strings for nouns are forbidden by code review.
 
-## 15. Reading guide
+## 16. Reading guide
 
-- For request and Yajna lifecycles, read the backend doc.
-- For the Drashtri and Vidyas, read the LLD.
+- For request and run lifecycles, read the backend doc.
+- For the planner and capabilities, read the LLD.
 - For where the UX is heading, read the roadmap.

@@ -1,6 +1,6 @@
-# Aakar — Low-Level Design (v1)
+# AAKAAR — Low-Level Design (v1)
 
-> Module-by-module reference for the Drashtri (planner), the Karta (executor), the Vidya (capability) catalog, and the Aahvaana (signal) hub. Mythic names appear with English in parens on first occurrence; code identifiers and file paths stay in English.
+> Module-by-module reference for the planner, the executor, the capability catalog, and the signal hub. Code identifiers, file paths, and wire formats are all English; this document follows the same convention.
 
 ---
 
@@ -15,91 +15,94 @@ Aakaar/
         repositories/          # SQLAlchemy session-scoped data access
         schemas.py             # Pydantic request and response models
         app.py                 # FastAPI app factory
-        deps.py                # Pravesha + db dependencies
-      planner/                 # Drashtri
+        deps.py                # auth + db dependencies
+      planner/
         agentic/               # multi-step agent loop
-        openai_impl.py         # one-shot Drashtri using strict JSON
-        prompt.py              # prompt templates and Veda rendering
+        openai_impl.py         # one-shot planner using strict JSON
+        prompt.py              # prompt templates and registry rendering
         llm.py                 # OpenAI client wrapper
-      interpreter/             # Karta
-        executor.py            # protocol + local implementation
-        activities/            # primitive Kriya the Karta dispatches
-      capabilities/            # Vidya bodies
+        capability_index.py    # FAISS-backed semantic index
+      interpreter/
+        executor.py            # protocol + LocalExecutor implementation
+        activities/            # primitive activities the executor dispatches
+      capabilities/
         web_login/
         file_download/
         file_upload/
-        registry.py            # Vidya + Kriya + Lakshana catalog (the Veda)
+        registry.py            # capability + action + control catalog
       workers/
         browser/               # playwright-backed browser worker
         http/                  # httpx-backed http worker
       models/                  # SQLAlchemy ORM models
       migrations/              # alembic
       tests/
-  aakar-web/                   # Mandala frontend (Vite + React + TS)
-  admin-app/                   # third-party bank-ops mock (not the Pracharya's surface)
+  aakar-web/                   # tenant frontend (Vite + React + TS)
+  admin-app/                   # third-party bank-ops mock (demo fixture, not the superuser surface)
 ```
 
-The backend is a single deployable. The Drashtri, Karta, Vidyas, and workers all live in-process behind clean module boundaries.
+The backend is a single deployable. The planner, executor, capabilities, and workers all live in-process behind clean module boundaries.
 
 ## 2. API router map
 
 | Router | Mount point | Notes |
 | --- | --- | --- |
-| `auth` | `/api/auth` | Pravesha, refresh, Nirgama, /me |
-| `admin` | `/api/admin` | Mandala CRUD, Sadhaka CRUD, Adhikaras |
-| `chat` | `/api/chat` | turn-based Samvada that drives the Drashtri |
-| `chat_sessions` | `/api/chat/sessions` | persisted Samvada threads |
-| `runs` | `/api/runs` | Yajna create, get, cancel, Smriti SSE |
-| `vault` | `/api/vault` | per-Mandala Kosha entries |
-| `objects` | `/api/objects` | Bhandara upload / download |
+| `auth` | `/auth` | login, refresh, logout, /me |
+| `admin` | `/admin` | tenant-scoped admin (user CRUD, grants) |
+| `chat` | `/chat` | turn-based chat that drives the planner |
+| `chat_sessions` | `/chat/sessions` | persisted chat threads |
+| `runs` | `/runs` | run get, cancel, events SSE |
+| `workflows` | `/workflows` | saved workflow CRUD + version listing + start a run |
+| `vault` | `/vault` | per-tenant credential entries |
+| `objects` | `/objects` | artifact upload / download |
+| `superuser` | `/superuser` | cross-tenant admin surfaces |
 
-All routers depend on `deps.get_db` and `deps.require_user`. Mandala scoping is enforced inside repositories, not by the router, so a misuse at the router layer cannot leak rows from another Mandala.
+All routers depend on `deps.get_db` and `deps.require_user`. Tenant scoping is enforced inside repositories, not by the router, so a misuse at the router layer cannot leak rows from another tenant.
 
-## 3. Drashtri (planner)
+## 3. Planner
 
-The Drashtri has two strategies, picked per turn:
+The planner has two strategies, picked per turn:
 
-- **One-shot Drashtri.** The whole Sankalpa is rendered into a single chat completion with strict JSON mode. The model returns a complete Yantra. This path is fast and used for Sankalpas that fit one of the well-known templates.
-- **Agentic Drashtri (Drashtri-with-eyes).** The model is allowed to issue tool calls in a loop: `inspect_page`, `navigate`, `login_with_grant`, `done`. The loop ends when the model emits a final Yantra or asks a clarifying question.
+- **One-shot.** The whole prompt is rendered into a single chat completion with strict JSON mode. The model returns a complete DAG. This path is fast and used for prompts that fit one of the well-known templates.
+- **Agentic.** The model is allowed to issue tool calls in a loop: `inspect_page`, `navigate`, `login_with_grant`, `done`. The loop ends when the model emits a final DAG or asks a clarifying question.
 
-Both strategies share the Veda rendering in `prompt.py` so they always see the same allowed verbs.
+Both strategies share the registry rendering in `prompt.py` so they always see the same allowed verbs.
 
-### 3.1 One-shot Drashtri sequence
+### 3.1 One-shot planner sequence
 
 ```mermaid
 sequenceDiagram
   autonumber
-  participant U as Sadhaka
+  participant U as User
   participant API as Chat router
-  participant P as Drashtri
-  participant R as Veda
+  participant P as Planner
+  participant R as Registry
   participant L as OpenAI
-  participant V as Yantra validator
+  participant V as DAG validator
 
-  U->>API: POST /chat with Sankalpa
-  API->>P: plan(sankalpa, mandala, adhikaras)
-  P->>R: render_catalog(adhikaras)
-  R-->>P: Vidya list
+  U->>API: POST /chat with prompt
+  API->>P: plan(prompt, tenant, grants)
+  P->>R: render_catalog(grants)
+  R-->>P: capability list
   P->>L: chat.completions strict JSON
-  L-->>P: candidate Yantra
-  P->>V: validate(yantra)
+  L-->>P: candidate DAG
+  P->>V: validate(dag)
   V-->>P: ok or errors
-  P-->>API: Yantra or clarification
-  API-->>U: Vachana (message)
+  P-->>API: DAG or clarification
+  API-->>U: planner reply
 ```
 
-### 3.2 Agentic Drashtri sequence
+### 3.2 Agentic planner sequence
 
 ```mermaid
 sequenceDiagram
   autonumber
-  participant U as Sadhaka
+  participant U as User
   participant API as Chat router
   participant A as Agent loop
-  participant R as Veda
+  participant R as Registry
   participant L as OpenAI
 
-  U->>API: POST /chat with Sankalpa
+  U->>API: POST /chat with prompt
   API->>A: start session
   A->>L: turn 1 with tools
   L-->>A: tool_call inspect_page
@@ -112,23 +115,23 @@ sequenceDiagram
   A->>L: tool_result
   L-->>A: done(kind="dag")
   A->>A: validate
-  A-->>API: Yantra or ask_user
-  API-->>U: Vachana
+  A-->>API: DAG or ask_user
+  API-->>U: planner reply
 ```
 
 ### 3.3 Validation pipeline
 
-The Drashtri never trusts the model. Every candidate Yantra passes through a fixed pipeline:
+The planner never trusts the model. Every candidate DAG passes through a fixed pipeline:
 
 ```mermaid
 flowchart TD
-  IN["Candidate Yantra JSON"] --> P1["Pydantic schema parse"]
-  P1 --> P2["Vidya allowlist filter (Adhikaras)"]
+  IN["Candidate DAG JSON"] --> P1["Pydantic schema parse"]
+  P1 --> P2["Capability allowlist filter (grants)"]
   P2 --> P3["Input typing and required field check"]
   P3 --> P4["Reference resolution (node outputs)"]
   P4 --> P5["Auto-edge completion"]
   P5 --> P6["Cycle detection"]
-  P6 --> OK["Accepted Yantra"]
+  P6 --> OK["Accepted DAG"]
   P1 -- fail --> ERR["Reject and return errors"]
   P2 -- fail --> ERR
   P3 -- fail --> ERR
@@ -138,20 +141,20 @@ flowchart TD
 
 Auto-edge completion is the one piece of leniency: if a node references `${node_a.output}` but the model forgot to declare an edge from `node_a`, the validator inserts the edge.
 
-## 4. Yantra types
+## 4. DAG types
 
 ```mermaid
 classDiagram
-  class Yantra {
+  class Dag {
     +string version
-    +string mandala_id
+    +string tenant_id
     +list~Node~ nodes
     +list~Edge~ edges
     +Inputs inputs
   }
   class Node {
     +string id
-    +string vidya_ref
+    +string capability_ref
     +map inputs
     +list~string~ depends_on
   }
@@ -164,65 +167,65 @@ classDiagram
     +map defaults
     +map required
   }
-  Yantra --> Node
-  Yantra --> Edge
-  Yantra --> Inputs
+  Dag --> Node
+  Dag --> Edge
+  Dag --> Inputs
 ```
 
-`Node.inputs` accepts both literal values and reference expressions of the form `${node_id.output_field}`. References are resolved at Yajna-time by the Karta.
+`Node.inputs` accepts both literal values and reference expressions of the form `${node_id.output_field}`. References are resolved at run-time by the executor.
 
-## 5. Veda (capability registry)
+## 5. Capability registry
 
-Vidyas, Kriyas, and Lakshanas live in three tables.
+Capabilities, actions, and controls live in three tables.
 
 ```mermaid
 classDiagram
-  class Vidya {
+  class Capability {
     +string id
     +string name
     +string description
     +list~InputSpec~ inputs
     +list~OutputSpec~ outputs
-    +list~AahvaanaSpec~ aahvaanas
-    +list~string~ kriya_ids
+    +list~SignalSpec~ signals
+    +list~string~ action_ids
   }
-  class Kriya {
+  class Action {
     +string id
     +string name
     +string handler
     +list~InputSpec~ inputs
     +list~OutputSpec~ outputs
   }
-  class Lakshana {
+  class Control {
     +string id
-    +string vidya_id
+    +string capability_id
     +string selector
     +string wait_condition
   }
-  Vidya --> Kriya
-  Vidya --> Lakshana
+  Capability --> Action
+  Capability --> Control
 ```
 
-Each Vidya has a Python module under `aakar/capabilities/<id>/` that exports:
+Each capability has a Python module under `aakar/capabilities/<id>/` that exports:
 
 - `INPUTS` — Pydantic input schema.
 - `OUTPUTS` — Pydantic output schema.
-- `SIGNALS` — list of Aahvaana specs published.
+- `SIGNALS` — list of signal specs published.
 - `run(inputs, ctx) -> outputs` — async entrypoint.
 
-The Veda is loaded at process start. The Drashtri sees only what is registered for the Mandala's Adhikaras.
+The registry is loaded at process start. The planner sees only what is registered for the tenant's grants.
 
-## 6. Vidya deep dive: web_login
+## 6. Capability deep dive: `cap.web_login`
 
 ```mermaid
 sequenceDiagram
   autonumber
-  participant E as Karta
+  participant E as Executor
   participant W as web_login
-  participant V as Kosha
+  participant V as Vault
   participant B as Browser worker
-  participant H as Aahvaana hub
-  participant U as Sadhaka
+  participant H as Signal hub
+  participant U as User
 
   E->>W: run(site_id, user_handle)
   W->>V: read(site_id, user_handle)
@@ -233,7 +236,7 @@ sequenceDiagram
   W->>B: set_field("password", value)
   W->>B: click_by_text("Sign in")
   alt captcha shown
-    W->>H: publish captcha Aahvaana with screenshot
+    W->>H: publish captcha signal with screenshot
     H-->>U: render captcha
     U-->>H: resolve with answer
     H-->>W: answer
@@ -244,20 +247,20 @@ sequenceDiagram
   W-->>E: session_id, cookies
 ```
 
-## 7. Vidya deep dive: file_download
+## 7. Capability deep dive: `cap.file_download`
 
 ```mermaid
 sequenceDiagram
   autonumber
-  participant E as Karta
+  participant E as Executor
   participant D as file_download
   participant B as Browser worker
-  participant O as Bhandara
+  participant O as Object store
 
-  E->>D: run(target_label, save_dir)
+  E->>D: run(target_hint, session)
   D->>B: navigate if needed
   loop nav recovery
-    D->>B: click_by_text(target_label)
+    D->>B: click_by_text(target_hint)
     alt download dialog opened
       B-->>D: dialog detected
     else page redirected
@@ -266,24 +269,24 @@ sequenceDiagram
     end
   end
   B-->>D: downloaded file path
-  D->>O: persist(file_path, yajna_id)
+  D->>O: persist(file_path, run_id)
   O-->>D: object_uri
   D-->>E: object_uri, filename, size
 ```
 
-## 8. Vidya deep dive: file_upload
+## 8. Capability deep dive: `cap.file_upload`
 
 ```mermaid
 sequenceDiagram
   autonumber
-  participant E as Karta
+  participant E as Executor
   participant U as file_upload
   participant FS as Local FS
   participant B as Browser worker
   participant API as Third-party
 
   E->>U: run(file_uri, switch_type, cycle, date)
-  U->>FS: read file_uri to local temp with original suffix
+  U->>FS: stage file with user-facing basename (no uuid prefix)
   FS-->>U: temp path
   U->>B: navigate to upload page
   U->>B: set_field("Switch Type", switch_type)
@@ -297,122 +300,138 @@ sequenceDiagram
   U-->>E: upload_id, status
 ```
 
-Two specific lessons baked into v1:
+Three specific lessons baked into v1:
 
 - The local temp file preserves the original suffix. Some upload endpoints reject `''` as an extension and return 415.
-- `click_by_text("Upload")` on this page would match both the "Upload" tab and the "Upload" submit button. The Vidya resolves the click using a custom JS resolver that prefers `button[type='submit']` and skips elements with `role="tab"`.
+- The staged copy uses the **user-facing basename** (recovered from the storage key's `<uuid32hex>_<name>.ext` pattern), so the third party records `biller_transactions_2026_05.csv` rather than `tmpXXXXXX.csv`.
+- `click_by_text("Upload")` on a recon-upload page could match both the "Upload" tab and the "Upload" submit button. The capability resolves the click using a custom JS resolver that prefers `button[type='submit']` and skips elements with `role="tab"`.
 
-## 9. Karta (executor)
+## 9. Executor
 
-The Karta Protocol is small and stable:
+The Executor Protocol is small and stable:
 
 ```mermaid
 classDiagram
-  class Karta {
-    +start() YajnaHandle
+  class Executor {
+    +start() RunHandle
     +cancel() void
-    +smritis() AsyncIterator
+    +events() AsyncIterator
   }
-  class LocalKarta {
+  class LocalExecutor {
     -ThreadPoolExecutor pool
-    -AahvaanaHub hub
-    -SmritiBus bus
+    -SignalHub hub
+    -EventBus bus
   }
-  class TemporalKarta {
+  class TemporalExecutor {
     -Client client
     -TaskQueue queue
   }
-  Karta <|.. LocalKarta
-  Karta <|.. TemporalKarta
-  note for Karta "Protocol / interface"
+  Executor <|.. LocalExecutor
+  Executor <|.. TemporalExecutor
+  note for Executor "Protocol / interface"
 ```
 
-v1 ships `LocalKarta`. It walks the Yantra topologically, dispatches each ready node to its Vidya, persists `Smriti` rows, and pushes them to subscribers (the SSE endpoint and the Sakshi).
+v1 ships `LocalExecutor`. It walks the DAG topologically, dispatches each ready node to its capability, persists `RunEvent` rows, and pushes them to subscribers (the SSE endpoint and the audit log). `TemporalExecutor` is a Phase 2 roadmap item — comment only today, no class.
 
 ```mermaid
 flowchart TD
-  S["Yajna start"] --> Q["Queue ready nodes"]
+  S["Run start"] --> Q["Queue ready nodes"]
   Q --> N{"Any ready"}
   N -->|"yes"| D["Dispatch node"]
-  D --> R["Vidya run"]
-  R --> SIG{"Aahvaana raised"}
-  SIG -->|"yes"| W["Persist Aahvaana state"]
+  D --> R["Capability run"]
+  R --> SIG{"Signal raised"}
+  SIG -->|"yes"| W["Persist paused state"]
   W --> H["Wait for resolution"]
   H --> R
-  SIG -->|"no"| E["Persist node done Smriti"]
+  SIG -->|"no"| E["Persist node done event"]
   E --> Q
-  N -->|"no"| F["Yajna complete"]
-  F --> X["Persist final Avastha"]
+  N -->|"no"| F["Run complete"]
+  F --> X["Persist final status"]
 ```
 
-## 10. Aahvaana hub
+### 9.1 Grant-defaults merge (runtime input shaping)
+
+Before dispatching a `cap.*` node, the executor merges the grant's `input_defaults` into the node's `inputs`. The merge treats `None` and `""` as "missing" so a planner-emitted `login_url: null` does not override a real default from the vault. Real non-empty values from the DAG always win.
+
+### 9.2 Stateful chain ordering
+
+Browser sessions are mutable: navigating, clicking, filling, and uploading each change the visible page. Nodes that operate on the same session must form a strict linear chain (not a parallel fan-out under a single login). The planner prompt enforces this; the executor honors whatever edge structure the validated DAG presents.
+
+## 10. Signal hub (HITL)
 
 ```mermaid
 classDiagram
-  class AahvaanaHub {
-    +publish(yajna_id, aahvaana) id
-    +resolve(aahvaana_id, payload)
-    +wait(aahvaana_id) Future
-    +cancel(aahvaana_id)
+  class SignalHub {
+    +publish(run_id, signal) id
+    +resolve(signal_id, payload)
+    +wait(signal_id) Future
+    +cancel(signal_id)
   }
-  class Aahvaana {
+  class Signal {
     +string id
     +string kind
     +string description
     +map context
     +string screenshot_uri
   }
-  AahvaanaHub --> Aahvaana
+  SignalHub --> Signal
 ```
 
-Aahvaana kinds in v1: `captcha`, `picker`, `otp`, `confirm`. Each resolution is persisted as a `Smriti` so the Sakshi preserves who resolved what and when.
+Signal kinds in v1: `captcha`, `picker`, `otp`, `confirm`. Each resolution is persisted as a `RunEvent` so the audit log preserves who resolved what and when.
 
-## 11. Smriti (event) kinds
+## 11. Run event kinds
 
 | Kind | Emitted by | Carries |
 | --- | --- | --- |
-| `yajna.started` | Karta | Yantra snapshot |
-| `node.started` | Karta | node id, Vidya ref |
-| `node.input` | Karta | resolved input map |
-| `node.output` | Karta | output map (PII scrubbed) |
-| `node.failed` | Karta | error type, message |
+| `run.started` | Executor | dag snapshot |
+| `node.started` | Executor | node id, capability id |
+| `node.input` | Executor | resolved input map |
+| `node.output` | Executor | output map (PII scrubbed) |
+| `node.failed` | Executor | error type, message |
 | `node.screenshot` | Browser worker | object_uri, mime |
-| `aahvaana.published` | Hub | id, kind, screenshot |
-| `aahvaana.resolved` | Hub | id, who, payload |
-| `yajna.succeeded` | Karta | summary |
-| `yajna.failed` | Karta | failed node id |
-| `yajna.cancelled` | Karta | who, reason |
+| `signal.published` | Hub | id, kind, screenshot |
+| `signal.resolved` | Hub | id, who, payload |
+| `run.succeeded` | Executor | summary |
+| `run.failed` | Executor | failed node id |
+| `run.cancelled` | Executor | who, reason |
 
-The frontend subscribes via SSE on `/api/runs/{id}/events`.
+The frontend subscribes via SSE on `/runs/{id}/events`.
 
 ## 12. Input defaults merge
 
-A Vidya declares default inputs. A Yantra node may override any of them. Reference resolution happens after merge.
+A capability declares default inputs. A DAG node may override any of them. Reference resolution happens after merge.
 
 ```mermaid
 flowchart LR
-  A["vidya.defaults"] --> M["merge"]
-  B["yantra.node.inputs"] --> M
+  A["capability.defaults"] --> M["merge"]
+  B["dag.node.inputs"] --> M
+  G["grant.input_defaults"] --> M
   M --> R["reference resolution"]
-  R --> X["typed inputs into vidya.run"]
+  R --> X["typed inputs into capability.run"]
 ```
 
-Order of precedence: `yantra.node.inputs` > `vidya.defaults`. References are resolved last so they can target merged values.
+Order of precedence: `dag.node.inputs` (non-empty) > `grant.input_defaults` > `capability.defaults`. References are resolved last so they can target merged values.
 
-## 13. Test harness
+## 13. Capability semantic index
+
+`CapabilityIndex` embeds each granted capability's description + tags via `sentence-transformers` (`BAAI/bge-small-en-v1.5`) and writes per-tenant FAISS shards to disk. It is refreshed when an admin adds, updates, or removes a grant.
+
+**Status note:** v1 maintains the index on every grant change but the planner does *not* consult it at plan-time today — the prompt builder still renders every granted capability for the model. Wiring `CapabilityIndex.search(prompt, k=12)` into `PromptBuilder` is a planned change (Phase 1, listed in the roadmap) that activates the read path.
+
+## 14. Test harness
 
 Tests live alongside the source under `aakar/tests/`. Categories:
 
-- **Unit** — pure functions in the Drashtri, validator, prompt rendering.
-- **Vidya** — each Vidya has its own test file driving a fake browser or HTTP backend.
+- **Unit** — pure functions in the planner, validator, prompt rendering, discovery scoring.
+- **Capability** — each capability has its own test file driving a fake browser or HTTP backend.
 - **API integration** — FastAPI TestClient, real database, faked LLM and browser.
-- **End-to-end** — small set of scripted Yajnas against a local mock site.
+- **End-to-end** — small set of scripted runs against a local mock site.
 
 Integration tests must hit a real database, not mocks. Mock and prod divergence has masked broken migrations in the past.
 
-## 14. Reading guide
+## 15. Reading guide
 
 - For intent and boundaries, read the HLD.
-- For request and Yajna lifecycles plus the schema, read the backend doc.
+- For request and run lifecycles plus the schema, read the backend doc.
 - For UI shape and state, read the frontend doc.
 - For what comes next, read the roadmap.

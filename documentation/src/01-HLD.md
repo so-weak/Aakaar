@@ -1,49 +1,72 @@
-# Aakar — High-Level Design (v1)
+# AAKAAR — High-Level Design (v1)
 
-> Aakar is the gurukul in which the Pracharya (principal / superuser) inscribes Mandalas (tenants) — named beings such as Aarya — each one given a dharma (purpose), a set of Adhikaras (grants), and a body of attendant Sadhakas (users) who speak Sankalpas (intents) and witness Yajnas (runs). This document describes the v1 system: what it is, where its boundaries lie, the stable architectural spine, and the trade-offs behind the major decisions.
+> AAKAAR is a multi-tenant workflow automation platform that turns natural-language requests into auditable, repeatable browser and HTTP workflows. This document describes the v1 system: what it is, where its boundaries lie, the stable architectural spine, and the trade-offs behind the major decisions.
 
 ---
 
-## 1. What Aakar is
+## 1. What AAKAAR is
 
-Aakar is a multi-tenant workflow automation platform. A Sadhaka voices a Sankalpa in plain English ("log into the NBBL portal and download the Open Disputes report for cycle C02"); the system compiles that Sankalpa into a typed Yantra (DAG) of pre-approved Vidyas (capabilities); and a worker enacts the Yantra against the real third-party site or API while streaming live screenshots, Smritis (events), and artifacts back to the UI.
+An operator types a request in plain English ("log into NBBL and download the Open Disputes report for cycle C02"); the system compiles that request into a typed Directed Acyclic Graph (DAG) of pre-approved capabilities; and a worker executes the DAG against the real third-party site or API while streaming live screenshots, run events, and artifacts back to the UI.
 
 The product is opinionated about three things:
 
-1. **The Drashtri (planner) never invents Vidyas.** It can only emit nodes from the registered catalog. Anything outside the catalog is reported as a Missing Adhikara, not faked.
-2. **Every Yajna is auditable.** Each node, Aahvaana (signal), screenshot, file artifact, and human decision is persisted with a Mandala-scoped run id; the Sakshi (audit log) preserves the witness.
-3. **Humans stay in the loop where it matters.** Captchas, ambiguous selectors, and OTPs are surfaced through a single Aahvaana primitive instead of bypassed.
+1. **The LLM never invents actions.** The planner can only emit nodes from the registered capability catalog. Anything outside the catalog is reported back as missing, not faked.
+2. **Every run is auditable.** Each node, signal, screenshot, file artifact, and human decision is persisted with a tenant-scoped `run_id`.
+3. **Humans stay in the loop where it matters.** Captchas, ambiguous selectors, and OTPs are surfaced through a single signal primitive instead of bypassed.
 
-## 2. Roles (who is who)
+## 2. Personas
 
-| Aakar today | Mythic name | Surface | Responsibility |
+| Role (code) | Display name | Surface | Responsibilities |
 | --- | --- | --- | --- |
-| superuser / platform admin | **Pracharya** | superuser routes in aakar-web | Inscribes Mandalas, registers Vidyas, manages the global Veda (registry). |
-| tenant_admin | **Acharya** | aakar-web (within a Mandala) | Initiates Sadhakas, manages Kosha (vault) and Adhikaras, views all Yajnas in the Mandala. |
-| tenant_user | **Sadhaka** | aakar-web (Samvada / Yajnas) | Voices Sankalpas, approves clarifications, answers Aahvaanas, retrieves artifacts. |
+| `superuser` | Superuser | Superuser routes in `aakar-web` | Defines tenants, registers capabilities, manages the global catalog, seeds reference data. |
+| `tenant_admin` | Tenant Admin | `aakar-web` (within a tenant) | Manages users, capability grants, vault entries, and views all runs in the tenant. |
+| `tenant_user` | Tenant User | `aakar-web` chat | Drives day-to-day work: types prompts, approves clarifications, resolves captchas, downloads artifacts. |
 
-A single Aakar deployment serves many Mandalas. Mandala isolation is enforced at the database row, Kosha path, and object-store URI levels.
+A single AAKAAR deployment serves many tenants. Tenant isolation is enforced at the database row, vault path, and object-store URI levels.
+
+### Alternate vocabulary (UI labels)
+
+The frontend ships an i18n layer (`aakar-web/src/i18n/labels.ts`) that maps every operator-facing noun across six languages. Engineers who run the UI in a non-English mode will see a different vocabulary on screen even though wire formats and code identifiers are unchanged. For reference:
+
+| English (default) | Hindi (Latin script) | Devanagari |
+| --- | --- | --- |
+| Superuser | Pracharya | प्राचार्य |
+| Tenant Admin | Acharya | आचार्य |
+| Tenant User | Sadhaka | साधक |
+| Tenant | Mandala | मण्डल |
+| Capability | Vidya | विद्या |
+| Workflow | Sutra | सूत्र |
+| Run | Yajna | यज्ञ |
+| Plan / DAG | Yantra | यंत्र |
+| Chat | Samvada | संवाद |
+| Vault | Kosha | कोश |
+| Audit log | Sakshi | साक्षी |
+| Dashboard | Dashboard | दर्शन |
+| Live view | Pratyaksha | प्रत्यक्ष |
+| Sign in / Log out | Pravesha / Nirgama | प्रवेश / निर्गम |
+
+This document uses the English column. Bengali / Tamil / Kannada equivalents are available in the i18n layer for end-user UIs.
 
 ## 3. System overview
 
 ```mermaid
 flowchart LR
-  subgraph "Sadhaka"
-    U["Sadhaka voices Sankalpa"]
+  subgraph "Operator"
+    U["Tenant user types a prompt"]
   end
   subgraph "aakar-web"
-    UI["Samvada / Yajna / Kosha UI"]
+    UI["Chat / Run / Vault UI"]
   end
   subgraph "aakar API"
     API["FastAPI router"]
-    AUTH["Pravesha and Adhikara"]
-    PLAN["Drashtri (planner)"]
-    REG["Veda (capability registry)"]
-    EXEC["Karta (executor)"]
-    HUB["Aahvaana hub"]
+    AUTH["Auth and RBAC"]
+    PLAN["Planner"]
+    REG["Capability registry"]
+    EXEC["Executor"]
+    HUB["Signal hub"]
     DB[("Postgres or SQLite")]
-    VAULT[("Per-Mandala Kosha")]
-    OBJ[("Bhandara (object store)")]
+    VAULT[("Per-tenant vault")]
+    OBJ[("Object store")]
   end
   subgraph "Worker"
     BR["Browser worker"]
@@ -67,91 +90,91 @@ flowchart LR
   EXEC --> DB
   EXEC --> OBJ
   EXEC --> VAULT
-  HUB -.->|live Smritis| UI
+  HUB -.->|live events| UI
 ```
 
 ## 4. Architectural spine
 
 These five constraints are load-bearing. Anything else can change without breaking v1.
 
-1. **Yantra-only Drashtri.** The Drashtri emits a typed Yantra (DAG) made of registered Vidya nodes. Free-form code generation is forbidden.
-2. **Generic Karta.** The Karta (executor) walks any valid Yantra. It does not know about specific banks or sites. New behavior is added by registering new Vidyas, not by editing the Karta.
-3. **Registry split (Veda).** Vidyas (capabilities), Kriyas (actions), and Lakshanas (controls / selectors) are three separate tables. Each layer evolves independently.
-4. **Session pinning.** Once a Yajna binds to a specific browser session, every subsequent node in that Yajna runs in the same browser context until explicit logout or Yajna end.
-5. **Three-way Drashtri.** A Yajna can hit the Veda three ways: exact match, semantic search over a FAISS / pgvector index, and an agentic loop (the Drashtri-with-eyes) when the Sankalpa is ambiguous.
+1. **DAG-only planner.** The planner emits a typed DAG made of registered capability nodes. Free-form code generation is forbidden.
+2. **Generic executor.** The executor walks any valid DAG. It does not know about specific banks or sites. New behavior is added by registering new capabilities, not by editing the executor.
+3. **Registry split.** Capabilities (login, download, upload), Actions (lower-level steps a capability composes), and Controls (selectors, waits) are three separate tables. Each layer can evolve independently.
+4. **Session pinning.** Once a run binds to a specific browser session, every subsequent node in that run runs in the same browser context until explicit logout or run end.
+5. **Three-way planner.** A run can hit the catalog three ways: exact match, semantic search over a FAISS / pgvector index, and an agentic loop that asks the model to plan in steps when the request is ambiguous.
 
 ```mermaid
 flowchart TD
-  P["Sankalpa"] --> N["NL parse"]
+  P["Prompt"] --> N["NL parse"]
   N --> M{"Match strategy"}
-  M -->|"exact"| C["Veda lookup"]
-  M -->|"semantic"| V["Vector search (Anveshana)"]
+  M -->|"exact"| C["Catalog lookup"]
+  M -->|"semantic"| V["Vector search"]
   M -->|"ambiguous"| A["Agentic loop"]
-  C --> D["Typed Yantra"]
+  C --> D["Typed DAG"]
   V --> D
   A --> D
-  D --> X["Karta"]
-  X --> R["Yajna with Smritis and artifacts"]
+  D --> X["Executor"]
+  X --> R["Run with events and artifacts"]
 ```
 
 ## 5. Core concepts
 
-- **Vidya (capability).** A named, typed, human-reviewed unit of work. Example: `cap.web_login`, `cap.file_download`, `cap.file_upload`. Each Vidya declares its inputs, outputs, Aahvaanas, and the Kriyas it composes.
-- **Kriya (action).** A primitive the Karta knows how to perform. Examples: `browser.set_field`, `browser.click_by_text`, `time.now`, `file.read_local`, `http.request`.
-- **Lakshana (control).** A reusable selector or wait condition associated with a Vidya or site. Lakshanas are kept separate so a UI redesign on the third party only touches one row.
-- **Sutra (workflow).** A persisted, named Yantra ready to be performed again and again. Sutras are versioned (Paatha — the recension).
-- **Yajna (run).** A single performance of a Yantra. Has an Avastha (status) lifecycle (Pratiksha → Pravriti → Aahvaana → Siddha | Vighna | Tyaaga), a Mandala scope, and a tree of Smritis and artifacts.
-- **Aahvaana (signal).** A typed pause. The Karta publishes an Aahvaana (`captcha`, `picker`, `otp`, `confirm`) and waits for a Sadhaka — or another system — to resolve it via the Aahvaana hub.
+- **Capability.** A named, typed, human-reviewed unit of work. Example: `cap.web_login`, `cap.file_download`, `cap.file_upload`. Each capability declares its inputs, outputs, signals, and the actions it composes.
+- **Action.** A primitive the executor knows how to perform. Examples: `browser.set_field`, `browser.click_by_text`, `time.now`, `file.read_local`, `http.request`.
+- **Control.** A reusable selector or wait condition associated with a capability or site. Controls are kept separate so a UI redesign on the third party only requires editing one row.
+- **Workflow.** A persisted, named DAG ready to be executed again and again. Workflows are versioned.
+- **Run.** A single execution of a DAG. Has a status lifecycle (`queued → running → paused → succeeded | failed | cancelled`), a tenant scope, and a tree of events and artifacts.
+- **Signal.** A typed pause. The executor publishes a signal (`captcha`, `picker`, `otp`, `confirm`) and waits for a human — or another system — to resolve it via the signal hub.
 
-## 6. Multi-Mandala model
+## 6. Multi-tenancy model
 
-Every persistent row carries a `mandala_id` (on the wire still `tenant_id`). The Kosha, Bhandara, and FAISS index are partitioned by Mandala. Adhikaras (grants) gate which Vidyas a Mandala — and a Sadhaka within that Mandala — can invoke.
+Every persistent row carries a `tenant_id`. The vault, object store, and FAISS index are partitioned by tenant. Capability grants gate which capabilities a tenant — and a user within that tenant — can invoke.
 
 ```mermaid
 flowchart LR
-  T1["Mandala A"] --> G1["Adhikaras: web_login, file_download"]
-  T2["Mandala B"] --> G2["Adhikaras: web_login, file_upload, custom_recon"]
-  G1 --> R["Veda"]
+  T1["Tenant A"] --> G1["grants: web_login, file_download"]
+  T2["Tenant B"] --> G2["grants: web_login, file_upload, custom_recon"]
+  G1 --> R["Capability registry"]
   G2 --> R
-  R --> P["Drashtri"]
-  P -->|"only allowed nodes"| D["Yantra for Yajna"]
+  R --> P["Planner"]
+  P -->|"only allowed nodes"| D["DAG for run"]
 ```
 
-A Sadhaka from Mandala A can never plan or perform a Vidya that Mandala A has not been granted, even if the model tries to emit it. The check runs both at plan-time (filter the Veda before the model sees it) and at Yajna-time (refuse to dispatch a node whose Vidya is not granted).
+A user from Tenant A can never plan or execute a capability that Tenant A has not been granted, even if the model tries to emit it. The check runs both at planner-time (filter the catalog before the model sees it) and at executor-time (refuse to dispatch a node whose capability is not granted).
 
-## 7. Pravesha (login) and Adhikara (RBAC)
+## 7. Authentication and RBAC
 
-Aakar uses bcrypt-hashed passwords and HS256 JWTs. Tokens are stored in `sessionStorage` (per tab) so opening a second tab as a different Sadhaka does not stomp the first tab's session.
+AAKAAR uses bcrypt-hashed passwords and HS256 JWTs. Tokens are stored in `sessionStorage` (per tab) so opening a second tab as a different user does not stomp the first tab's session.
 
 Roles in v1:
 
-| Role (code) | Mythic | Scope | Can |
+| Role (code) | Display | Scope | Can |
 | --- | --- | --- | --- |
-| `superuser` | **Pracharya** | Platform | Everything across Mandalas. |
-| `tenant_admin` | **Acharya** | One Mandala | Initiate Sadhakas, manage Kosha entries; view all Yajnas in the Mandala. |
-| `tenant_user` | **Sadhaka** | One Mandala | Voice Sankalpas, drive Yajnas, view own Yajnas and shared Yajnas. |
+| `superuser` | Superuser | Platform | Everything across tenants. |
+| `tenant_admin` | Tenant Admin | One tenant | Manage users, grants, vault entries; view all runs in tenant. |
+| `tenant_user` | Tenant User | One tenant | Chat, drive runs, view own runs and shared runs. |
 
-Pravesha, Nirgama (logout), and refresh all go through the `aakar API`. The frontend never talks to the database directly.
+Login, logout, and refresh all go through the `aakar API`. The frontend never talks to the database directly.
 
-## 8. Yajna lifecycle and HITL
+## 8. Run model and human-in-the-loop
 
-A Yajna progresses through a small state machine. Sanskrit primary, English in parens:
+A run progresses through a small state machine:
 
 ```mermaid
 stateDiagram-v2
-  [*] --> Pratiksha
-  Pratiksha --> Pravriti: dispatcher picks up
-  Pravriti --> Aahvaana: capability publishes signal
-  Aahvaana --> Pravriti: Sadhaka resolves
-  Pravriti --> Siddha: terminal node ok
-  Pravriti --> Vighna: any node throws
-  Pravriti --> Tyaaga: Sadhaka cancels
-  Siddha --> [*]
-  Vighna --> [*]
-  Tyaaga --> [*]
+  [*] --> queued
+  queued --> running: dispatcher picks up
+  running --> paused: capability publishes signal
+  paused --> running: signal resolved
+  running --> succeeded: terminal node ok
+  running --> failed: any node throws
+  running --> cancelled: user cancels
+  succeeded --> [*]
+  failed --> [*]
+  cancelled --> [*]
 ```
 
-The `Aahvaana` state is the human-in-the-loop primitive. A Vidya that hits a captcha publishes a `captcha` Aahvaana carrying a screenshot and a free-form description. The UI renders the screenshot, asks the Sadhaka to type the answer, and posts the resolution back. The Karta resumes the same Yantra node from where it paused. No code path silently bypasses a captcha.
+The `paused` state is the human-in-the-loop primitive. A capability that hits a captcha publishes a `captcha` signal carrying a screenshot and a free-form description. The UI renders the screenshot, asks the operator to type the answer, and posts the resolution back. The executor resumes the same DAG node from where it paused. No code path silently bypasses a captcha.
 
 ## 9. Tech stack snapshot
 
@@ -162,47 +185,47 @@ The `Aahvaana` state is the human-in-the-loop primitive. A Vidya that hits a cap
 | ORM | SQLAlchemy 2 + Alembic | Mature migrations, supports SQLite and Postgres backends. |
 | Database (v1) | SQLite for local, Yugabyte (Postgres-wire) for cloud | Same SQL surface in both environments. |
 | Vector index | FAISS on SQLite, pgvector on Yugabyte | Avoids running a separate vector DB. |
-| Bhandara (object store) | Filesystem | No S3 in v1. Path layout already namespaces by Mandala or Yajna. |
+| Object store | Filesystem | No S3 in v1. Path layout already namespaces by tenant or run. |
 | Browser worker | Playwright headless Chromium | Robust selectors, screenshotting, file dialog support. |
-| LLM (Drashtri) | OpenAI Chat Completions | Strict JSON mode for Yantra emission. |
+| LLM | OpenAI Chat Completions | Strict JSON mode for DAG emission. |
 | Frontend | Vite + React 18 + TypeScript | Fast dev loop, low ceremony. |
 | Frontend data | TanStack Query | Cache plus revalidation; pairs cleanly with REST. |
-| Frontend graph | xyflow + dagre | Yantra layout for plan view and Yajna view. |
-| Pravesha | bcrypt + HS256 JWT | Self-contained; no SSO dependency in v1. |
+| Frontend graph | xyflow + dagre | DAG layout for plan view and run view. |
+| Auth | bcrypt + HS256 JWT | Self-contained; no SSO dependency in v1. |
 
 ## 10. Key trade-offs
 
-- **No Temporal in v1.** The Karta Protocol is designed so that a `LocalKarta` (in-process, threadpool-backed) can be swapped for a `TemporalKarta` later without touching Drashtri or Vidya code. v1 ships LocalKarta.
-- **Per-Yajna browsers.** A fresh Chromium context per Yajna is slower to start (about 1.5 to 3 seconds) but eliminates a whole class of cross-Mandala cookie and storage bugs. A warm pool is on the roadmap, gated behind isolation guarantees.
-- **No cron in v1.** Yajnas are Sadhaka-initiated. Adding cron without a queue, dead-letter handling, and quotas would be a footgun.
-- **Filesystem Bhandara.** S3 is on the roadmap. Switching is a single adapter change because every artifact is referenced by URI.
+- **No Temporal in v1.** The Executor Protocol is designed so that a `LocalExecutor` (in-process, threadpool-backed) can be swapped for a `TemporalExecutor` later without touching planner or capability code. v1 ships LocalExecutor.
+- **Per-run browsers.** A fresh Chromium context per run is slower to start (about 1.5 to 3 seconds) but eliminates a whole class of cross-tenant cookie and storage bugs. A warm pool is on the roadmap, gated behind isolation guarantees.
+- **No cron in v1.** Runs are operator-initiated. Adding cron without a queue, dead-letter handling, and quotas would be a footgun.
+- **Filesystem object store.** S3 is on the roadmap. Switching is a single adapter change because every artifact is referenced by URI.
 - **Permissive email regex, bcrypt direct.** Pydantic `EmailStr` and `passlib` were both swapped out after upstream pain. The current shapes are deliberate; do not "modernize" them.
 
 ## 11. Failure modes and guardrails
 
 | Failure | Detection | Mitigation |
 | --- | --- | --- |
-| Drashtri emits unknown Vidya | Yantra validator | Reject Yantra, return clarification request. |
-| Drashtri emits malformed JSON | Strict JSON mode + schema parse | Retry once, then surface error. |
-| Selector drift on third-party site | Vidya raises selector error | Fall through to generic `set_field` and `click_by_text` recovery. |
-| Captcha encountered | Vidya detects and emits Aahvaana | UI asks Sadhaka; Yajna pauses, not fails. |
-| Credential rotation | Kosha read at Yajna-start | Sadhaka updates Kosha; next Yajna picks it up. |
-| Mandala boundary violation attempt | Pravesha + Adhikara filter | 403 at API; Vidya not even visible to Drashtri. |
-| Transient network error | Vidya-level retry policy | Bounded retries; failed Yajna is retryable from UI. |
+| LLM emits unknown capability | DAG validator | Reject DAG, return clarification request. |
+| LLM emits malformed JSON | Strict JSON mode + schema parse | Retry once, then surface error. |
+| Selector drift on third-party site | Capability raises selector error | Fall through to generic `set_field` and `click_by_text` recovery. |
+| Captcha encountered | Capability detects and signals | UI asks operator; run pauses, not fails. |
+| Credential rotation | Vault read at run-start | Operator updates vault; next run picks it up. |
+| Tenant boundary violation attempt | Auth + grant filter | 403 at API; capability not even visible to planner. |
+| Transient network error | Capability-level retry policy | Bounded retries; failed run is retryable from UI. |
 
 ## 12. Boundaries (out of scope for v1)
 
 - No mobile clients.
 - No SSO / SAML / OIDC.
-- No streaming LLM responses in Samvada (responses are turn-based).
+- No streaming LLM responses in chat (responses are turn-based).
 - No multi-region replication.
-- No public Vidya marketplace.
-- No automatic scheduling. Yajnas start when a Sadhaka clicks "Offer Yajna" or when an authorized API caller posts to `/runs`.
+- No public capability marketplace.
+- No automatic scheduling. Runs start when an operator clicks "Run" or when an authorized API caller posts to `/runs`.
 
 ## 13. Reading order
 
 1. **HLD (this document)** — what and why.
 2. **LLD** — module-by-module deep dive, sequence diagrams, validation rules.
-3. **Backend architecture** — request lifecycle, Yajna lifecycle, schema, ops.
-4. **Frontend architecture** — routing, state, components, Pratyaksha (live) panel.
-5. **Roadmap** — what comes next and in what order, including OpenTelemetry.
+3. **Backend architecture** — request lifecycle, run lifecycle, schema, ops.
+4. **Frontend architecture** — routing, state, components, live screen panel.
+5. **Roadmap** — what comes next, in what order, including OpenTelemetry.

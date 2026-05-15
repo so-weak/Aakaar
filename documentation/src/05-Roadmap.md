@@ -1,61 +1,61 @@
-# Aakar — Roadmap (v1)
+# AAKAAR — Roadmap (v1)
 
-> What's planned next, in roughly the order it will land. Phases are calendar guidance, not contracts; items can move when reality intervenes. Every item below is anchored to a concrete Sadhaka pain or platform need we have already seen in v1. Mythic primary, English in parens on first occurrence per section.
+> What's planned next, in roughly the order it will land. Phases are calendar guidance, not contracts; items can move when reality intervenes. Every item below is anchored to a concrete tenant pain or platform need we have already seen in v1.
 
 ---
 
 ## Phase 1 — within 2 weeks
 
-Goals: lower the friction for the first Sadhakas of a new Mandala, sharpen the Samvada UX, and finish the long tail of v1 polish.
+Goals: lower friction for new tenants, sharpen the chat UX, finish the long tail of v1 polish.
 
-### 1.1 Auto-grant session Vidyas on Pravesha (login)
+### 1.1 Auto-grant session capabilities on user creation
 
-Today, an Acharya (tenant admin) must explicitly grant `cap.web_login` to a Sadhaka before they can run any login-bearing Sutra. In practice, every Sadhaka needs it. Phase 1 will auto-grant the read-only "session" Vidyas (`web_login`, `http.fetch_session`, `screenshot`) on Sadhaka creation, with an opt-out toggle.
+Today, a tenant admin must explicitly grant `cap.web_login` to a user before the user can run any login-bearing workflow. In practice, every user needs it. Phase 1 auto-grants the read-only "session" capabilities (`web_login`, `http.fetch_session`, `screenshot`) on user creation, with an opt-out toggle.
 
-### 1.2 Kosha (vault) redesign for non-login Vidyas
+### 1.2 Vault redesign for non-login capabilities
 
-The current Kosha is login-centric. Phase 1 widens the schema so a Mandala can store API keys, OAuth refresh tokens, and per-site cookies — anything a Vidya declares it needs. The UI moves to a generic "Site → Credential type → Entry" tree.
+The current vault is login-centric. Phase 1 widens the schema so a tenant can store API keys, OAuth refresh tokens, and per-site cookies — anything a capability declares it needs. The UI moves to a generic "Site → Credential type → Entry" tree.
 
-### 1.3 In-Samvada credential widget
+### 1.3 In-chat credential widget
 
-When the Drashtri pauses with a `picker` Aahvaana because the Kosha is missing an entry, the Samvada will render a credential entry form inline rather than redirecting the Sadhaka to `/admin/grants`. The form posts directly to the Kosha and resolves the Aahvaana in one step.
+When the planner pauses with a `picker` signal because the vault is missing an entry, the chat will render a credential entry form inline rather than redirecting the user to `/admin/grants`. The form posts directly to the vault and resolves the signal in one step.
 
-### 1.4 Multi-step Pravesha (login)
+### 1.4 Multi-step login
 
-Some sites require username on page A, password on page B, OTP on page C. The current `web_login` Vidya assumes a single form. Phase 1 introduces `LoginFlow` as a chain of Pravesha steps a Vidya can declare.
+Some sites require username on page A, password on page B, OTP on page C. The current `cap.web_login` capability assumes a single form. Phase 1 introduces `LoginFlow` as a chain of login steps a capability can declare.
 
-### 1.5 Vidya search (Anveshana) in the Pracharya's surface
+### 1.5 Activate the capability semantic index (read path)
 
-The Pracharya's catalog page will gain a top-of-page search box backed by the same FAISS / pgvector index the Drashtri uses. This makes it cheap to discover near-duplicate Vidyas before publishing a new one.
+The FAISS index of granted capabilities is already maintained on every grant change but never read at plan-time. Phase 1 wires `CapabilityIndex.search(prompt, k)` into `PromptBuilder` so that tenants with many grants get a tighter, relevance-filtered catalog rendered into the planner prompt. For tenants with a handful of grants, behavior is unchanged.
 
 ```mermaid
 flowchart LR
-  P1A["auto grants"] --> P1B["Kosha redesign"]
-  P1B --> P1C["in-Samvada credential widget"]
-  P1C --> P1D["multi-step Pravesha"]
-  P1D --> P1E["Vidya search"]
+  P1A["auto grants"] --> P1B["vault redesign"]
+  P1B --> P1C["in-chat credential widget"]
+  P1C --> P1D["multi-step login"]
+  P1D --> P1E["activate semantic index"]
 ```
 
 ## Phase 2 — within 1 month
 
-Goals: production hardening. Replace dev shortcuts with services that scale, add the observability story, and unlock more expressive Yantras.
+Goals: production hardening. Replace dev shortcuts with services that scale, add the observability story, and unlock more expressive DAGs.
 
 ### 2.1 OpenTelemetry observability
 
-Phase 2 introduces full OpenTelemetry support across both backends and the frontend. This is the single biggest visibility upgrade between v1 and the next version.
+Phase 2 introduces full OpenTelemetry support across both backends and the frontend.
 
 #### 2.1.1 What gets instrumented
 
 | Layer | Spans | Notable attributes |
 | --- | --- | --- |
 | FastAPI | one root span per request | `http.method`, `http.route`, `tenant.id`, `user.id`, `request_id` |
-| Drashtri (planner) | spans for "plan" plus child spans per LLM call and tool call | `planner.strategy` (oneshot or agentic), `planner.candidate_count` |
-| Validator | one span per Yantra validation | `dag.node_count`, `validator.failed_rule` |
-| Karta (executor) | one span per Yajna, child spans per node, grandchild per Aahvaana wait | `run.id`, `node.id`, `capability.id`, `signal.kind` |
-| Vidya | one span per Vidya invocation | `capability.id`, `vault.read_count` |
+| Planner | spans for "plan" plus child spans per LLM call and tool call | `planner.strategy` (oneshot or agentic), `planner.candidate_count` |
+| Validator | one span per DAG validation | `dag.node_count`, `validator.failed_rule` |
+| Executor | one span per run, child spans per node, grandchild per signal wait | `run.id`, `node.id`, `capability.id`, `signal.kind` |
+| Capability | one span per capability invocation | `capability.id`, `vault.read_count` |
 | Browser worker | span per Playwright step | `browser.action`, `browser.selector_strategy`, `browser.duration_ms` |
 | HTTP worker | span per outbound request | standard HTTP semantic conventions |
-| Frontend | spans for navigation, query fetches, Smriti SSE lifecycle | `page.path`, `query.key` |
+| Frontend | spans for navigation, query fetches, run-event SSE lifecycle | `page.path`, `query.key` |
 
 #### 2.1.2 Metrics
 
@@ -75,7 +75,7 @@ Histograms use the OTel default boundaries; we will tune buckets after a week of
 
 #### 2.1.3 Logs
 
-The structured logger (`structlog`) gets bridged into OTel logs. Every log record inherits the active span context, so a log line in the Karta automatically carries the `run.id` and `node.id` of the node that emitted it. Trace-to-log correlation lets ops jump from a slow span to the exact log lines for that node.
+The structured logger (`structlog`) is bridged into OTel logs. Every log record inherits the active span context, so a log line in the executor automatically carries the `run.id` and `node.id` of the node that emitted it. Trace-to-log correlation lets ops jump from a slow span to the exact log lines for that node.
 
 #### 2.1.4 Resource attributes
 
@@ -107,11 +107,11 @@ The collector runs as a sidecar in dev and as a per-node DaemonSet in cloud. Bac
 
 #### 2.1.6 Sampling
 
-Default is head-based at 10% for normal traffic plus always-on for any trace whose root span's `error` attribute is true. Tail-based sampling on the collector retains slow traces (greater than the 95th percentile) and traces from a configurable list of "VIP" Mandalas for debugging.
+Default is head-based at 10% for normal traffic plus always-on for any trace whose root span's `error` attribute is true. Tail-based sampling on the collector retains slow traces (greater than the 95th percentile) and traces from a configurable list of "VIP" tenants for debugging.
 
 #### 2.1.7 Privacy
 
-Span attributes are never allowed to carry credentials, cookie values, Kosha payloads, or full file contents. A small allowlist plus `process.env.OTEL_SCRUB_KEYS` controls scrubbing at SDK level. PII fields in Smriti payloads are redacted before they ever reach the OTel pipeline.
+Span attributes are never allowed to carry credentials, cookie values, vault payloads, or full file contents. A small allowlist plus `process.env.OTEL_SCRUB_KEYS` controls scrubbing at SDK level. PII fields in run-event payloads are redacted before they ever reach the OTel pipeline.
 
 #### 2.1.8 Local developer experience
 
@@ -129,74 +129,74 @@ flowchart LR
   S6 --> S7["sampling policy + scrubbing audit"]
 ```
 
-### 2.2 Temporal-backed Karta
+### 2.2 Temporal-backed executor
 
-The Karta Protocol already has a `TemporalKarta` stub. Phase 2 finishes it, with workflow types per Vidya and child workflows for sub-Yantras. Local dev keeps `LocalKarta`.
+The Executor Protocol is documented with a `TemporalExecutor` placeholder. Phase 2 finishes it, with workflow types per capability and child workflows for sub-DAGs. Local dev keeps `LocalExecutor`.
 
-### 2.3 Cron Sankalpas
+### 2.3 Cron triggers
 
-Expose a per-Sutra cron field. The Pracharya's surface gets a "Schedules" page. Cron is backed by the same Temporal cluster that powers the Karta.
+Expose a per-workflow cron field. The admin surface gets a "Schedules" page. Cron is backed by the same Temporal cluster that powers the executor.
 
-### 2.4 Production Kosha (vault)
+### 2.4 Production vault
 
-Replace the dev plaintext-on-disk adapter with a managed-KMS-backed driver: per-Mandala data key encrypts the secret blob; the data key is wrapped by a master key in a managed KMS; the master key never enters the application process. Cipher rotation is staged so old entries can be re-encrypted without downtime.
+Replace the dev plaintext-on-disk adapter with a managed-KMS-backed driver: per-tenant data key encrypts the secret blob; the data key is wrapped by a master key in a managed KMS; the master key never enters the application process. Cipher rotation is staged so old entries can be re-encrypted without downtime.
 
 ### 2.5 Warm browser pool
 
-Today every Yajna boots a fresh Chromium context (about 1.5 to 3 seconds). Phase 2 adds a pool of pre-warmed contexts isolated by Mandala. Eviction on Mandala-scope conflicts is enforced.
+Today every run boots a fresh Chromium context (about 1.5 to 3 seconds). Phase 2 adds a pool of pre-warmed contexts isolated by tenant. Eviction on tenant-scope conflicts is enforced.
 
-### 2.6 Branch and for_each in Yantras
+### 2.6 Branch and for_each in DAGs
 
-The Yantra schema gets two new node types: `branch` (route by predicate) and `for_each` (fan out over a list and join). The validator and Karta learn to handle them; the Drashtri learns to emit them when Sankalpas call for "for each row in the file ...".
+The DAG schema gets two new node types: `branch` (route by predicate) and `for_each` (fan out over a list and join). The validator and executor learn to handle them; the planner learns to emit them when prompts call for "for each row in the file ...".
 
 ```mermaid
 flowchart LR
-  P2A["OpenTelemetry"] --> P2B["Temporal Karta"]
-  P2B --> P2C["Cron Sankalpas"]
-  P2C --> P2D["Production Kosha"]
+  P2A["OpenTelemetry"] --> P2B["Temporal executor"]
+  P2B --> P2C["Cron"]
+  P2C --> P2D["Production vault"]
   P2D --> P2E["Warm browser pool"]
   P2E --> P2F["Branch + for_each"]
 ```
 
 ## Phase 3 — 3 to 6 months
 
-Goals: turn Aakar from a single-deployment product into a platform that can host external publishers and serve regulated Mandalas.
+Goals: turn AAKAAR from a single-deployment product into a platform that can host external publishers and serve regulated tenants.
 
-### 3.1 Vidya marketplace
+### 3.1 Capability marketplace
 
-A signed-publisher model where third-party teams can submit Vidyas. Each submission goes through code review, schema validation, a security scan, and a test in a sandbox Mandala before becoming visible.
+A signed-publisher model where third-party teams can submit capabilities. Each submission goes through code review, schema validation, a security scan, and a test in a sandbox tenant before becoming visible.
 
-### 3.2 Sakshi (audit) surface
+### 3.2 Audit log surface
 
-Today the `audit_log` (Sakshi) table is queryable by SQL but not exposed in product. Phase 3 builds an Acharya audit view with filter by Sadhaka, action, and time, plus signed-export for compliance.
+Today the `audit_log` table is queryable by SQL but not exposed in product. Phase 3 builds a tenant-admin audit view with filter by user, action, and time, plus signed-export for compliance.
 
-### 3.3 Yajna replay
+### 3.3 Run replay
 
-Given a `run_id`, replay produces a deterministic re-Yajna from persisted Yantra and inputs against a recorded mock of the third party. Useful for incident triage and regression tests.
+Given a `run_id`, replay produces a deterministic re-run from persisted DAG and inputs against a recorded mock of the third party. Useful for incident triage and regression tests.
 
 ### 3.4 Multi-region
 
-The product currently assumes a single deployment per environment. Phase 3 introduces region affinity: a Mandala is pinned to a region; cross-region queries are explicit; the Kosha is region-local.
+The product currently assumes a single deployment per environment. Phase 3 introduces region affinity: a tenant is pinned to a region; cross-region queries are explicit; the vault is region-local.
 
 ### 3.5 Org hierarchy
 
-Mandalas can be grouped into orgs. Adhikaras and quotas can be set at the org level and inherited; per-Mandala exceptions still work.
+Tenants can be grouped into orgs. Capability grants and quotas can be set at the org level and inherited; per-tenant exceptions still work.
 
 ```mermaid
 flowchart LR
-  P3A["Vidya marketplace"] --> P3B["Sakshi surface"]
-  P3B --> P3C["Yajna replay"]
+  P3A["Capability marketplace"] --> P3B["Audit log surface"]
+  P3B --> P3C["Run replay"]
   P3C --> P3D["Multi-region"]
   P3D --> P3E["Org hierarchy"]
 ```
 
 ## Spike candidates (un-prioritized)
 
-- Streaming LLM responses in Samvada with cancellation and partial Yantra previews.
-- Drashtri self-critique pass before emitting a Yantra.
-- Vidya "lint" checks (selector freshness, fixture currency).
-- A small mobile companion app for captcha resolution and Yajna notifications.
-- Feature-flag service plus per-Mandala rollout percentages.
+- Streaming LLM responses in chat with cancellation and partial DAG previews.
+- Planner self-critique pass before emitting a DAG.
+- Capability "lint" checks (selector freshness, fixture currency).
+- A small mobile companion app for captcha resolution and run notifications.
+- Feature-flag service plus per-tenant rollout percentages.
 - Out-of-the-box SAML / OIDC.
 
 ## Engineering policies
@@ -204,18 +204,18 @@ flowchart LR
 - **One PR per logical change.** Bundle only when a split would be churn.
 - **Integration tests hit a real database.** No mocks at the persistence boundary.
 - **Migrations are reviewed for online-safety.** Adding a NOT NULL column to a hot table is a multi-PR sequence.
-- **No silent fallbacks for security.** A missing Vidya or a missing Adhikara returns an explicit error.
+- **No silent fallbacks for security.** A missing capability or a missing grant returns an explicit error.
 - **Comments justify the WHY only.** WHAT is in the code; PR description carries context.
-- **No hard-coded credentials anywhere.** Kosha or env, never in code or tests.
+- **No hard-coded credentials anywhere.** Vault or env, never in code or tests.
 
 ## Decision log (open questions)
 
 | ID | Question | Owner | Target decision date |
 | --- | --- | --- | --- |
-| RFC-04 | Are we ok with shipping `TemporalKarta` before warm-pool isolation is proven? | Platform | 2026-05-30 |
-| RFC-05 | Where does Yajna replay state live: same DB or separate journaling store? | Platform | 2026-06-15 |
-| RFC-06 | Cron Sankalpas in admin surface or in aakar API? | Platform | 2026-05-25 |
-| RFC-07 | OTel span naming: do we adopt OpenTelemetry Semantic Conventions verbatim or define an Aakar overlay? | Observability | 2026-05-20 |
+| RFC-04 | Are we ok with shipping `TemporalExecutor` before warm-pool isolation is proven? | Platform | 2026-05-30 |
+| RFC-05 | Where does run-replay state live: same DB or separate journaling store? | Platform | 2026-06-15 |
+| RFC-06 | Cron triggers in admin-app or in aakar API? | Platform | 2026-05-25 |
+| RFC-07 | OTel span naming: do we adopt OpenTelemetry Semantic Conventions verbatim or define an AAKAAR overlay? | Observability | 2026-05-20 |
 
 ## What this roadmap is not
 

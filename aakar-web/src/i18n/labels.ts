@@ -29,15 +29,15 @@ export interface LangMeta {
 }
 
 export const LANGUAGES: readonly LangMeta[] = [
-  { code: "hi-Latn", label: "Hindi (Latin)", nativeLabel: "Hindi (Latin)", chip: "Aa" },
   { code: "en",      label: "English",       nativeLabel: "English",        chip: "En" },
+  { code: "hi-Latn", label: "Hindi (Latin)", nativeLabel: "Hindi (Latin)", chip: "Aa" },
   { code: "hi-Deva", label: "Hindi",         nativeLabel: "हिन्दी",           chip: "हि" },
   { code: "bn",      label: "Bengali",       nativeLabel: "বাংলা",           chip: "বা" },
   { code: "ta",      label: "Tamil",         nativeLabel: "தமிழ்",           chip: "த" },
   { code: "kn",      label: "Kannada",       nativeLabel: "ಕನ್ನಡ",           chip: "ಕ" },
 ] as const;
 
-export const DEFAULT_LANG: LangCode = "hi-Latn";
+export const DEFAULT_LANG: LangCode = "en";
 
 // ---------------------------------------------------------------------------
 // label keys
