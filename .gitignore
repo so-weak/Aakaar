@@ -1,6 +1,6 @@
 # =============================================================================
 # Aakaar monorepo — root .gitignore
-# Covers: aakar/ (Python backend), admin-app/ + nbbl-app/ (Vite/React frontends),
+# Covers: aakaar/ (Python backend), admin-app/ + nbbl-app/ (Vite/React frontends),
 # any additional frontend added at the repo root.
 # =============================================================================
 
@@ -54,7 +54,7 @@ coverage/
 *.tsbuildinfo
 
 # =============================================================================
-# Python backend (aakar/)
+# Python backend (aakaar/)
 # =============================================================================
 __pycache__/
 *.py[cod]
@@ -108,9 +108,9 @@ ipython_config.py
 .pixi/
 
 # =============================================================================
-# Aakar runtime data (filesystem object store, vector indexes, local sqlite)
+# Aakaar runtime data (filesystem object store, vector indexes, local sqlite)
 # =============================================================================
-aakar/data/
+aakaar/data/
 *.sqlite
 *.sqlite-*
 *.db
@@ -122,4 +122,4 @@ aakar/data/
 tmp/
 .tmp/
 *.bak
-aakar/data.zip
+aakaar/data.zip

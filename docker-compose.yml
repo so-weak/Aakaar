@@ -1,62 +1,62 @@
 # Local production-like stack. Bring up with:
-#   AAKAR_JWT_SECRET=$(openssl rand -hex 32) OPENAI_API_KEY=sk-... docker compose up --build
+#   AAKAAR_JWT_SECRET=$(openssl rand -hex 32) OPENAI_API_KEY=sk-... docker compose up --build
 #
 # Brings up:
 #   - postgres   (Yugabyte/Postgres-compatible store; swap image for production)
-#   - aakar-api  (FastAPI + Playwright on :8000)
-#   - aakar-web  (nginx serving the Vite bundle on :5173, /api proxied to aakar-api)
+#   - aakaar-api  (FastAPI + Playwright on :8000)
+#   - aakaar-web  (nginx serving the Vite bundle on :5173, /api proxied to aakaar-api)
 services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: aakar
-      POSTGRES_PASSWORD: aakar
-      POSTGRES_DB: aakar
+      POSTGRES_USER: aakaar
+      POSTGRES_PASSWORD: aakaar
+      POSTGRES_DB: aakaar
     volumes:
-      - aakar-pg:/var/lib/postgresql/data
+      - aakaar-pg:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U aakar -d aakar"]
+      test: ["CMD-SHELL", "pg_isready -U aakaar -d aakaar"]
       interval: 5s
       timeout: 3s
       retries: 20
     ports:
       - "5432:5432"
 
-  aakar-api:
+  aakaar-api:
     build:
-      context: ./aakar
+      context: ./aakaar
       dockerfile: Dockerfile
     depends_on:
       postgres:
         condition: service_healthy
     environment:
-      AAKAR_DB_URL: postgresql+psycopg://aakar:aakar@postgres:5432/aakar
-      AAKAR_JWT_SECRET: ${AAKAR_JWT_SECRET:?set AAKAR_JWT_SECRET in env}
-      AAKAR_DATA_DIR: /data
-      AAKAR_CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
-      AAKAR_BROWSER_HEADLESS: "true"
+      AAKAAR_DB_URL: postgresql+psycopg://aakaar:aakaar@postgres:5432/aakaar
+      AAKAAR_JWT_SECRET: ${AAKAAR_JWT_SECRET:?set AAKAAR_JWT_SECRET in env}
+      AAKAAR_DATA_DIR: /data
+      AAKAAR_CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
+      AAKAAR_BROWSER_HEADLESS: "true"
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      AAKAR_LLM_MODEL: ${AAKAR_LLM_MODEL:-gpt-4.1-mini}
+      AAKAAR_LLM_MODEL: ${AAKAAR_LLM_MODEL:-gpt-4.1-mini}
     volumes:
-      - aakar-data:/data
+      - aakaar-data:/data
     ports:
       - "8000:8000"
     restart: unless-stopped
 
-  aakar-web:
+  aakaar-web:
     build:
-      context: ./aakar-web
+      context: ./aakaar-web
       dockerfile: Dockerfile
       args:
         VITE_API_BASE: /api
     depends_on:
-      - aakar-api
+      - aakaar-api
     environment:
-      AAKAR_BACKEND_URL: http://aakar-api:8000
+      AAKAAR_BACKEND_URL: http://aakaar-api:8000
     ports:
       - "5173:80"
     restart: unless-stopped
 
 volumes:
-  aakar-pg:
-  aakar-data:
+  aakaar-pg:
+  aakaar-data:

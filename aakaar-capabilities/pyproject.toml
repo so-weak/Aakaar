@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "aakaar-capabilities"
+version = "0.1.0"
+description = "Shared Aakaar capabilities — write a capability once, run it on the server or a remote agent."
+requires-python = ">=3.11"
+dependencies = ["pydantic>=2.6,<3"]
+
+[project.optional-dependencies]
+# Heavy/optional libs used by some shared caps are imported lazily; install
+# them on whichever host (server or agent) needs that capability.
+sys = ["psutil>=5.9"]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.5"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["aakaar_caps"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
