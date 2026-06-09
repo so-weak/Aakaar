@@ -103,6 +103,10 @@ class User(Base):
     __table_args__ = (
         UniqueConstraint("tenant_id", "email", name="uq_users_tenant_email"),
         Index("ix_users_tenant_id", "tenant_id"),
+        # Unique when present (multiple NULLs allowed) so two concurrent
+        # first-time OIDC logins can't provision duplicate users for the same
+        # federated subject.
+        Index("uq_users_oidc_subject", "oidc_subject", unique=True),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
@@ -115,6 +119,32 @@ class User(Base):
     role: Mapped[str] = mapped_column(String(32), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default=UserStatus.ACTIVE)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+    # ---- MFA (TOTP) ----
+    mfa_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    """True once an enrolled TOTP secret has been confirmed. While enrolling
+    (secret generated, not yet confirmed) this stays False and the secret
+    lives in `totp_pending_secret` so a half-finished enrollment can never
+    lock the user out."""
+    totp_secret: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    """Active TOTP secret (base32), optionally Fernet-encrypted at rest. NULL
+    until enrollment is confirmed. Redacted from audit logs."""
+    totp_pending_secret: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    """Candidate secret during enrollment, promoted to `totp_secret` on confirm."""
+    totp_last_step: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    """Last TOTP time-step accepted, to reject replay of a code within its
+    validity window."""
+    mfa_recovery_codes: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    """`{"codes": [<bcrypt-hash>, ...]}` — single-use backup codes; each entry
+    is removed as it is consumed. NULL when MFA is off."""
+
+    # ---- OIDC / SSO ----
+    oidc_subject: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    """Federated identity key, canonically `"{issuer}::{sub}"`. Unique when set
+    (see uq_users_oidc_subject). NULL for password/local users."""
+    last_login_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class CapabilityGrant(Base):

@@ -39,7 +39,16 @@ from aakaar.api.routers import (
     chat_sessions as chat_sessions_router,
 )
 from aakaar.api.routers import (
+    jwks as jwks_router,
+)
+from aakaar.api.routers import (
+    mfa as mfa_router,
+)
+from aakaar.api.routers import (
     objects as objects_router,
+)
+from aakaar.api.routers import (
+    oidc as oidc_router,
 )
 from aakaar.api.routers import (
     runs as runs_router,
@@ -135,6 +144,9 @@ def create_app(deps: AppDependencies) -> FastAPI:
     install_handlers(app)
 
     app.include_router(auth_router.router)
+    app.include_router(mfa_router.router)
+    app.include_router(oidc_router.router)
+    app.include_router(jwks_router.router)
     app.include_router(superuser_router.router)
     app.include_router(admin_router.router)
     app.include_router(capabilities_router.router)

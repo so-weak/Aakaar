@@ -59,9 +59,13 @@ open_in_tab() {
 # leaked-semaphore warnings from the embedding stack on shutdown.
 PY_ENV='OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 TOKENIZERS_PARALLELISM=false LOKY_MAX_CPU_COUNT=1'
 
+# Where the API binds. Default 0.0.0.0 so remote agents on the LAN can reach it;
+# set AAKAAR_API_HOST=127.0.0.1 to restrict to loopback (this machine only).
+API_HOST="${AAKAAR_API_HOST:-0.0.0.0}"
+
 # Backend: source aakaar/.env if present (your AAKAAR_JWT_SECRET / OPENAI_API_KEY
 # live there); generate a throwaway JWT secret only if one isn't set anywhere.
-BACKEND_CMD="cd '$ROOT/aakaar' && set -a; [ -f .env ] && . ./.env; set +a; export AAKAAR_JWT_SECRET=\${AAKAAR_JWT_SECRET:-\$(python3 -c 'import secrets;print(secrets.token_urlsafe(48))')} && env $PY_ENV .venv/bin/uvicorn aakaar.api.main:app --reload --reload-dir aakaar --host 127.0.0.1 --port 8000"
+BACKEND_CMD="cd '$ROOT/aakaar' && set -a; [ -f .env ] && . ./.env; set +a; export AAKAAR_JWT_SECRET=\${AAKAAR_JWT_SECRET:-\$(python3 -c 'import secrets;print(secrets.token_urlsafe(48))')} && env $PY_ENV .venv/bin/uvicorn aakaar.api.main:app --reload --reload-dir aakaar --host $API_HOST --port 8000"
 
 FRONTEND_CMD="cd '$ROOT/aakaar-web' && npm run dev"
 
@@ -70,8 +74,11 @@ open_in_tab "$FRONTEND_CMD"
 
 cat <<EOF
 Launched in new Terminal tabs:
-  Aakaar API:     http://localhost:8000
+  Aakaar API:     http://localhost:8000   (bound to $API_HOST)
   Aakaar web UI:  http://localhost:5173
 
-Stop a service with Ctrl+C in its tab.
+API host is $API_HOST — remote agents on the LAN can reach it at this machine's IP.
+Set AAKAAR_API_HOST=127.0.0.1 to restrict the API to this machine only.
+
+Stop a service with Ctrl+C in its tab, or run ./dev-stop.sh.
 EOF

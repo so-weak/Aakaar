@@ -67,6 +67,59 @@ class Settings:
     RemoteDispatcher). Inert when no agents are enrolled."""
     remote_task_timeout_seconds: float = 300.0
 
+    # ---- JWT signing (HS256 default; RS256 for production) ----------------
+    jwt_issuer: str | None = None
+    """`iss` claim stamped on minted tokens. Optional under HS256; recommended
+    under RS256 so downstream verifiers can pin the issuer."""
+    jwt_audience: str = "aakaar-api"
+    """`aud` claim for normal access tokens. The MFA step-up ticket uses a
+    different audience so it can never be replayed as an access token."""
+    jwt_key_dir: Path | None = None
+    """Directory of RSA signing keys for RS256: `<kid>.pem` (PKCS8 private),
+    optional `<kid>.pem.pub` (public, derived if absent), and an `active` file
+    naming the current signing kid. Required when jwt_algorithm starts with
+    RS/ES/PS. Publishing every public key (see /auth/.well-known/jwks.json)
+    lets tokens signed by an older kid keep validating across a rotation."""
+    jwt_bootstrap_keys: bool = False
+    """Dev convenience: when jwt_key_dir is empty, generate an RSA keypair on
+    first start (written unencrypted). NEVER enable in production."""
+
+    # ---- MFA (TOTP) -------------------------------------------------------
+    mfa_issuer: str = "Aakaar"
+    """Issuer label shown in the authenticator app (otpauth:// provisioning)."""
+    mfa_encryption_key: str | None = None
+    """Optional Fernet key (urlsafe-base64, 32 bytes) used to encrypt TOTP
+    secrets at rest. Unset = secrets stored verbatim (acceptable for dev /
+    SQLite; set this in production). Generate with:
+    `python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'`."""
+
+    # ---- OIDC / SSO -------------------------------------------------------
+    oidc_enabled: bool = False
+    oidc_issuer: str | None = None
+    """Base issuer URL; discovery reads `{issuer}/.well-known/openid-configuration`."""
+    oidc_client_id: str | None = None
+    oidc_client_secret: str | None = None
+    oidc_redirect_uri: str | None = None
+    """The absolute URL of our /auth/oidc/callback as registered with the IdP."""
+    oidc_frontend_callback_path: str = "/auth/callback"
+    """SPA route that receives the minted token in the URL fragment."""
+    oidc_default_tenant_slug: str | None = None
+    """Tenant new OIDC users are provisioned into when the login request does
+    not carry an explicit `tenant` hint. Unset = first-login must pass one."""
+    oidc_link_by_verified_email: bool = False
+    """When true, an OIDC login whose id_token has `email_verified=true` links
+    to an existing local user with that email instead of provisioning a new
+    one. Off by default — account linking is a deliberate policy choice."""
+
+    # ---- Row-Level Security ----------------------------------------------
+    rls_strict: bool = False
+    """When true, a DB session with neither a tenant nor a system scope active
+    sets the `app.tenant_id` GUC to '' (deny-all) — fail-closed. Default false
+    maps the no-scope case to the 'system' marker (allow-all) for a
+    backward-compatible rollout. RLS only actually enforces when the app
+    connects as a non-superuser, non-owner Postgres role (see
+    extras/rls/setup_app_role.sql); on SQLite it is a no-op."""
+
 
 def load_settings() -> Settings:
     """Build a Settings instance from environment variables.
@@ -102,6 +155,12 @@ def load_settings() -> Settings:
         "AAKAAR_CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
     )
     cors_origins = [o.strip() for o in raw_origins.split(",") if o.strip()]
+
+    def _bool(name: str, default: str = "false") -> bool:
+        return os.environ.get(name, default).lower() not in ("0", "false", "no", "")
+
+    raw_key_dir = os.environ.get("AAKAAR_JWT_KEY_DIR", "").strip()
+    jwt_key_dir = Path(raw_key_dir).expanduser() if raw_key_dir else None
 
     return Settings(
         db_url=os.environ.get("AAKAAR_DB_URL", f"sqlite:///{data_dir/'aakaar.sqlite'}"),
@@ -145,6 +204,23 @@ def load_settings() -> Settings:
         remote_task_timeout_seconds=float(
             os.environ.get("AAKAAR_REMOTE_TASK_TIMEOUT_SECONDS", "300")
         ),
+        jwt_issuer=os.environ.get("AAKAAR_JWT_ISSUER") or None,
+        jwt_audience=os.environ.get("AAKAAR_JWT_AUDIENCE", "aakaar-api"),
+        jwt_key_dir=jwt_key_dir,
+        jwt_bootstrap_keys=_bool("AAKAAR_JWT_BOOTSTRAP_KEYS"),
+        mfa_issuer=os.environ.get("AAKAAR_MFA_ISSUER", "Aakaar"),
+        mfa_encryption_key=os.environ.get("AAKAAR_MFA_ENCRYPTION_KEY") or None,
+        oidc_enabled=_bool("AAKAAR_OIDC_ENABLED"),
+        oidc_issuer=os.environ.get("AAKAAR_OIDC_ISSUER") or None,
+        oidc_client_id=os.environ.get("AAKAAR_OIDC_CLIENT_ID") or None,
+        oidc_client_secret=os.environ.get("AAKAAR_OIDC_CLIENT_SECRET") or None,
+        oidc_redirect_uri=os.environ.get("AAKAAR_OIDC_REDIRECT_URI") or None,
+        oidc_frontend_callback_path=os.environ.get(
+            "AAKAAR_OIDC_FRONTEND_CALLBACK_PATH", "/auth/callback"
+        ),
+        oidc_default_tenant_slug=os.environ.get("AAKAAR_OIDC_DEFAULT_TENANT_SLUG") or None,
+        oidc_link_by_verified_email=_bool("AAKAAR_OIDC_LINK_BY_VERIFIED_EMAIL"),
+        rls_strict=_bool("AAKAAR_RLS_STRICT"),
     )
 
 

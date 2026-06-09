@@ -11,6 +11,9 @@ import type {
   DashboardStats,
   Grant,
   LoginResponse,
+  MfaConfirmResponse,
+  MfaEnrollResponse,
+  MfaStatus,
   PlacementCheckResult,
   RawChatResponse,
   RemoteAgent,
@@ -28,6 +31,15 @@ import type {
 export const auth = {
   login: (email: string, password: string) =>
     request<LoginResponse>("/auth/login", { method: "POST", body: { email, password } }),
+  // Second factor: send exactly one of `code` (TOTP) or `recovery_code`.
+  mfaVerify: (input: { mfa_token: string; code?: string; recovery_code?: string }) =>
+    request<LoginResponse>("/auth/mfa/verify", { method: "POST", body: input }),
+  mfaStatus: () => request<MfaStatus>("/auth/mfa/status"),
+  mfaEnroll: () => request<MfaEnrollResponse>("/auth/mfa/enroll", { method: "POST" }),
+  mfaConfirm: (code: string) =>
+    request<MfaConfirmResponse>("/auth/mfa/confirm", { method: "POST", body: { code } }),
+  mfaDisable: (code: string) =>
+    request<void>("/auth/mfa/disable", { method: "POST", body: { code } }),
 };
 
 // ---------- superuser ----------------------------------------------------

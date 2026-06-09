@@ -27,6 +27,7 @@ from aakaar.api.repositories import runs as runs_repo
 from aakaar.api.repositories import schedules as schedules_repo
 from aakaar.api.repositories import workflows as workflows_repo
 from aakaar.db.session import SessionFactory
+from aakaar.db.tenancy import system_scope, tenant_scope
 from aakaar.interpreter import RunOrchestrator
 from aakaar.shared.dag.types import Dag
 
@@ -98,7 +99,8 @@ class Scheduler:
         (also callable directly from tests)."""
         now = datetime.now(UTC)
         due: list[_DueSchedule] = []
-        with self._sf.session() as s:
+        # Polling spans every tenant's schedules — trusted cross-tenant read.
+        with system_scope(), self._sf.session() as s:
             for sched in schedules_repo.list_enabled(s):
                 if self._is_due(sched, now):
                     due.append(
@@ -141,7 +143,9 @@ class Scheduler:
         dag: Dag | None = None
         granted_caps: dict[str, dict[str, object]] = {}
         run_id: uuid.UUID | None = None
-        with self._sf.session() as s:
+        # Per-tenant work runs in that tenant's scope (so RLS, when enforcing,
+        # constrains the run/grant rows to the schedule's tenant).
+        with tenant_scope(snap.tenant_id), self._sf.session() as s:
             wf = workflows_repo.get_workflow(s, snap.tenant_id, snap.workflow_id)
             if wf is None or snap.created_by is None:
                 # Workflow gone or no actor to attribute the run to — retire it.

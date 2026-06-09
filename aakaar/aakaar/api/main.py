@@ -37,7 +37,7 @@ def build_app() -> object:
         settings.llm_model,
     )
 
-    engine = make_engine(EngineConfig(url=settings.db_url))
+    engine = make_engine(EngineConfig(url=settings.db_url, rls_strict=settings.rls_strict))
 
     if settings.openai_api_key:
         if settings.openai_base_url:

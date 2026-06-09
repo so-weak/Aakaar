@@ -27,6 +27,7 @@ from typing import Any
 
 from aakaar.db.models import Run, RunStatus
 from aakaar.db.session import SessionFactory
+from aakaar.db.tenancy import system_scope, tenant_scope
 from aakaar.interpreter.activities.types import ActivityContext
 from aakaar.interpreter.events import EventRecorder
 from aakaar.interpreter.executor import Executor, RunContext, RunOutcome
@@ -94,7 +95,8 @@ class RunOrchestrator:
         from sqlalchemy import select
 
         recovered = 0
-        with self.session_factory.session() as s:
+        # Startup scan spans every tenant's runs — trusted cross-tenant work.
+        with system_scope(), self.session_factory.session() as s:
             rows = (
                 s.execute(
                     select(Run).where(
@@ -141,6 +143,28 @@ class RunOrchestrator:
     # --- internals ---------------------------------------------------------
 
     async def _drive(
+        self,
+        *,
+        run_id: uuid.UUID,
+        tenant_id: uuid.UUID,
+        dag: Dag,
+        granted_caps: dict[str, dict[str, Any]],
+        run_target: str | None = None,
+    ) -> RunOutcome:
+        # Pin every app-DB write this run performs (status, events) to its
+        # tenant, so RLS — when enforcing — keeps a run from touching another
+        # tenant's rows. contextvars propagate into the executor's awaited work
+        # and any sub-tasks it spawns.
+        with tenant_scope(tenant_id):
+            return await self._drive_impl(
+                run_id=run_id,
+                tenant_id=tenant_id,
+                dag=dag,
+                granted_caps=granted_caps,
+                run_target=run_target,
+            )
+
+    async def _drive_impl(
         self,
         *,
         run_id: uuid.UUID,

@@ -21,6 +21,7 @@ from aakaar.api.repositories import users as users_repo
 from aakaar.core.config import Settings
 from aakaar.db.models import User, UserRole
 from aakaar.db.session import SessionFactory
+from aakaar.db.tenancy import system_scope
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +30,10 @@ def bootstrap_superuser(settings: Settings, session_factory: SessionFactory) -> 
     if not settings.superuser_email or not settings.superuser_password:
         logger.info("superuser bootstrap: skipped (env vars not set)")
         return
-    with session_factory.session() as s:
+    # Superuser rows have tenant_id = NULL and the lookup spans all tenants —
+    # trusted cross-tenant work, so run it under a system scope (the RLS marker
+    # that may read/write outside any single tenant).
+    with system_scope(), session_factory.session() as s:
         existing = s.scalars(
             select(User).where(User.role == UserRole.SUPERUSER)
         ).first()

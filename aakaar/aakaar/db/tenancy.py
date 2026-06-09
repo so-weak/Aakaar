@@ -4,11 +4,20 @@ Every request handler must enter a `tenant_scope(tenant_id)` block before
 touching domain tables. Repository functions consult `current_tenant()` and
 refuse to run without one set.
 
-This is the application-layer half of multi-tenancy. On Yugabyte/Postgres we
-will additionally turn on Row-Level Security in a follow-up migration; the
-contextvar will then be mirrored to a Postgres GUC (`app.tenant_id`) so RLS
-policies can use it. SQLite has no RLS — the contextvar is the only line of
-defense, which is fine for dev.
+This is the application-layer half of multi-tenancy. On Yugabyte/Postgres it
+is mirrored to a Postgres GUC (`app.tenant_id`) that Row-Level Security
+policies read — see `db/session.py` (the `set_config` listener) and the
+`*_row_level_security` migration. The marker is one of:
+
+  * a tenant UUID  — inside `tenant_scope(tid)`; RLS restricts to that tenant.
+  * ``"system"``   — inside `system_scope()`; trusted cross-tenant access
+                     (login lookups, superuser/stats, schedulers, bootstrap).
+  * ``""``         — no scope active AND `rls_strict` is on; RLS denies all
+                     rows (fail-closed).
+
+SQLite has no RLS — the contextvar is the only line of defense, which is fine
+for dev. The GUC also only *enforces* on Postgres when the app connects as a
+non-superuser, non-owner role (table owners and superusers bypass RLS).
 """
 
 from __future__ import annotations
@@ -18,6 +27,8 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 
+SYSTEM_MARKER = "system"
+
 
 class TenancyError(RuntimeError):
     """Raised when tenant-scoped code runs without a tenant set, or when a
@@ -25,6 +36,7 @@ class TenancyError(RuntimeError):
 
 
 _TENANT: ContextVar[uuid.UUID | None] = ContextVar("aakaar_tenant", default=None)
+_SYSTEM: ContextVar[bool] = ContextVar("aakaar_system", default=False)
 
 
 def current_tenant() -> uuid.UUID:
@@ -61,3 +73,40 @@ def tenant_scope(tenant_id: uuid.UUID) -> Iterator[None]:
         yield
     finally:
         _TENANT.reset(token)
+
+
+@contextmanager
+def system_scope() -> Iterator[None]:
+    """Mark a block as trusted, cross-tenant system context.
+
+    Use this for the handful of paths that legitimately span tenants before a
+    tenant is known: the login lookup, superuser/stats queries, the scheduler
+    poll, audit writes, and superuser bootstrap. Under RLS the GUC is set to
+    the ``"system"`` marker, which the policies treat as "see/modify all rows".
+    Making system access *explicit* is what lets `rls_strict` deny the
+    accidental no-scope case without breaking these flows.
+    """
+    token = _SYSTEM.set(True)
+    try:
+        yield
+    finally:
+        _SYSTEM.reset(token)
+
+
+def in_system_scope() -> bool:
+    return _SYSTEM.get()
+
+
+def rls_marker(*, strict: bool) -> str:
+    """Resolve the value for the `app.tenant_id` GUC from the active scope.
+
+    A tenant scope wins (most specific); then an explicit system scope; then,
+    with nothing set, ``"system"`` (allow-all, backward-compatible) unless
+    ``strict`` is on, in which case ``""`` (deny-all, fail-closed).
+    """
+    tid = _TENANT.get()
+    if tid is not None:
+        return str(tid)
+    if _SYSTEM.get():
+        return SYSTEM_MARKER
+    return "" if strict else SYSTEM_MARKER

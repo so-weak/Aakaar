@@ -5,15 +5,27 @@
 #   - postgres   (Yugabyte/Postgres-compatible store; swap image for production)
 #   - aakaar-api  (FastAPI + Playwright on :8000)
 #   - aakaar-web  (nginx serving the Vite bundle on :5173, /api proxied to aakaar-api)
+#
+# Tenant isolation (RLS) is ON by default here: the init hook creates a
+# non-superuser `aakaar_app` role and the API connects as it, so the FORCE-RLS
+# policies enforce. This only runs on a FRESH `aakaar-pg` volume — on an
+# existing volume, create the role once with extras/rls/setup_app_role.sql.
+# To deliberately disable RLS, point AAKAAR_DB_URL back at the `aakaar` superuser.
 services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: aakaar
-      POSTGRES_PASSWORD: aakaar
+      POSTGRES_USER: aakaar              # superuser — init + break-glass admin only
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aakaar}
       POSTGRES_DB: aakaar
+      # Password for the non-superuser app role the API connects as, so that
+      # FORCE ROW LEVEL SECURITY (migration 0007) actually enforces tenant
+      # isolation. Created automatically by the init hook below.
+      AAKAAR_APP_DB_PASSWORD: ${AAKAAR_APP_DB_PASSWORD:-aakaar_app}
     volumes:
       - aakaar-pg:/var/lib/postgresql/data
+      # Runs once on a FRESH volume to create the aakaar_app role.
+      - ./extras/rls/01-create-app-role.sh:/docker-entrypoint-initdb.d/01-create-app-role.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U aakaar -d aakaar"]
       interval: 5s
@@ -30,7 +42,13 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      AAKAAR_DB_URL: postgresql+psycopg://aakaar:aakaar@postgres:5432/aakaar
+      # Connect as the non-superuser app role (NOT the postgres superuser), so
+      # RLS enforces. It runs `alembic upgrade head` at boot, creating + owning
+      # the schema. Flip AAKAAR_RLS_STRICT=true once you've confirmed every
+      # cross-tenant path is wrapped in system_scope (login/scheduler/runs/
+      # bootstrap already are).
+      AAKAAR_DB_URL: postgresql+psycopg://aakaar_app:${AAKAAR_APP_DB_PASSWORD:-aakaar_app}@postgres:5432/aakaar
+      AAKAAR_RLS_STRICT: ${AAKAAR_RLS_STRICT:-false}
       AAKAAR_JWT_SECRET: ${AAKAAR_JWT_SECRET:?set AAKAAR_JWT_SECRET in env}
       AAKAAR_DATA_DIR: /data
       AAKAAR_CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173

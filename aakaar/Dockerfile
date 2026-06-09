@@ -25,6 +25,8 @@ RUN python -m pip install --upgrade pip \
         "numpy>=1.26" "faiss-cpu>=1.8" "openai>=1.40" \
         "sentence-transformers>=2.7" "fastapi>=0.115" "uvicorn[standard]>=0.30" \
         "bcrypt>=4.1" "PyJWT>=2.9" "python-multipart>=0.0.9" \
+        "cryptography>=42.0" "pyotp>=2.9" \
+        "psycopg[binary]>=3.1" \
         "httpx>=0.27" "python-dotenv>=1.0" "playwright>=1.47" \
  && playwright install --with-deps chromium
 

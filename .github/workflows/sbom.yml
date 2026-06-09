@@ -1,0 +1,74 @@
+name: SBOM
+
+# Generate CycloneDX SBOMs on version tags; manual dispatch for ad-hoc runs.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+# contents: write to attach SBOMs to the release; id-token for provenance.
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  generate:
+    name: Generate SBOMs
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # Backend SBOM: install the package into the environment, then snapshot
+      # the resolved environment as CycloneDX JSON.
+      - name: Install cyclonedx-bom
+        run: pip install 'cyclonedx-bom>=4'
+
+      - name: Install backend (editable)
+        working-directory: aakaar
+        run: pip install -e .
+
+      - name: Generate backend SBOM
+        working-directory: aakaar
+        run: cyclonedx-py environment --output-format json --output-file sbom-backend.cdx.json
+
+      # Frontend SBOM from the locked npm dependency tree.
+      - name: Install frontend (npm ci)
+        working-directory: aakaar-web
+        run: npm ci
+
+      - name: Generate frontend SBOM
+        working-directory: aakaar-web
+        run: npx @cyclonedx/cyclonedx-npm@^1 --output-file sbom-frontend.cdx.json
+
+      - name: Upload backend SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-backend
+          path: aakaar/sbom-backend.cdx.json
+          retention-days: 90
+
+      - name: Upload frontend SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-frontend
+          path: aakaar-web/sbom-frontend.cdx.json
+          retention-days: 90
+
+      # Attach both SBOMs to the GitHub Release on tag runs only.
+      - name: Attach SBOMs to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            aakaar/sbom-backend.cdx.json
+            aakaar-web/sbom-frontend.cdx.json

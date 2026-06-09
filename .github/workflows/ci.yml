@@ -1,0 +1,127 @@
+name: CI
+
+# Triggers: integrate on the mainline and release branches; gate PRs into main.
+on:
+  push:
+    branches:
+      - main
+      - "release/**"
+  pull_request:
+    branches:
+      - main
+
+# One in-flight run per workflow+ref; newer pushes cancel stale runs.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least privilege at the top level; jobs that need more opt in explicitly.
+permissions:
+  contents: read
+
+jobs:
+  backend-lint-test:
+    name: Backend lint + test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: aakaar
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: aakaar/pyproject.toml
+
+      # Editable install with dev extras (pytest, ruff, mypy).
+      # NOTE: tests may exercise Playwright browsers and heavy ML deps
+      # (sentence-transformers, chromadb); the suite can be slow but runs
+      # without any external integration services.
+      - name: Install (editable + dev extras)
+        run: pip install -e '.[dev]'
+
+      - name: Ruff
+        run: ruff check aakaar tests
+
+      - name: Mypy (strict)
+        run: mypy aakaar
+
+      - name: Pytest
+        run: pytest -q
+
+  frontend-lint-test:
+    name: Frontend lint + test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: aakaar-web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: aakaar-web/package-lock.json
+
+      - name: Install (npm ci)
+        run: npm ci
+
+      # package.json exposes dev/build/preview/typecheck only — there is no
+      # `lint` script, so we deliberately do NOT run `npm run lint`.
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+  dep-scan:
+    name: Dependency scan (Trivy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Needs write access to publish results to the Security tab.
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+          format: sarif
+          output: trivy-results.sarif
+
+      - name: Upload SARIF to Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+
+  secret-scan:
+    name: Secret scan (Gitleaks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+# Intentionally omitted (no supporting assets exist in Current Aakaar):
+#   - backend-integration : no docker-compose.test.yml, no tests/integration
+#     tree, and no `integration` pytest marker.
+#   - build-agent         : no agent installer assets (.spec / Inno Setup /
+#     NSSM) under aakaar-agent.
+#   - loadtest            : no loadtest/ assets.
+# These are deferred until the corresponding assets land in the repo.

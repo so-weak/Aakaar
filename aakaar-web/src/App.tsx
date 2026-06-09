@@ -15,6 +15,8 @@ import { ChatPage } from "@/pages/Chat";
 import { DashboardPage } from "@/pages/Dashboard";
 import { LiveProcessesPage } from "@/pages/LiveProcesses";
 import { LoginPage } from "@/pages/Login";
+import { MfaSettingsPage } from "@/pages/MfaSettings";
+import { OidcCallbackPage } from "@/pages/OidcCallback";
 import { RunDetailPage } from "@/pages/RunDetail";
 import { RunsPage } from "@/pages/Runs";
 import { SuperuserTenantDetailPage } from "@/pages/SuperuserTenantDetail";
@@ -30,6 +32,7 @@ export default function App() {
       <EasterEggs />
       <Routes>
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/auth/callback" element={<OidcCallbackPage />} />
 
       <Route
         element={
@@ -48,6 +51,7 @@ export default function App() {
         <Route path="runs" element={<RunsPage />} />
         <Route path="runs/:id" element={<RunDetailPage />} />
         <Route path="capabilities" element={<CapabilitiesPage />} />
+        <Route path="mfa-settings" element={<MfaSettingsPage />} />
 
         <Route
           path="live"

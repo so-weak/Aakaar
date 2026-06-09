@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aakaar-mcp"
+version = "1.0.0"
+description = "MCP stdio server projecting the Aakaar capability registry as MCP tools."
+readme = "README.md"
+requires-python = ">=3.11"
+# The server runtime is stdlib-only. It imports the in-repo `aakaar` package
+# (which must be importable on PYTHONPATH / installed in the same venv), but
+# pulls in no third-party MCP SDK of its own.
+dependencies = []
+
+[project.scripts]
+# Flat module layout: server.py exposes `main()`. `aakaar-mcp` runs it.
+aakaar-mcp = "server:main"
+
+[tool.setuptools]
+# Single-file modules rather than a package directory.
+py-modules = ["server", "inspect_tools"]

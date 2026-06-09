@@ -45,6 +45,7 @@ const NAV: NavItem[] = [
   { to: "/runs", labelKey: "yajnas", icon: Activity, visibleTo: ["tenant_admin", "tenant_user"] },
   { to: "/live", labelKey: "pratyaksha", icon: Activity, visibleTo: ["tenant_admin", "superuser"] },
   { to: "/capabilities", labelKey: "vidyas", icon: Network, visibleTo: ["superuser", "tenant_admin", "tenant_user"] },
+  { to: "/mfa-settings", label: "Two-factor", icon: ShieldCheck, visibleTo: ["superuser", "tenant_admin", "tenant_user"] },
   { to: "/admin/users", labelKey: "sadhakas", icon: Users, visibleTo: ["tenant_admin"] },
   { to: "/admin/grants", labelKey: "kosha", icon: KeyRound, visibleTo: ["tenant_admin"] },
   { to: "/agents", label: "Agents", icon: MonitorSmartphone, visibleTo: ["tenant_admin"] },

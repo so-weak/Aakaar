@@ -38,15 +38,62 @@ class LoginRequest(BaseModel):
 
 
 class LoginResponse(BaseModel):
-    access_token: str
+    access_token: str | None = None
+    """The bearer access token. None when `mfa_required` — finish the step-up
+    at /auth/mfa/verify to obtain it."""
     token_type: str = "Bearer"
-    expires_at: datetime
+    expires_at: datetime | None = None
     tenant_slug: str | None = None
     """Tenant slug if the user belongs to one. The frontend uses this to
     render role labels like 'PayOps user' instead of 'tenant user'."""
     tenant_name: str | None = None
     """Tenant display name if the user belongs to one. Same purpose as
     `tenant_slug` but surfaced where a longer label is preferred."""
+    mfa_required: bool = False
+    """True when the password was correct but a second factor is needed."""
+    mfa_token: str | None = None
+    """Short-lived MFA step-up ticket (present iff `mfa_required`). POST it with
+    a TOTP code (or recovery code) to /auth/mfa/verify for the access token."""
+
+
+# ---------- MFA (TOTP) ----------------------------------------------------
+
+_CODE = Field(min_length=6, max_length=10, pattern=r"^[0-9]+$")
+
+
+class MfaEnrollResponse(BaseModel):
+    secret: str
+    """Base32 TOTP secret — for manual entry into an authenticator app."""
+    otpauth_url: str
+    """`otpauth://` provisioning URI; the SPA renders it as a QR code."""
+
+
+class MfaConfirmRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    code: str = _CODE
+
+
+class MfaConfirmResponse(BaseModel):
+    recovery_codes: list[str]
+    """One-time backup codes — shown ONCE at enrollment; store them safely."""
+
+
+class MfaDisableRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    code: str = _CODE
+
+
+class MfaStatusResponse(BaseModel):
+    enabled: bool
+    pending: bool
+    """True when a secret is enrolled but not yet confirmed."""
+
+
+class MfaVerifyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    mfa_token: str
+    code: str | None = Field(default=None, min_length=6, max_length=10, pattern=r"^[0-9]+$")
+    recovery_code: str | None = None
 
 
 # ---------- tenants -------------------------------------------------------

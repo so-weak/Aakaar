@@ -23,7 +23,14 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
-from aakaar.api.auth import InvalidToken, TokenClaims, verify_token
+from aakaar.api.auth import (
+    InvalidToken,
+    KeyStore,
+    TokenClaims,
+    is_asymmetric,
+    verify_access_token,
+)
+from aakaar.api.auth.oidc import OidcClient
 from aakaar.capabilities import load_into as load_capabilities
 from aakaar.core.config import Settings
 from aakaar.db.models import User, UserRole, UserStatus
@@ -94,9 +101,26 @@ class AppDependencies:
     event_broker: EventBroker = field(init=False)
     agent_registry: AgentRegistry = field(init=False)
     remote_dispatcher: RemoteDispatcher | None = field(init=False, default=None)
+    key_store: KeyStore | None = field(init=False, default=None)
+    """RSA signing keys; populated only when jwt_algorithm is asymmetric (RS*).
+    None under HS256 (the symmetric default)."""
+    oidc: OidcClient = field(init=False)
 
     def __post_init__(self) -> None:
         logger.debug("AppDependencies: wiring derived components")
+        if is_asymmetric(self.settings.jwt_algorithm):
+            if self.settings.jwt_key_dir is None:
+                raise RuntimeError(
+                    f"jwt_algorithm={self.settings.jwt_algorithm} requires a key "
+                    "directory; set AAKAAR_JWT_KEY_DIR (and AAKAAR_JWT_BOOTSTRAP_KEYS=true "
+                    "for dev key generation)."
+                )
+            self.key_store = KeyStore.from_dir(
+                self.settings.jwt_key_dir,
+                algorithm=self.settings.jwt_algorithm,
+                bootstrap=self.settings.jwt_bootstrap_keys,
+            )
+        self.oidc = OidcClient(self.settings)
         self.audit = AuditRecorder(
             session_factory=self.session_factory,
             sink=AuditFileSink(self.settings.data_dir),
@@ -244,12 +268,22 @@ def get_agent_registry(
 # ---------- auth ----------------------------------------------------------
 
 
+def get_key_store(
+    deps: Annotated[AppDependencies, Depends(get_deps)],
+) -> KeyStore | None:
+    return deps.key_store
+
+
+def get_oidc(deps: Annotated[AppDependencies, Depends(get_deps)]) -> OidcClient:
+    return deps.oidc
+
+
 _bearer = HTTPBearer(auto_error=False, description="Aakaar JWT access token")
 
 
 def get_current_claims(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
-    settings: Annotated[Settings, Depends(get_settings)],
+    deps: Annotated[AppDependencies, Depends(get_deps)],
 ) -> TokenClaims:
     if credentials is None:
         raise HTTPException(
@@ -258,11 +292,7 @@ def get_current_claims(
             headers={"WWW-Authenticate": "Bearer"},
         )
     try:
-        return verify_token(
-            credentials.credentials,
-            secret=settings.jwt_secret,
-            algorithm=settings.jwt_algorithm,
-        )
+        return verify_access_token(credentials.credentials, deps.settings, deps.key_store)
     except InvalidToken as e:
         logger.info("auth: rejected token (%s)", e)
         raise HTTPException(
@@ -289,6 +319,17 @@ def get_current_user(
             user.role,
         )
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="role changed")
+    # Enforce MFA: a user who has enabled TOTP must present a token whose `amr`
+    # proves a second factor (totp at login, or an OIDC login carrying one).
+    # This makes MFA actually binding — a pre-enrollment ("pwd"-only) token
+    # stops working the moment MFA is turned on, forcing a fresh login.
+    if user.mfa_enabled and not ({"totp", "oidc"} & set(claims.amr)):
+        logger.info("auth: user_id=%s has MFA enabled but token lacks 2FA amr", user.id)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="mfa required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     # Defence-in-depth for tenant suspension: even if the suspend cascade
     # missed flipping a row (or a new user was created against a
     # suspended tenant somehow), refuse the request. Superusers
@@ -330,6 +371,21 @@ def require_tenant_user(user: Annotated[User, Depends(get_current_user)]) -> Use
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant user only")
     if user.tenant_id is None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="user has no tenant")
+    return user
+
+
+def require_mfa_satisfied(
+    user: Annotated[User, Depends(get_current_user)],
+    claims: Annotated[TokenClaims, Depends(get_current_claims)],
+) -> User:
+    """Step-up guard for especially sensitive routes: require a second factor
+    in the token regardless of whether the user has MFA toggled on. Apply with
+    `Depends(require_mfa_satisfied)` where you want to force 2FA."""
+    if not ({"totp", "oidc"} & set(claims.amr)):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="second-factor authentication required",
+        )
     return user
 
 

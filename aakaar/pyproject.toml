@@ -24,6 +24,11 @@ dependencies = [
     "uvicorn[standard]>=0.30",
     "bcrypt>=4.1",
     "PyJWT>=2.9",
+    # RS256/JWKS signing + verification (PyJWT's asymmetric algorithms need a
+    # crypto backend) and Fernet encryption of TOTP secrets at rest.
+    "cryptography>=42.0",
+    # TOTP (RFC 6238) for MFA.
+    "pyotp>=2.9",
     "python-multipart>=0.0.9",
     "httpx>=0.27",
     "python-dotenv>=1.0",
@@ -55,6 +60,9 @@ dev = [
 # is opt-in; the ocr_extract capability imports it lazily and errors clearly
 # if unavailable.
 ocr = ["pytesseract>=0.3"]
+# Postgres driver — required when AAKAAR_DB_URL is postgresql+psycopg (prod /
+# RLS). Not needed for the SQLite dev default. The Docker image bundles it.
+postgres = ["psycopg[binary]>=3.1"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["aakaar"]
@@ -72,6 +80,10 @@ filterwarnings = [
     "ignore::DeprecationWarning:google.protobuf",
     "ignore::DeprecationWarning:pydantic",
     "ignore::DeprecationWarning:importlib._bootstrap",
+    # Starlette's TestClient warns when paired with newer httpx — a third-party
+    # deprecation in the test transport we don't control. Ignoring it keeps the
+    # strict "error" policy guarding our own code while the pinned runtime works.
+    "ignore::starlette.exceptions.StarletteDeprecationWarning",
     # chromadb's PersistentClient holds a SQLite connection that it does not
     # close deterministically; when a test's client is GC'd mid-session the
     # ResourceWarning surfaces as PytestUnraisableExceptionWarning. The API

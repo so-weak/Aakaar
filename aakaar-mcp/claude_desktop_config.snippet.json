@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "aakaar": {
+      "command": "/Users/soubhikghosh/Codes/Aakaar/aakaar/.venv/bin/python",
+      "args": ["/Users/soubhikghosh/Codes/Aakaar/aakaar-mcp/server.py"],
+      "env": {
+        "AAKAAR_MCP_INCLUDE": "capabilities",
+        "AAKAAR_MCP_MODE": "describe",
+        "AAKAAR_API": "http://127.0.0.1:8000",
+        "AAKAAR_TOKEN": "REPLACE_WITH_BEARER_TOKEN"
+      }
+    }
+  }
+}

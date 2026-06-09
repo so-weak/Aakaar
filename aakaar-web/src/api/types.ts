@@ -36,13 +36,31 @@ export interface Dag {
 // ---------- auth ---------------------------------------------------------
 
 export const LoginResponseSchema = z.object({
-  access_token: z.string(),
+  // Absent when a second factor is still required — the server returns an
+  // `mfa_token` ticket instead and the user must complete /auth/mfa/verify.
+  access_token: z.string().nullable().optional(),
   token_type: z.string(),
-  expires_at: z.string(),
+  expires_at: z.string().nullable().optional(),
   tenant_slug: z.string().nullable().optional(),
   tenant_name: z.string().nullable().optional(),
+  mfa_required: z.boolean(),
+  mfa_token: z.string().nullable().optional(),
 });
 export type LoginResponse = z.infer<typeof LoginResponseSchema>;
+
+export interface MfaStatus {
+  enabled: boolean;
+  pending: boolean;
+}
+
+export interface MfaEnrollResponse {
+  secret: string;
+  otpauth_url: string;
+}
+
+export interface MfaConfirmResponse {
+  recovery_codes: string[];
+}
 
 export const TokenClaimsSchema = z.object({
   user_id: z.string(),
