@@ -113,7 +113,11 @@ export function Layout() {
 
         <nav
           data-tour="nav"
-          className={collapsed ? "flex-1 space-y-1 px-2" : "flex-1 space-y-1 px-3"}
+          className={
+            collapsed
+              ? "min-h-0 flex-1 space-y-1 overflow-y-auto px-2"
+              : "min-h-0 flex-1 space-y-1 overflow-y-auto px-3"
+          }
         >
           {items.map((item) => {
             const text = item.label ?? (item.labelKey ? labels[item.labelKey] : item.to);
@@ -145,7 +149,7 @@ export function Layout() {
 
         <div
           className={[
-            "border-t border-ink-700/60",
+            "shrink-0 border-t border-ink-700/60",
             collapsed ? "px-2 py-3" : "px-3 py-4",
           ].join(" ")}
         >

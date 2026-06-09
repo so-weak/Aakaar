@@ -33,17 +33,26 @@ fi
 echo "Running migrations..."
 (cd "$ROOT/aakaar" && .venv/bin/alembic upgrade head)
 
-# Open a command in a NEW Terminal tab (requires Accessibility permission for
-# Terminal: System Settings > Privacy & Security > Accessibility).
+# Open a command in a NEW Terminal tab. Opening a *tab* uses System Events,
+# which needs Accessibility permission for the app you launch from (Terminal /
+# iTerm / VS Code: System Settings > Privacy & Security > Accessibility).
+# If that's not granted, we fall back to a new *window*, which needs no
+# permission — so this always works.
 open_in_tab() {
   local cmd="$1"
   local escaped="${cmd//\\/\\\\}"
   escaped="${escaped//\"/\\\"}"
+  if osascript \
+      -e 'tell application "Terminal" to activate' \
+      -e 'tell application "System Events" to keystroke "t" using command down' \
+      -e 'delay 0.5' \
+      -e "tell application \"Terminal\" to do script \"$escaped\" in front window" >/dev/null 2>&1; then
+    return 0
+  fi
+  # Fallback: new window (no Accessibility permission required).
   osascript \
-    -e 'tell application "Terminal" to activate' \
-    -e 'tell application "System Events" to keystroke "t" using command down' \
-    -e 'delay 0.5' \
-    -e "tell application \"Terminal\" to do script \"$escaped\" in front window" >/dev/null
+    -e "tell application \"Terminal\" to do script \"$escaped\"" \
+    -e 'tell application "Terminal" to activate' >/dev/null
 }
 
 # Single-threaded numerical libs in the API process (matches start.sh): avoids
