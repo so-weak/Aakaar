@@ -350,17 +350,17 @@ function EnrollSuccess({
   result: AgentEnrollResponse;
   onDone: () => void;
 }) {
-  const [copied, setCopied] = useState(false);
+  const [copiedField, setCopiedField] = useState<"key" | "id" | null>(null);
 
-  const onCopy = async () => {
+  const copy = async (value: string, field: "key" | "id") => {
     try {
-      await navigator.clipboard.writeText(result.enrollment_key);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 2000);
+      await navigator.clipboard.writeText(value);
+      setCopiedField(field);
+      window.setTimeout(() => setCopiedField(null), 2000);
     } catch {
-      // Clipboard may be unavailable (insecure context); the key is still
-      // selectable in the field below.
-      setCopied(false);
+      // Clipboard may be unavailable (insecure context); the value is still
+      // selectable in its field.
+      setCopiedField(null);
     }
   };
 
@@ -369,8 +369,8 @@ function EnrollSuccess({
       <div className="brand-shadow-pink-sm flex items-start gap-2 rounded-control border border-amber-300/35 bg-amber-950/40 px-3 py-2 text-sm text-amber-100">
         <AlertOnce />
         <span>
-          Copy this enrollment key now — it is shown once and cannot be
-          retrieved later.
+          Copy the enrollment key and agent id now — they are shown once here
+          and cannot be retrieved later.
         </span>
       </div>
 
@@ -387,52 +387,79 @@ function EnrollSuccess({
           <button
             type="button"
             className="btn-ghost shrink-0"
-            onClick={onCopy}
+            onClick={() => copy(result.enrollment_key, "key")}
             title="Copy enrollment key"
           >
-            {copied ? <CheckCircle2 size={14} className="text-emerald-300" /> : <Copy size={14} />}
-            {copied ? "Copied" : "Copy"}
+            {copiedField === "key" ? (
+              <CheckCircle2 size={14} className="text-emerald-300" />
+            ) : (
+              <Copy size={14} />
+            )}
+            {copiedField === "key" ? "Copied" : "Copy"}
+          </button>
+        </div>
+      </div>
+
+      <div>
+        <span className="panel-title">Agent id</span>
+        <div className="mt-1 flex items-stretch gap-2">
+          <input
+            readOnly
+            value={result.agent_id}
+            onFocus={(e) => e.currentTarget.select()}
+            className="input flex-1 font-mono text-xs"
+            aria-label="Agent id"
+          />
+          <button
+            type="button"
+            className="btn-ghost shrink-0"
+            onClick={() => copy(result.agent_id, "id")}
+            title="Copy agent id"
+          >
+            {copiedField === "id" ? (
+              <CheckCircle2 size={14} className="text-emerald-300" />
+            ) : (
+              <Copy size={14} />
+            )}
+            {copiedField === "id" ? "Copied" : "Copy"}
           </button>
         </div>
       </div>
 
       <div className="card bg-ink-900/40 p-3 text-xs text-ink-300">
         <div className="panel-title mb-2">Install the agent</div>
-        <ul className="space-y-1.5">
+        <p className="mb-2 text-ink-400">
+          Install the agent on the workstation, then connect it to this server
+          with the key above (the workstation needs no inbound ports):
+        </p>
+        <code className="block rounded-control bg-ink-950/60 px-2 py-1.5 font-mono text-[11px] text-accent-200">
+          aakaar-agent --server &lt;server-url&gt; --key &lt;key&gt;
+        </code>
+        <ul className="mt-2 space-y-1.5">
           <li className="flex items-start gap-2">
             <Monitor size={13} className="mt-0.5 shrink-0 text-ink-500" />
             <span>
-              <span className="text-ink-100">Windows</span> — run the installer,
-              then{" "}
-              <code className="font-mono text-accent-200">
-                aakaar-agent enroll --key &lt;key&gt;
-              </code>
-              .
+              <span className="text-ink-100">Windows</span> — install the agent on
+              the workstation, then run the command above.
             </span>
           </li>
           <li className="flex items-start gap-2">
             <Apple size={13} className="mt-0.5 shrink-0 text-ink-500" />
             <span>
-              <span className="text-ink-100">macOS</span> —{" "}
-              <code className="font-mono text-accent-200">
-                brew install aakaar-agent
-              </code>{" "}
-              then enroll with the key above.
+              <span className="text-ink-100">macOS</span> — install the agent
+              (Python ≥ 3.11), then run the command above.
             </span>
           </li>
           <li className="flex items-start gap-2">
             <Terminal size={13} className="mt-0.5 shrink-0 text-ink-500" />
             <span>
-              <span className="text-ink-100">Linux</span> —{" "}
-              <code className="font-mono text-accent-200">
-                aakaar-agent enroll --key &lt;key&gt;
-              </code>{" "}
-              (systemd unit ships with the package).
+              <span className="text-ink-100">Linux</span> — install the agent, then
+              run it unattended via a systemd service.
             </span>
           </li>
         </ul>
         <div className="mt-2 text-[11px] text-ink-500">
-          Agent id <span className="font-mono text-ink-300">{result.agent_id}</span>
+          Per-OS setup and running as a service — see the agent README.
         </div>
       </div>
 

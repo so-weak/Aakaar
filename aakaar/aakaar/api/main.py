@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import httpx
 
 from openai import OpenAI
 
@@ -42,7 +43,7 @@ def build_app() -> object:
     if settings.openai_api_key:
         if settings.openai_base_url:
             openai_client = OpenAI(api_key=settings.openai_api_key, base_url=settings.openai_base_url)
-            logger.info("LLM: OpenAI client (base_url=%s, model=%s)", settings.openai_base_url, settings.llm_model)
+            logger.info("LLM: OpenAI client (base_url=%s, model=%s)", settings.openai_base_url, settings.llm_model, http_client=httpx.Client(ssl_verify=False))
         else:
             openai_client = OpenAI(api_key=settings.openai_api_key)
             logger.info("LLM: OpenAI client (default base_url, model=%s)", settings.llm_model)
