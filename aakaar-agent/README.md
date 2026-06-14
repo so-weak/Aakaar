@@ -92,6 +92,23 @@ Use `ws://…` only on a trusted LAN; prefer `wss://` (TLS) anywhere else. On
 success you’ll see `agent connected to wss://…/ws/agents`; the *Agents* page shows
 it **online**. It reconnects automatically if the link drops.
 
+#### Optional: connect through a rendezvous broker
+
+If the workstation **can't reach the API directly** (both sides on DHCP /
+behind NAT / different networks), run the
+[`aakaar-broker`](../aakaar-broker/README.md) relay on the one machine with a
+stable address and point the agent's server URL at the **broker** instead of
+the API — no other agent change:
+
+```bash
+export AAKAAR_AGENT_SERVER="wss://broker.example.com"   # was: the API URL
+```
+
+The agent speaks its normal protocol; the broker relays frames blindly and the
+API still verifies the `X-Agent-Key` end-to-end. The API must be started with
+`AAKAAR_BROKER_URL` + `AAKAAR_BROKER_TOKEN` so it dials the broker too. Use
+`wss://` (broker behind a TLS proxy) anywhere outside a trusted LAN.
+
 ### Step 4 — Run it unattended (service)
 
 Run the agent as a supervised service so it survives logout/reboot. Examples:

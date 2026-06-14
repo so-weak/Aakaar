@@ -22,6 +22,10 @@ Grant `input_defaults`:
   timeout_s: optional, default 30.
   allow_private: optional bool, default True (airgapped LANs are the
     common deployment; SMTP relays usually live on the local network).
+  recipient_allowlist: optional list of addresses and/or "@domain"
+    entries. When set, every envelope recipient (To + Cc) must match one,
+    or the send is refused — a guard against a misplanned/injected flow
+    mailing data to an arbitrary mailbox.
 
 Vault secrets:
 
@@ -107,7 +111,8 @@ definition = CapabilityDefinition(
         "Send an email over SMTP using stored credentials. Host/port/username "
         "live on the grant's input_defaults; the password is a vault secret. "
         "Supports plain-text and HTML bodies plus attachments pulled from the "
-        "object store."
+        "object store. A grant-level recipient_allowlist (addresses and/or "
+        "@domains), when set, restricts who can be mailed."
     ),
     input_schema=_Inputs,
     output_schema=_Outputs,
@@ -151,6 +156,52 @@ def _clean_addr_list(values: list[str] | None) -> list[str]:
             seen.add(addr)
             out.append(addr)
     return out
+
+
+def _bare_addresses(value: str) -> list[str]:
+    """Every addr-spec in a recipient string, lowercased.
+
+    Uses getaddresses (not parseaddr) so a single string smuggling a comma-
+    separated list — e.g. 'attacker@evil.test, victim@corp.example' — is
+    expanded into all its addresses rather than collapsed to one. smtplib
+    feeds each to_addrs element verbatim to RCPT TO, so a permissive MTA would
+    deliver to every smuggled address; the allowlist must therefore vet each.
+    A string with no parseable address falls back to itself so it still fails
+    a non-empty allowlist instead of silently passing.
+    """
+    from email.utils import getaddresses
+
+    addrs = [addr.strip().lower() for _name, addr in getaddresses([value]) if addr]
+    return addrs or [value.strip().lower()]
+
+
+def assert_recipients_allowed(
+    recipients: list[str], allowlist: list[str] | None
+) -> None:
+    """Enforce the grant's recipient allowlist (defense against a planner or
+    prompt-injected flow exfiltrating data to an arbitrary mailbox).
+
+    Allowlist entries are matched case-insensitively against each recipient's
+    bare address: an entry starting with '@' allows its whole domain
+    ('@corp.example'), anything else must equal the full address. Every address
+    a recipient string expands to must match (a single string may pack several
+    via comma syntax). An empty or absent allowlist permits all recipients (the
+    grant opted out).
+    """
+    entries = [e.strip().lower() for e in allowlist or [] if e and e.strip()]
+    if not entries:
+        return
+    domains = {e for e in entries if e.startswith("@")}
+    exact = {e for e in entries if not e.startswith("@")}
+    for recipient in recipients:
+        for addr in _bare_addresses(recipient):
+            domain = addr[addr.rfind("@") :] if "@" in addr else ""
+            if addr in exact or domain in domains:
+                continue
+            raise PermissionError(
+                f"cap.email_send: recipient {recipient!r} is not permitted by "
+                f"the grant's recipient_allowlist"
+            )
 
 
 def build_message(
@@ -281,6 +332,10 @@ async def handler(ctx: ActivityContext, inputs: dict[str, Any]) -> dict[str, Any
     # SSRF guard. allow_private defaults True because SMTP relays usually
     # live on the airgapped LAN; a grant can flip it off to force public.
     assert_host_allowed(host, allow_private=allow_private)
+
+    # Grant-level recipient allowlist (optional): when set, every envelope
+    # recipient must match an allowed address or @domain.
+    assert_recipients_allowed(recipients, defaults.get("recipient_allowlist"))
 
     creds = fetch_credentials(ctx, capability_ref=CAP_REF, account_alias=alias)
     username = (creds.get("username") or "").strip()

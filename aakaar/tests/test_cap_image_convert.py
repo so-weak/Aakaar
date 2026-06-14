@@ -207,6 +207,54 @@ async def test_undecodable_source_raises(tmp_path: Path) -> None:
 
 
 # --------------------------------------------------------------------------
+# Security: pixel-count bomb guard
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_oversized_source_refused_before_decode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import aakaar.capabilities.data.image_convert as mod
+
+    ctx = _ctx(tmp_path)
+    monkeypatch.setattr(mod, "_MAX_PIXELS", 100)
+    src = _put_png(ctx, "in.png", (20, 20))  # 400 px > the patched 100-px cap
+    with pytest.raises(RuntimeError, match="pixel limit"):
+        await handler(ctx, {"source": src, "op": "grayscale"})
+
+
+@pytest.mark.asyncio
+async def test_resize_to_bomb_dimensions_refused(tmp_path: Path) -> None:
+    # Real default limit: a 20000x20000 target (400M px) must be refused
+    # before any allocation, even from a tiny source.
+    ctx = _ctx(tmp_path)
+    src = _put_png(ctx, "in.png", (8, 8))
+    with pytest.raises(RuntimeError, match="pixel limit"):
+        await handler(
+            ctx,
+            {"source": src, "op": "resize", "params": {"width": 20000, "height": 20000}},
+        )
+
+
+@pytest.mark.asyncio
+async def test_crop_to_bomb_dimensions_refused(tmp_path: Path) -> None:
+    # Crop boxes beyond the source pad with background, so a huge box is an
+    # output-geometry bomb regardless of the source size.
+    ctx = _ctx(tmp_path)
+    src = _put_png(ctx, "in.png", (8, 8))
+    with pytest.raises(RuntimeError, match="pixel limit"):
+        await handler(
+            ctx,
+            {
+                "source": src,
+                "op": "crop",
+                "params": {"left": 0, "top": 0, "right": 100_000, "bottom": 100_000},
+            },
+        )
+
+
+# --------------------------------------------------------------------------
 # Definition + input schema
 # --------------------------------------------------------------------------
 

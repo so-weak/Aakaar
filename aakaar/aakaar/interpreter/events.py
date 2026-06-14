@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 
 from aakaar.db.models import RunEvent, RunEventKind
 from aakaar.db.session import SessionFactory
+from aakaar.interpreter.controls import RunCancelled
 
 logger = logging.getLogger(__name__)
 
@@ -154,6 +155,10 @@ def node_span(
     )
     try:
         yield
+    except RunCancelled:
+        # An operator cancel surfacing through a waiting node is not a node
+        # failure — the run-level RUN_CANCELLED event tells that story.
+        raise
     except Exception as e:
         recorder.record(
             run_id=run_id,

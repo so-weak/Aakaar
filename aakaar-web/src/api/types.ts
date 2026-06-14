@@ -268,6 +268,57 @@ export interface RunDetail {
   pending_prompts: PendingPrompt[];
 }
 
+// ---------- activity recordings -------------------------------------------
+// Tenant-admin only. Recording state lives in server memory: a restart
+// forgets in-flight recordings, and stop/discard remove the entry entirely.
+
+export interface RecordingStartResponse {
+  recording_id: string;
+  status: "recording";
+  name: string;
+  agent_alias: string;
+  event_count: number;
+  started_at: string;
+  expires_at: string;
+  // Server-authored text explaining keystroke redaction; surface it verbatim.
+  privacy_note: string;
+}
+
+export interface RecordingListItem {
+  recording_id: string;
+  status: "recording";
+  name: string;
+  agent_alias: string;
+  started_at: string;
+  expires_at: string;
+}
+
+export interface RecordingStatus {
+  recording_id: string;
+  // Agent-reported; normally "recording".
+  status: string;
+  name: string;
+  agent_alias: string;
+  event_count: number;
+  duration_seconds: number;
+  started_at: string;
+  expires_at: string;
+}
+
+export interface RecordingStopResponse {
+  recording_id: string;
+  status: "stopped";
+  event_count: number;
+  // The draft workflow created from the capture — link the user here.
+  workflow_id: string;
+  workflow_name: string;
+  draft_dag: Dag;
+  // Human-readable caveats (truncation, coordinate clicks, redacted-text
+  // placeholders that MUST be replaced before the draft is runnable).
+  warnings: string[];
+  rationale: string;
+}
+
 // ---------- remote agents ------------------------------------------------
 
 export interface AgentCapabilityInfo {

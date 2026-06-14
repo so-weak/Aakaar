@@ -33,12 +33,21 @@ class ValidationError(ValueError):
 
 
 class DefinitionLike(Protocol):
-    """Minimal shape the validator needs from a registry entry."""
+    """Minimal shape the validator needs from a registry entry.
 
-    ref: str
-    kind: NodeKind
-    input_schema: type[BaseModel]
-    output_schema: type[BaseModel]
+    Members are read-only properties (not bare attributes) so frozen
+    dataclasses like ``CapabilityDefinition`` structurally satisfy the
+    protocol — a mutable protocol attribute would demand a writable field.
+    """
+
+    @property
+    def ref(self) -> str: ...
+    @property
+    def kind(self) -> NodeKind: ...
+    @property
+    def input_schema(self) -> type[BaseModel]: ...
+    @property
+    def output_schema(self) -> type[BaseModel]: ...
 
 
 class RegistryLike(Protocol):
@@ -156,7 +165,6 @@ def auto_complete_edges(dag: Dag) -> Dag:
             seen_aliases.add(n.outputs_as)
             cleaned_nodes.append(n)
 
-    nodes_by_id = {n.id: n for n in cleaned_nodes}
     aliases: dict[str, str] = {n.id: n.id for n in cleaned_nodes}
     for n in cleaned_nodes:
         if n.outputs_as is not None and n.outputs_as not in aliases:
@@ -209,7 +217,7 @@ def auto_complete_edges(dag: Dag) -> Dag:
             predecessors[node.id].add(src_id)
             added.append((src_id, node.id))
 
-    nodes_changed = any(a is not b for a, b in zip(cleaned_nodes, dag.nodes))
+    nodes_changed = any(a is not b for a, b in zip(cleaned_nodes, dag.nodes, strict=True))
     if not added and not nodes_changed:
         return dag
     new_edges = list(dag.edges) + [

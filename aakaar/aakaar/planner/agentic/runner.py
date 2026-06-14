@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
@@ -269,12 +269,10 @@ class PlannerToolRunner:
             await self._session.fill(descriptor.password_selector, creds["password"])
             await self._session.click(descriptor.submit_selector)
             # Best-effort: wait for the username field to disappear.
-            try:
+            with suppress(Exception):
                 await self._session.wait_for(
                     descriptor.username_selector, timeout_ms=self.timeout_ms
                 )
-            except Exception:  # noqa: BLE001
-                pass
         except Exception as e:  # noqa: BLE001
             logger.warning("agentic.login_with_grant failed url=%s: %s", login_url, e)
             return {"error": f"login failed: {type(e).__name__}: {e}"}

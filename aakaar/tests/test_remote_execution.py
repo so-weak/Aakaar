@@ -322,11 +322,46 @@ def test_agent_ws_connect_register_and_online(deps: AppDependencies, client: Tes
 def test_agent_ws_rejects_bad_key(deps: AppDependencies, client: TestClient) -> None:
     from starlette.websockets import WebSocketDisconnect
 
-    with pytest.raises(WebSocketDisconnect):
-        with client.websocket_connect(
-            "/ws/agents", headers={"x-agent-key": "00000000-0000-0000-0000-000000000000.nope"}
-        ) as ws:
-            ws.receive_json()
+    with pytest.raises(WebSocketDisconnect), client.websocket_connect(
+        "/ws/agents", headers={"x-agent-key": "00000000-0000-0000-0000-000000000000.nope"}
+    ) as ws:
+        ws.receive_json()
+
+
+def test_direct_ws_authenticates_via_shared_helper(
+    deps: AppDependencies, client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The direct /ws/agents path MUST verify keys through the one shared
+    helper (authenticate_agent_key), the same code the relayed broker path
+    uses — not a private copy. A spy proves the router actually calls it; if
+    the parse+verify logic is ever inlined again, the helper goes uncalled and
+    this fails, catching the drift the broker_link docstring promises against."""
+    from aakaar.api.routers import agents as agents_router
+
+    real = agents_router.authenticate_agent_key
+    calls: list[str | None] = []
+
+    def spy(session_factory: object, raw: str | None) -> object:
+        calls.append(raw)
+        return real(session_factory, raw)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(agents_router, "authenticate_agent_key", spy)
+
+    seed_tenant_admin(
+        deps, slug="acme", name="Acme", admin_email="admin@a.test", admin_password="adminpass1"
+    )
+    h = auth_headers(login(client, email="admin@a.test", password="adminpass1"))
+    key = client.post(
+        "/agents/enroll", json={"alias": "lab-1", "pools": ["branch"]}, headers=h
+    ).json()["enrollment_key"]
+
+    with client.websocket_connect("/ws/agents", headers={"x-agent-key": key}) as ws:
+        ws.send_json(
+            {"type": "hello", "os": "linux", "gui": False, "version": "1", "capabilities": []}
+        )
+        assert ws.receive_json()["type"] == "welcome"
+
+    assert calls == [key]  # the shared helper saw exactly the connecting agent's key
 
 
 @pytest.mark.asyncio

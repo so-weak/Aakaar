@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import {
+  AlertTriangle,
+  Ban,
   CheckCircle2,
   Circle,
   Download,
@@ -9,16 +11,18 @@ import {
   FileText,
   GitBranch,
   ListOrdered,
+  MessageCircleQuestion,
   MonitorSmartphone,
   Pause,
   PlayCircle,
+  RotateCcw,
   Send,
   X,
   XCircle,
 } from "lucide-react";
 
 import { runs as runsApi, superuser as superuserApi, workflows as workflowsApi } from "@/api";
-import type { PendingPrompt, RunDetail, RunEvent } from "@/api/types";
+import type { PendingPrompt, Run, RunDetail, RunEvent } from "@/api/types";
 import { useAuth } from "@/auth/AuthContext";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { LiveDagViewer, deriveNodeAgents } from "@/components/LiveDagViewer";
@@ -57,11 +61,30 @@ function mergeRunEvents(
   return Array.from(bySeq.values()).sort((a, b) => a.sequence - b.sequence);
 }
 
+/**
+ * Whether the run is currently OPERATOR-paused, replayed from the event log.
+ * The status field alone can't tell: a run waiting on a human.prompt is also
+ * "paused", but resuming it is a 409 — the user must answer the prompt. The
+ * backend stamps `payload.reason` ("operator" | "human_prompt") on
+ * run_paused/run_resumed events precisely so clients can tell the two apart.
+ */
+function deriveOperatorPaused(events: RunEvent[]): boolean {
+  let paused = false;
+  for (const e of events) {
+    if (e.payload.reason !== "operator") continue;
+    if (e.kind === "run_paused") paused = true;
+    else if (e.kind === "run_resumed") paused = false;
+  }
+  return paused;
+}
+
 export function RunDetailPage() {
   const { id = "" } = useParams<{ id: string }>();
   const [view, setView] = useState<"graph" | "timeline">("graph");
   const { claims, token } = useAuth();
   const labels = useLabels();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const isSuper = claims?.role === "superuser";
 
   const { data, isLoading, error } = useQuery<RunDetail>({
@@ -120,6 +143,73 @@ export function RunDetailPage() {
   // Per-node run provenance (which remote agent ran each node), derived from
   // the same merged event stream so the timeline can badge it.
   const agentsByNode = useMemo(() => deriveNodeAgents(events), [events]);
+  const operatorPaused = useMemo(() => deriveOperatorPaused(events), [events]);
+
+  // ---------- lifecycle controls ----------
+  // Tenant-scoped endpoints — superusers read runs through /superuser and
+  // get no control surface. pause/resume/cancel additionally require the
+  // run's starter or a tenant admin (mirrors the backend policy so users
+  // don't see buttons that can only 403).
+  const invalidateRun = useCallback(
+    () => queryClient.invalidateQueries({ queryKey: ["run", id] }),
+    [queryClient, id],
+  );
+  // Cancellation is cooperative: the POST succeeds while the run is still
+  // unwinding, so we show a "cancelling" hint and let the existing poll run
+  // until the terminal "cancelled" status lands.
+  const [cancelRequested, setCancelRequested] = useState(false);
+  const [cancelArmed, setCancelArmed] = useState(false);
+
+  const pause = useMutation({
+    mutationFn: () => runsApi.pause(id),
+    onSuccess: invalidateRun,
+  });
+  const resume = useMutation({
+    mutationFn: () => runsApi.resume(id),
+    onSuccess: invalidateRun,
+  });
+  const cancel = useMutation({
+    mutationFn: () => runsApi.cancel(id),
+    onSuccess: () => {
+      setCancelRequested(true);
+      invalidateRun();
+    },
+    onSettled: () => setCancelArmed(false),
+  });
+  const rerun = useMutation({
+    mutationFn: () => runsApi.rerun(id),
+    onSuccess: (newRun: Run) => {
+      queryClient.invalidateQueries({ queryKey: ["runs"] });
+      navigate(`/runs/${newRun.id}`);
+    },
+  });
+  const controlError =
+    pause.error ?? resume.error ?? cancel.error ?? rerun.error ?? null;
+
+  // Each mutation keeps its error until reset, so a stale 409 from one
+  // control would outlive a later success of another. Clear the slate
+  // before every control action.
+  const fireControl = (m: { reset: () => void; mutate: () => void }) => {
+    pause.reset();
+    resume.reset();
+    cancel.reset();
+    rerun.reset();
+    m.mutate();
+  };
+
+  // Rerun navigates to /runs/{newId} without remounting this component (same
+  // route, new param) — drop per-run control state so it can't leak across.
+  const resetControls = useCallback(() => {
+    setCancelRequested(false);
+    setCancelArmed(false);
+    pause.reset();
+    resume.reset();
+    cancel.reset();
+    rerun.reset();
+    // The reset fns are stable per react-query; mutation objects are not.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => resetControls(), [id, resetControls]);
 
   if (isLoading) return <div className="p-7 text-sm text-ink-400">Loading…</div>;
   if (error)
@@ -131,6 +221,16 @@ export function RunDetailPage() {
   if (!data) return null;
 
   const { run, pending_prompts } = data;
+  const terminal = isTerminal;
+  const canControl =
+    !isSuper &&
+    !!claims &&
+    (claims.user_id === run.started_by || claims.role === "tenant_admin");
+  const canRerun = !isSuper && terminal;
+  const promptBlocked = run.status === "paused" && pending_prompts.length > 0;
+  const cancelling = cancelRequested && !terminal;
+  const controlsBusy =
+    pause.isPending || resume.isPending || cancel.isPending || rerun.isPending;
 
   return (
     <div className="flex h-full flex-col">
@@ -147,11 +247,98 @@ export function RunDetailPage() {
         }
         actions={
           <div className="flex items-center gap-3">
+            {/* Queued runs can be paused too — the hold lands before the
+                first scheduler slice. */}
+            {canControl &&
+            (run.status === "running" || run.status === "queued") &&
+            !cancelling ? (
+              <button
+                type="button"
+                className="btn-ghost"
+                onClick={() => fireControl(pause)}
+                disabled={controlsBusy}
+                title="Finish the steps in flight, then hold before the next one"
+              >
+                <Pause size={15} />
+                {pause.isPending ? "Pausing…" : "Pause"}
+              </button>
+            ) : null}
+            {canControl && run.status === "paused" && !cancelling ? (
+              // A prompt-blocked run is NOT operator-paused: resuming it is a
+              // 409 — the user must answer the prompt instead.
+              operatorPaused || !promptBlocked ? (
+                <button
+                  type="button"
+                  className="btn-ghost text-emerald-300 hover:bg-emerald-500/10"
+                  onClick={() => fireControl(resume)}
+                  disabled={controlsBusy}
+                  title="Release the operator pause"
+                >
+                  <PlayCircle size={15} />
+                  {resume.isPending ? "Resuming…" : "Resume"}
+                </button>
+              ) : (
+                <span
+                  className="badge ring-amber-400/40 text-amber-300"
+                  title="This run is waiting on a human prompt — answer it in the panel on the right"
+                >
+                  <MessageCircleQuestion size={12} />
+                  respond to prompt
+                </span>
+              )
+            ) : null}
+            {canControl && !terminal ? (
+              cancelling ? (
+                <span className="badge ring-ink-700 text-ink-300">
+                  <Ban size={12} className="animate-pulse" />
+                  cancelling…
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  className="btn-ghost text-rose-300 hover:bg-rose-500/10"
+                  onClick={() => {
+                    if (!cancelArmed) {
+                      setCancelArmed(true);
+                      return;
+                    }
+                    fireControl(cancel);
+                  }}
+                  disabled={controlsBusy}
+                  title="Steps in flight finish; long waits and pending prompts are interrupted"
+                >
+                  <Ban size={15} />
+                  {cancel.isPending
+                    ? "Cancelling…"
+                    : cancelArmed
+                    ? "Click again to confirm"
+                    : "Cancel"}
+                </button>
+              )
+            ) : null}
+            {canRerun ? (
+              <button
+                type="button"
+                className="btn-ghost"
+                onClick={() => fireControl(rerun)}
+                disabled={controlsBusy}
+                title={`Start a new run pinned to v${run.workflow_version} with the same inputs`}
+              >
+                <RotateCcw size={15} />
+                {rerun.isPending ? "Starting…" : "Rerun"}
+              </button>
+            ) : null}
             <ViewToggle view={view} onChange={setView} />
             <StatusPill status={run.status} />
           </div>
         }
       />
+
+      {controlError ? (
+        <div className="border-b border-ink-800 px-7 py-3">
+          <ErrorBanner error={controlError} />
+        </div>
+      ) : null}
 
       <div className="relative z-10 grid min-h-0 flex-1 grid-cols-3 gap-0 overflow-hidden">
         <section className="col-span-2 flex min-h-0 flex-col overflow-hidden border-r border-ink-700/80">
@@ -219,7 +406,16 @@ export function RunDetailPage() {
             </section>
           ) : null}
 
-          {run.error ? (
+          {run.status === "failed" ? (
+            <RecoveryPanel
+              run={run}
+              events={events}
+              agentsByNode={agentsByNode}
+              canRerun={canRerun}
+              rerunPending={rerun.isPending}
+              onRerun={() => fireControl(rerun)}
+            />
+          ) : run.error ? (
             <section className="mb-5">
               <h3 className="panel-title mb-2 text-rose-300">
                 Error
@@ -305,6 +501,143 @@ function StatusPill({ status }: { status: RunDetail["run"]["status"] }) {
   return <span className={`badge ${map[status]}`}>{runStatusLabel(status)}</span>;
 }
 
+// ---------- failure recovery ------------------------------------------------
+
+interface FailedNodeInfo {
+  nodeId: string | null;
+  ref: string | null;
+  error: { type: string; message: string } | null;
+  at: string;
+}
+
+/**
+ * Pull the LAST node_failed event out of the log — no diagnosis, just the
+ * recorded facts: which node, which capability, what the executor said.
+ * Restart-recovery failures carry no node_id (payload.reason only).
+ */
+function findFailedNode(events: RunEvent[]): FailedNodeInfo | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.kind !== "node_failed") continue;
+    const raw = e.payload.error;
+    const error =
+      raw && typeof raw === "object" && "message" in raw
+        ? {
+            type: String((raw as { type?: unknown }).type ?? "Error"),
+            message: String((raw as { message?: unknown }).message ?? ""),
+          }
+        : null;
+    return {
+      nodeId: e.node_id,
+      ref: typeof e.payload.ref === "string" ? e.payload.ref : null,
+      error,
+      at: e.at,
+    };
+  }
+  return null;
+}
+
+function RecoveryPanel({
+  run,
+  events,
+  agentsByNode,
+  canRerun,
+  rerunPending,
+  onRerun,
+}: {
+  run: Run;
+  events: RunEvent[];
+  agentsByNode: Record<string, string>;
+  canRerun: boolean;
+  rerunPending: boolean;
+  onRerun: () => void;
+}) {
+  const failed = useMemo(() => findFailedNode(events), [events]);
+  const agent = failed?.nodeId ? agentsByNode[failed.nodeId] ?? null : null;
+
+  return (
+    <section className="mb-5">
+      <h3 className="panel-title mb-2 text-rose-300">Failure</h3>
+      <div className="card space-y-3 p-3">
+        <div className="flex items-start gap-2">
+          <AlertTriangle size={15} className="mt-0.5 shrink-0 text-rose-300" />
+          <div className="min-w-0 flex-1 text-sm">
+            <div className="font-semibold text-ink-50">
+              {failed?.nodeId ? (
+                <>
+                  Step <span className="font-mono">{failed.nodeId}</span> failed
+                </>
+              ) : (
+                "Run failed"
+              )}
+            </div>
+            <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-ink-400">
+              {failed?.ref ? (
+                <span className="rounded bg-ink-800/80 px-1.5 py-0.5 font-mono">
+                  {failed.ref}
+                </span>
+              ) : null}
+              {agent ? (
+                <span className="inline-flex items-center gap-1 rounded bg-signal-cyan/15 px-1.5 py-0.5 font-mono text-signal-cyan">
+                  <MonitorSmartphone size={10} />
+                  ran on {agent}
+                </span>
+              ) : null}
+              {failed ? <time>{formatISTTime(failed.at)} IST</time> : null}
+            </div>
+          </div>
+        </div>
+
+        {/* The executor's recorded error — real data, verbatim. */}
+        {(failed?.error ?? run.error) ? (
+          <div className="rounded border border-rose-500/30 bg-rose-950/30 px-2.5 py-2 text-sm">
+            <div className="mb-0.5 font-mono text-[11px] text-rose-300/80">
+              {(failed?.error ?? run.error)!.type}
+            </div>
+            <div className="break-words text-ink-100">
+              {(failed?.error ?? run.error)!.message}
+            </div>
+          </div>
+        ) : (
+          <div className="text-xs text-ink-500">
+            No error detail was recorded for this run.
+          </div>
+        )}
+
+        {canRerun ? (
+          <div>
+            <button
+              type="button"
+              className="btn-primary w-full"
+              onClick={onRerun}
+              disabled={rerunPending}
+              title={`Start a new run pinned to v${run.workflow_version} with the same inputs`}
+            >
+              <RotateCcw size={14} />
+              {rerunPending ? "Starting…" : `Rerun (v${run.workflow_version}, same inputs)`}
+            </button>
+            <p className="mt-1.5 text-[11px] leading-4 text-ink-500">
+              Reruns use this run's original workflow version and inputs;
+              capability grants are re-checked at launch.
+            </p>
+          </div>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+// Human framing for pause/resume causes. The backend stamps payload.reason
+// with "operator" or "human_prompt" on run_paused/run_resumed events.
+function pauseReasonLabel(event: RunEvent): string | null {
+  if (event.kind !== "run_paused" && event.kind !== "run_resumed") return null;
+  const reason = event.payload.reason;
+  if (reason === "operator") return "by operator";
+  if (reason === "human_prompt")
+    return event.kind === "run_paused" ? "awaiting human prompt" : "prompt answered";
+  return null;
+}
+
 function EventRow({ event, agent }: { event: RunEvent; agent: string | null }) {
   const Icon =
     event.kind === "node_completed"
@@ -315,6 +648,8 @@ function EventRow({ event, agent }: { event: RunEvent; agent: string | null }) {
       ? Pause
       : event.kind === "run_resumed"
       ? PlayCircle
+      : event.kind === "run_cancelled"
+      ? Ban
       : Circle;
 
   const color =
@@ -326,7 +661,11 @@ function EventRow({ event, agent }: { event: RunEvent; agent: string | null }) {
       ? "text-amber-400"
       : event.kind === "run_resumed"
       ? "text-accent-400"
+      : event.kind === "run_cancelled"
+      ? "text-rose-400"
       : "text-ink-500";
+
+  const reasonLabel = pauseReasonLabel(event);
 
   return (
     <li className="flex gap-3">
@@ -338,6 +677,11 @@ function EventRow({ event, agent }: { event: RunEvent; agent: string | null }) {
         <div className="flex items-baseline justify-between gap-2 text-xs text-ink-400">
           <span className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
             <span className="text-ink-200">{event.kind}</span>
+            {reasonLabel ? (
+              <span className="rounded bg-amber-300/15 px-1.5 py-0.5 text-[10px] text-amber-200">
+                {reasonLabel}
+              </span>
+            ) : null}
             {event.node_id ? (
               <>
                 <span>·</span>

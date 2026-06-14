@@ -20,6 +20,7 @@ from aakaar.capabilities.comms.email_send import (
     CAP_REF,
     _clean_addr_list,
     _user_facing_basename,
+    assert_recipients_allowed,
     build_message,
     definition,
     handler,
@@ -51,6 +52,48 @@ def test_user_facing_basename_strips_uuid_prefix() -> None:
 def test_clean_addr_list_trims_dedupes_drops_empty() -> None:
     assert _clean_addr_list([" a@x ", "a@x", "", "b@x", None]) == ["a@x", "b@x"]
     assert _clean_addr_list(None) == []
+
+
+def test_recipient_allowlist_absent_or_empty_permits_all() -> None:
+    assert_recipients_allowed(["anyone@anywhere.test"], None)
+    assert_recipients_allowed(["anyone@anywhere.test"], [])
+    assert_recipients_allowed(["anyone@anywhere.test"], ["  ", ""])
+
+
+def test_recipient_allowlist_exact_and_domain_matches() -> None:
+    allow = ["Ops@X.Test", "@corp.example"]
+    assert_recipients_allowed(["ops@x.test"], allow)  # case-insensitive exact
+    assert_recipients_allowed(["a@corp.example", "b@CORP.example"], allow)  # domain
+    # Display-name forms match on the bare addr-spec.
+    assert_recipients_allowed(["Ada Lovelace <ops@x.test>"], allow)
+
+
+def test_recipient_allowlist_rejects_unlisted() -> None:
+    allow = ["ops@x.test", "@corp.example"]
+    with pytest.raises(PermissionError, match="recipient_allowlist"):
+        assert_recipients_allowed(["intruder@evil.test"], allow)
+    # A domain entry must not match a mere suffix of another domain.
+    with pytest.raises(PermissionError, match="recipient_allowlist"):
+        assert_recipients_allowed(["a@evilcorp.example"], allow)
+
+
+def test_recipient_allowlist_rejects_address_list_smuggled_in_one_string() -> None:
+    # A single recipient string that packs *two* addresses must not pass just
+    # because it ends in an allowed domain: smtplib hands the whole string to
+    # one RCPT TO, and a permissive MTA may deliver to the leading address too.
+    allow = ["@corp.example"]
+    with pytest.raises(PermissionError, match="recipient_allowlist"):
+        assert_recipients_allowed(
+            ["attacker@evil.test, victim@corp.example"], allow
+        )
+    # Even when every smuggled constituent is itself a valid address, the
+    # disallowed one must veto the send.
+    with pytest.raises(PermissionError, match="recipient_allowlist"):
+        assert_recipients_allowed(
+            ["ok@corp.example, leak@evil.test"], allow
+        )
+    # A single legitimately-listed address (display-name form) still passes.
+    assert_recipients_allowed(["Ada <ops@corp.example>"], allow)
 
 
 def test_build_message_plain_only() -> None:
@@ -232,6 +275,39 @@ async def test_handler_implicit_tls_on_465(
     )
     assert out == {"sent": True, "to": ["x@x.test"]}
     assert captured.get("used_ssl") is True
+
+
+@pytest.mark.asyncio
+async def test_handler_enforces_grant_recipient_allowlist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _FakeSMTP.instances.clear()
+    import smtplib
+
+    monkeypatch.setattr(smtplib, "SMTP", _FakeSMTP)
+    ctx = _ctx(
+        tmp_path,
+        defaults={"host": "h", "recipient_allowlist": ["@x.test"]},
+        secrets={"username": "u@x.test", "smtp_password": "p"},
+    )
+    # Cc outside the allowlist is refused before any SMTP connection.
+    with pytest.raises(PermissionError, match="recipient_allowlist"):
+        await handler(
+            ctx,
+            {
+                "account_alias": "primary",
+                "to": ["ok@x.test"],
+                "cc": ["leak@evil.test"],
+                "body": "b",
+            },
+        )
+    assert _FakeSMTP.instances == []
+
+    # All-allowed recipients go through.
+    out = await handler(
+        ctx, {"account_alias": "primary", "to": ["ok@x.test"], "body": "b"}
+    )
+    assert out == {"sent": True, "to": ["ok@x.test"]}
 
 
 @pytest.mark.asyncio

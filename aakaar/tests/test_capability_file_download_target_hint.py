@@ -33,7 +33,6 @@ from aakaar.vault import LocalVault
 from aakaar.workers.browser import FakeBrowserPool, FakeBrowserSession
 from tests._discovery_helpers import discovery_response as login_discovery_response
 
-
 # Helper: the cap.file_download discovery JS contains the literal string
 # "row_context" (a field name unique to its candidate shape). We use it
 # as a marker so the FakeBrowserSession returns our scripted response.

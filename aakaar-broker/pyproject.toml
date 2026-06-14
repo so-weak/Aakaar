@@ -1,0 +1,34 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "aakaar-broker"
+version = "0.1.0"
+description = "Aakaar rendezvous broker — a stateless WebSocket relay that pairs agents with the API by identity."
+requires-python = ">=3.11"
+dependencies = [
+    "websockets>=13",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.5"]
+
+[project.scripts]
+aakaar-broker = "aakaar_broker.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["aakaar_broker"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
+ignore = ["E501"]

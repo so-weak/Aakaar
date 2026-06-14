@@ -75,7 +75,14 @@ class RunEventKind:
     NODE_FAILED = "node_failed"
     NODE_RETRYING = "node_retrying"
     RUN_PAUSED = "run_paused"
+    """The run stopped advancing. Payload `reason` distinguishes the cause:
+    "human_prompt" (a human.prompt node is waiting) or "operator" (an
+    explicit POST /runs/{id}/pause)."""
     RUN_RESUMED = "run_resumed"
+    """Counterpart of RUN_PAUSED; same `reason` payload convention."""
+    RUN_CANCELLED = "run_cancelled"
+    """An operator cancel took effect and the run unwound to its terminal
+    CANCELLED status. Payload: {"reason": "operator"}."""
     SIGNAL_RECEIVED = "signal_received"
     LIVE_SCREEN = "live_screen"
     """Best-effort screenshot of the active browser session captured after

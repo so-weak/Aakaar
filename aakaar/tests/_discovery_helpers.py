@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from typing import Any
 
-
 # Substring present in the real discovery JS (`bestSelector` is one of
 # the helper functions). Stable enough to use as a match key.
 DISCOVERY_MARKER = "bestSelector"

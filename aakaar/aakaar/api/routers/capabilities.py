@@ -36,13 +36,13 @@ def list_available(
     assert user.tenant_id is not None
     granted = grants_repo.list_granted_refs(session, user.tenant_id)
     out: list[CapabilityDefinitionResponse] = []
-    for d in registry.capabilities():
-        if d.ref in granted:
-            out.append(_serialize(d))
-    for d in registry.actions():
-        out.append(_serialize(d))
-    for d in registry.controls():
-        out.append(_serialize(d))
+    for cap in registry.capabilities():
+        if cap.ref in granted:
+            out.append(_serialize(cap))
+    for action in registry.actions():
+        out.append(_serialize(action))
+    for control in registry.controls():
+        out.append(_serialize(control))
     return out
 
 
@@ -54,12 +54,12 @@ def list_all(
     """Every capability/action/control in the registry, regardless of grants.
     Superuser-only — used by the cross-tenant grant UI."""
     out: list[CapabilityDefinitionResponse] = []
-    for d in registry.capabilities():
-        out.append(_serialize(d))
-    for d in registry.actions():
-        out.append(_serialize(d))
-    for d in registry.controls():
-        out.append(_serialize(d))
+    for cap in registry.capabilities():
+        out.append(_serialize(cap))
+    for action in registry.actions():
+        out.append(_serialize(action))
+    for control in registry.controls():
+        out.append(_serialize(control))
     return out
 
 

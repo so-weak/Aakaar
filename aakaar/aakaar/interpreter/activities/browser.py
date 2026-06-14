@@ -15,6 +15,7 @@ see `aakaar/capabilities/_base.py`.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import tempfile
 import uuid
@@ -177,15 +178,15 @@ async def upload(ctx: ActivityContext, inputs: dict[str, Any]) -> dict[str, Any]
         file_uri,
     )
     data = ctx.object_store.get(file_uri)
-    fd = tempfile.NamedTemporaryFile(delete=False)
-    try:
+    # delete=False so the path stays valid after the with-block closes the
+    # handle; we hand the path to Playwright and unlink it ourselves below.
+    with tempfile.NamedTemporaryFile(delete=False) as fd:
         fd.write(data)
-    finally:
-        fd.close()
+        tmp_path = fd.name
     try:
-        await sess.upload(inputs["selector"], fd.name)
+        await sess.upload(inputs["selector"], tmp_path)
     finally:
-        Path(fd.name).unlink(missing_ok=True)
+        Path(tmp_path).unlink(missing_ok=True)
     return {}
 
 
@@ -260,7 +261,5 @@ class _SessionHolder:
         if self._closed:
             return
         self._closed = True
-        try:
+        with contextlib.suppress(Exception):
             await self._cm.__aexit__(None, None, None)
-        except Exception:
-            pass

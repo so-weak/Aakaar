@@ -24,17 +24,21 @@ from collections.abc import Iterable
 
 import httpx
 
+# What `ipaddress.ip_address()` actually returns; the `is_private` family of
+# properties live on these concrete classes, not on the private `_BaseAddress`.
+IPAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
+
 
 class SsrfBlocked(Exception):
     """Raised when an outbound request targets a disallowed address."""
 
 
-def _resolve_ips(host: str) -> list[ipaddress._BaseAddress]:
+def _resolve_ips(host: str) -> list[IPAddress]:
     try:
         infos = socket.getaddrinfo(host, None)
     except socket.gaierror as exc:
         raise SsrfBlocked(f"could not resolve host {host!r}: {exc}") from exc
-    ips: list[ipaddress._BaseAddress] = []
+    ips: list[IPAddress] = []
     for info in infos:
         sockaddr = info[4]
         ip_str = sockaddr[0]
@@ -45,7 +49,7 @@ def _resolve_ips(host: str) -> list[ipaddress._BaseAddress]:
     return ips
 
 
-def _ip_is_safe(ip: ipaddress._BaseAddress) -> bool:
+def _ip_is_safe(ip: IPAddress) -> bool:
     """Public, routable addresses only."""
     return not (
         ip.is_private
@@ -70,7 +74,7 @@ def assert_host_allowed(
     # more correct (no DNS) and avoids NAT64/DNS64 hosts synthesizing an IPv6
     # for a public IPv4 literal.
     try:
-        ips: list[ipaddress._BaseAddress] = [ipaddress.ip_address(host)]
+        ips: list[IPAddress] = [ipaddress.ip_address(host)]
     except ValueError:
         ips = _resolve_ips(host)
     for ip in ips:

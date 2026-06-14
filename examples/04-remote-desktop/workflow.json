@@ -1,0 +1,46 @@
+{
+  "name": "Remote desktop data entry",
+  "description": "On a remote workstation agent: focus an application window, click into a field, and type a value.",
+  "rationale": "Example: GUI automation placed on an enrolled agent via per-node targets; control stays on the server.",
+  "dag": {
+    "id": "",
+    "version": 0,
+    "nodes": [
+      {
+        "id": "focus",
+        "kind": "capability",
+        "ref": "cap.window_manage",
+        "inputs": {
+          "action": "focus",
+          "title": "Notepad"
+        },
+        "target": "workstation-1"
+      },
+      {
+        "id": "click_field",
+        "kind": "capability",
+        "ref": "cap.desktop_click",
+        "inputs": {
+          "x": 500,
+          "y": 400,
+          "button": "left"
+        },
+        "target": "workstation-1"
+      },
+      {
+        "id": "type_value",
+        "kind": "capability",
+        "ref": "cap.desktop_type",
+        "inputs": {
+          "text": "Automated by Aakaar - ticket 12345",
+          "interval_ms": 20
+        },
+        "target": "workstation-1"
+      }
+    ],
+    "edges": [
+      { "from": "focus", "to": "click_field" },
+      { "from": "click_field", "to": "type_value" }
+    ]
+  }
+}

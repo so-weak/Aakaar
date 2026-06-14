@@ -1,0 +1,64 @@
+{
+  "name": "Transform and archive a daily batch",
+  "description": "Seed a CSV into the object store, run a pandas transform pipeline over it, pack source and result into a zip, and publish the zip at a stable object-store key.",
+  "rationale": "Example: fully offline data pipeline — no credentials, no LLM, no browser. Runs end-to-end on a bare dev install.",
+  "dag": {
+    "id": "",
+    "version": 0,
+    "nodes": [
+      {
+        "id": "seed",
+        "kind": "action",
+        "ref": "file.write_csv",
+        "inputs": {
+          "rows": [
+            { "txn_id": "T-1001", "amount": 125.5, "status": "SETTLED" },
+            { "txn_id": "T-1002", "amount": 9800.0, "status": "FAILED" },
+            { "txn_id": "T-1003", "amount": 42.0, "status": "SETTLED" },
+            { "txn_id": "T-1004", "amount": 310.75, "status": "FAILED" },
+            { "txn_id": "T-1005", "amount": 7.25, "status": "PENDING" }
+          ],
+          "file_uri": "aakaar://t/TENANT_ID/examples/archive-demo/transactions.csv"
+        }
+      },
+      {
+        "id": "transform",
+        "kind": "capability",
+        "ref": "cap.data_transform",
+        "inputs": {
+          "source": "${seed.file_uri}",
+          "ops": [
+            { "op": "filter", "column": "status", "operator": "==", "value": "FAILED" },
+            { "op": "sort", "by": "amount", "ascending": false }
+          ],
+          "output_format": "csv"
+        }
+      },
+      {
+        "id": "pack",
+        "kind": "capability",
+        "ref": "cap.archive_manage",
+        "inputs": {
+          "op": "create",
+          "sources": ["${seed.file_uri}", "${transform.result_uri}"],
+          "format": "zip"
+        }
+      },
+      {
+        "id": "publish",
+        "kind": "capability",
+        "ref": "cap.file_manage",
+        "inputs": {
+          "op": "copy",
+          "src": "${pack.archive_uri}",
+          "dst": "examples/archive-demo/latest-report.zip"
+        }
+      }
+    ],
+    "edges": [
+      { "from": "seed", "to": "transform" },
+      { "from": "transform", "to": "pack" },
+      { "from": "pack", "to": "publish" }
+    ]
+  }
+}

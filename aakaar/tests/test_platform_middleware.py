@@ -54,9 +54,9 @@ def test_ssrf_blocks_loopback_and_private() -> None:
 
 def test_ssrf_allows_public_ip() -> None:
     # Numeric, public — resolves without DNS and passes.
-    assert_host_allowed("8.8.8.8") is None
+    assert assert_host_allowed("8.8.8.8") is None
 
 
 def test_ssrf_allowlist_and_allow_private() -> None:
-    assert_host_allowed("127.0.0.1", allow_private=True) is None
-    assert_host_allowed("127.0.0.1", allow_hosts=["127.0.0.1"]) is None
+    assert assert_host_allowed("127.0.0.1", allow_private=True) is None
+    assert assert_host_allowed("127.0.0.1", allow_hosts=["127.0.0.1"]) is None

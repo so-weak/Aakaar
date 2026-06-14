@@ -9,16 +9,17 @@ can target. Result/event frames from the agent are routed back here.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import secrets
 import uuid
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
 from sqlalchemy.orm import Session
 
-from aakaar.api.auth.passwords import hash_password, verify_password
+from aakaar.api.auth.passwords import hash_password
 from aakaar.api.deps import (
     get_agent_registry,
     get_audit,
@@ -44,6 +45,7 @@ from aakaar.workers.remote import (
     check_placement,
     parse_hello,
 )
+from aakaar.workers.remote.broker_link import authenticate_agent_key
 from aakaar.workers.remote.protocol import RemoteResult
 
 logger = logging.getLogger(__name__)
@@ -158,16 +160,6 @@ def placement_check(
 # ---------- agent WebSocket --------------------------------------------------
 
 
-def _parse_key(raw: str | None) -> tuple[uuid.UUID, str] | None:
-    if not raw or "." not in raw:
-        return None
-    agent_id_str, _, secret = raw.partition(".")
-    try:
-        return uuid.UUID(agent_id_str), secret
-    except ValueError:
-        return None
-
-
 @router.websocket("/ws/agents")
 async def agent_ws(websocket: WebSocket) -> None:
     deps = websocket.app.state.deps
@@ -175,20 +167,19 @@ async def agent_ws(websocket: WebSocket) -> None:
         await websocket.close(code=4403)
         return
 
-    parsed = _parse_key(websocket.headers.get("x-agent-key"))
-    if parsed is None:
+    # The exact same parse + bcrypt verification the relayed (broker) path uses,
+    # via the one shared helper — the two paths must never drift apart. bcrypt
+    # is ~100ms of CPU, so keep it off the event loop.
+    identity = await asyncio.to_thread(
+        authenticate_agent_key, deps.session_factory, websocket.headers.get("x-agent-key")
+    )
+    if identity is None:
         await websocket.close(code=4401)
         return
-    agent_id, secret = parsed
-
-    with deps.session_factory.session() as s:
-        agent = s.get(RemoteAgent, agent_id)
-        if agent is None or not verify_password(secret, agent.api_key_hash):
-            await websocket.close(code=4401)
-            return
-        tenant_id = agent.tenant_id
-        alias = agent.alias
-        pools = tuple(agent.pools or [])
+    agent_id = identity.agent_id
+    tenant_id = identity.tenant_id
+    alias = identity.alias
+    pools = identity.pools
 
     await websocket.accept()
     try:
@@ -237,7 +228,7 @@ async def agent_ws(websocket: WebSocket) -> None:
             s.commit()
 
 
-def _relay_event(deps: object, tenant_id: uuid.UUID, msg: dict) -> None:
+def _relay_event(deps: object, tenant_id: uuid.UUID, msg: dict[str, Any]) -> None:
     try:
         run_id = uuid.UUID(str(msg["run_id"]))
         deps.event_recorder.record(  # type: ignore[attr-defined]

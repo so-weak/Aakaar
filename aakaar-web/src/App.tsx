@@ -17,6 +17,7 @@ import { LiveProcessesPage } from "@/pages/LiveProcesses";
 import { LoginPage } from "@/pages/Login";
 import { MfaSettingsPage } from "@/pages/MfaSettings";
 import { OidcCallbackPage } from "@/pages/OidcCallback";
+import { RecordingsPage } from "@/pages/Recordings";
 import { RunDetailPage } from "@/pages/RunDetail";
 import { RunsPage } from "@/pages/Runs";
 import { SuperuserTenantDetailPage } from "@/pages/SuperuserTenantDetail";
@@ -83,6 +84,14 @@ export default function App() {
           element={
             <ProtectedRoute requireRole={["tenant_admin"]}>
               <AgentsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="recordings"
+          element={
+            <ProtectedRoute requireRole={["tenant_admin"]}>
+              <RecordingsPage />
             </ProtectedRoute>
           }
         />

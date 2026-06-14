@@ -12,6 +12,9 @@ Public surface:
   - schedule(run_id, tenant_id, dag, granted_caps) — kicks off an
     asyncio task to drive the run; returns immediately
   - respond(run_id, node_id, response) — resolves a paused human.prompt
+  - pause_run / resume_run / cancel_run — operator lifecycle controls,
+    backed by a per-run ControlHub handle the executor checks between
+    DAG layers (see controls.py for the pause-precedence rule)
   - wait_for(run_id) — test helper: await the asyncio task
 """
 
@@ -25,10 +28,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from aakaar.db.models import Run, RunStatus
+from aakaar.db.models import Run, RunEventKind, RunStatus
 from aakaar.db.session import SessionFactory
 from aakaar.db.tenancy import system_scope, tenant_scope
 from aakaar.interpreter.activities.types import ActivityContext
+from aakaar.interpreter.controls import ControlHub, RunControlConflict
 from aakaar.interpreter.events import EventRecorder
 from aakaar.interpreter.executor import Executor, RunContext, RunOutcome
 from aakaar.interpreter.signals import SignalHub
@@ -51,6 +55,7 @@ class RunOrchestrator:
     vault: Vault
     browser_pool: Any = None
     download_mirror_dir: Path | None = None
+    controls: ControlHub = field(default_factory=ControlHub)
     _tasks: dict[uuid.UUID, asyncio.Task[RunOutcome]] = field(default_factory=dict)
 
     def schedule(
@@ -70,6 +75,7 @@ class RunOrchestrator:
             len(granted_caps),
             run_target,
         )
+        self.controls.register(run_id, tenant_id)
         task = asyncio.create_task(
             self._drive(
                 run_id=run_id,
@@ -96,11 +102,15 @@ class RunOrchestrator:
 
         recovered = 0
         # Startup scan spans every tenant's runs — trusted cross-tenant work.
+        # PAUSED is included: an operator pause is held by an in-process gate
+        # that does not survive a restart, so the run can never resume.
         with system_scope(), self.session_factory.session() as s:
             rows = (
                 s.execute(
                     select(Run).where(
-                        Run.status.in_([RunStatus.QUEUED, RunStatus.RUNNING])
+                        Run.status.in_(
+                            [RunStatus.QUEUED, RunStatus.RUNNING, RunStatus.PAUSED]
+                        )
                     )
                 )
                 .scalars()
@@ -134,6 +144,79 @@ class RunOrchestrator:
         logger.info("respond run_id=%s node_id=%s", run_id, node_id)
         await self.signals.resolve(run_id, node_id, response)
 
+    def pause_run(self, *, run_id: uuid.UUID) -> None:
+        """Hold the run before its next DAG layer (operator pause).
+
+        In-flight nodes finish; the executor then blocks at the layer
+        boundary until `resume_run` (or a cancel). Persists PAUSED and
+        records a RUN_PAUSED event with reason "operator" so the timeline
+        distinguishes it from a human-prompt pause.
+
+        Raises RunNotActive when the run has no live handle here, and
+        RunControlConflict when it is already paused or being cancelled.
+        No awaits between the checks and the writes, so this can't
+        interleave with the drive task's own status updates.
+        """
+        handle = self.controls.get(run_id)
+        if handle.cancel_requested:
+            raise RunControlConflict("run is being cancelled")
+        if handle.paused:
+            raise RunControlConflict("run is already paused")
+        handle.pause()
+        self._update_status(run_id=run_id, status=RunStatus.PAUSED)
+        self.recorder.record(
+            run_id=run_id,
+            tenant_id=handle.tenant_id,
+            node_id=None,
+            kind=RunEventKind.RUN_PAUSED,
+            payload={"reason": "operator"},
+        )
+        logger.info("pause_run run_id=%s", run_id)
+
+    def resume_run(self, *, run_id: uuid.UUID) -> None:
+        """Release an operator pause so the next DAG layer can start.
+
+        Never resolves a pending human prompt: a run blocked on
+        human.prompt is not operator-paused, so resuming it is a conflict
+        (the precedence rule lives in the controls module docstring).
+        """
+        handle = self.controls.get(run_id)
+        if not handle.paused:
+            if self.signals.list_pending(run_id):
+                raise RunControlConflict(
+                    "run is waiting on a human prompt; respond to it instead of resuming"
+                )
+            raise RunControlConflict("run is not paused")
+        handle.resume()
+        self._update_status(run_id=run_id, status=RunStatus.RUNNING)
+        self.recorder.record(
+            run_id=run_id,
+            tenant_id=handle.tenant_id,
+            node_id=None,
+            kind=RunEventKind.RUN_RESUMED,
+            payload={"reason": "operator"},
+        )
+        logger.info("resume_run run_id=%s", run_id)
+
+    async def cancel_run(self, *, run_id: uuid.UUID) -> None:
+        """Request cooperative cancellation; idempotent.
+
+        In-flight nodes finish; the executor raises at the next layer
+        boundary (long control.wait sleeps and human.prompt waits are
+        interrupted immediately). The drive task persists the terminal
+        CANCELLED status and records the RUN_CANCELLED event as it
+        unwinds, so the status may read running/paused for a moment after
+        this returns. Raises RunNotActive when the run is not live here.
+        """
+        handle = self.controls.get(run_id)
+        if handle.cancel_requested:
+            return
+        handle.request_cancel()
+        # Interrupt any human.prompt waits so the executor can unwind
+        # without sitting out the prompt timeout.
+        await self.signals.cancel_all_for(run_id)
+        logger.info("cancel_run run_id=%s", run_id)
+
     async def wait_for(self, run_id: uuid.UUID) -> RunOutcome:
         task = self._tasks.get(run_id)
         if task is None:
@@ -155,14 +238,18 @@ class RunOrchestrator:
         # tenant, so RLS — when enforcing — keeps a run from touching another
         # tenant's rows. contextvars propagate into the executor's awaited work
         # and any sub-tasks it spawns.
-        with tenant_scope(tenant_id):
-            return await self._drive_impl(
-                run_id=run_id,
-                tenant_id=tenant_id,
-                dag=dag,
-                granted_caps=granted_caps,
-                run_target=run_target,
-            )
+        try:
+            with tenant_scope(tenant_id):
+                return await self._drive_impl(
+                    run_id=run_id,
+                    tenant_id=tenant_id,
+                    dag=dag,
+                    granted_caps=granted_caps,
+                    run_target=run_target,
+                )
+        finally:
+            # The control handle is only meaningful while the run is live.
+            self.controls.discard(run_id)
 
     async def _drive_impl(
         self,
@@ -173,8 +260,13 @@ class RunOrchestrator:
         granted_caps: dict[str, dict[str, Any]],
         run_target: str | None = None,
     ) -> RunOutcome:
-        logger.debug("_drive: marking run %s as RUNNING", run_id)
-        self._update_status(run_id=run_id, status=RunStatus.RUNNING)
+        handle = self.controls.peek(run_id)
+        if handle is None or not handle.paused:
+            # Skip when an operator paused the run before the task got its
+            # first slice — the row already says PAUSED and the executor's
+            # first checkpoint will hold it; writing RUNNING here would lie.
+            logger.debug("_drive: marking run %s as RUNNING", run_id)
+            self._update_status(run_id=run_id, status=RunStatus.RUNNING)
 
         activity_ctx = ActivityContext(
             tenant_id=tenant_id,
@@ -191,6 +283,7 @@ class RunOrchestrator:
             tenant_id=tenant_id,
             activity_ctx=activity_ctx,
             run_target=run_target,
+            controls=handle,
         )
         try:
             outcome = await self.executor.execute(dag, ctx)
@@ -213,12 +306,21 @@ class RunOrchestrator:
                 except Exception:
                     logger.exception("session_state cleanup failed for run %s", run_id)
 
-        final_status = (
-            RunStatus.SUCCEEDED if outcome.status == "succeeded" else RunStatus.FAILED
-        )
-        if final_status == RunStatus.SUCCEEDED:
+        if outcome.status == "succeeded":
+            final_status = RunStatus.SUCCEEDED
             logger.info("run %s SUCCEEDED (outputs=%d nodes)", run_id, len(outcome.outputs))
+        elif outcome.status == "cancelled":
+            final_status = RunStatus.CANCELLED
+            logger.info("run %s CANCELLED", run_id)
+            self.recorder.record(
+                run_id=run_id,
+                tenant_id=tenant_id,
+                node_id=None,
+                kind=RunEventKind.RUN_CANCELLED,
+                payload={"reason": "operator"},
+            )
         else:
+            final_status = RunStatus.FAILED
             logger.warning(
                 "run %s FAILED error=%s",
                 run_id,

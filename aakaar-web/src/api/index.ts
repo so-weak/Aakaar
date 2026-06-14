@@ -16,6 +16,10 @@ import type {
   MfaStatus,
   PlacementCheckResult,
   RawChatResponse,
+  RecordingListItem,
+  RecordingStartResponse,
+  RecordingStatus,
+  RecordingStopResponse,
   RemoteAgent,
   Run,
   RunDetail,
@@ -214,20 +218,44 @@ export const runs = {
   //   undefined / null -> use each node's own placement (default)
   //   "server"         -> run the entire workflow on the API host
   //   "<alias>"/"<pool>" -> run the entire workflow on that agent/pool
+  // `version` pins the run to a specific workflow version (default: latest).
   start: (
     workflowId: string,
     inputs: Record<string, unknown> = {},
     target?: string | null,
+    version?: number | null,
   ) =>
     request<Run>(`/workflows/${workflowId}/runs`, {
       method: "POST",
-      body: { inputs, target: target ?? null },
+      body: { inputs, target: target ?? null, version: version ?? null },
     }),
   list: (opts: { active?: boolean } = {}) =>
     request<Run[]>(`/runs${opts.active ? "?active=true" : ""}`),
   get: (id: string) => request<RunDetail>(`/runs/${id}`),
   respond: (id: string, input: { node_id: string; response: string }) =>
     request<void>(`/runs/${id}/respond`, { method: "POST", body: input }),
+  // Lifecycle controls (starter or tenant admin; rerun is open to any tenant
+  // user). All are bodyless POSTs returning the run row. Note: cancel is
+  // cooperative — the 200 may still show a pre-terminal status, so callers
+  // should keep polling until status === "cancelled".
+  pause: (id: string) => request<Run>(`/runs/${id}/pause`, { method: "POST" }),
+  resume: (id: string) => request<Run>(`/runs/${id}/resume`, { method: "POST" }),
+  cancel: (id: string) => request<Run>(`/runs/${id}/cancel`, { method: "POST" }),
+  // Returns the NEW run, pinned to the source run's version and inputs.
+  rerun: (id: string) => request<Run>(`/runs/${id}/rerun`, { method: "POST" }),
+};
+
+// ---------- activity recordings -------------------------------------------
+
+export const recordings = {
+  start: (input: { name: string; agent_alias: string; max_events?: number }) =>
+    request<RecordingStartResponse>("/recordings", { method: "POST", body: input }),
+  list: () => request<RecordingListItem[]>("/recordings"),
+  status: (id: string) => request<RecordingStatus>(`/recordings/${id}`),
+  // Compiles the capture into a draft workflow and removes the recording.
+  stop: (id: string) =>
+    request<RecordingStopResponse>(`/recordings/${id}/stop`, { method: "POST" }),
+  discard: (id: string) => request<void>(`/recordings/${id}`, { method: "DELETE" }),
 };
 
 // ---------- remote agents ------------------------------------------------

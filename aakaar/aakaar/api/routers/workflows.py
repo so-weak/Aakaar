@@ -27,7 +27,7 @@ from aakaar.api.schemas import (
     WorkflowUpdateRequest,
     WorkflowVersionResponse,
 )
-from aakaar.db.models import User
+from aakaar.db.models import User, Workflow, WorkflowVersion
 from aakaar.services.audit import AuditRecorder
 from aakaar.shared.dag import ValidationError, validate_dag
 from aakaar.shared.dag.types import Dag
@@ -50,7 +50,7 @@ def _validate_dag_for_tenant(
         ) from e
 
 
-def _to_response(workflow) -> WorkflowResponse:
+def _to_response(workflow: Workflow) -> WorkflowResponse:
     return WorkflowResponse(
         id=workflow.id,
         tenant_id=workflow.tenant_id,
@@ -63,7 +63,7 @@ def _to_response(workflow) -> WorkflowResponse:
     )
 
 
-def _version_to_response(v) -> WorkflowVersionResponse:
+def _version_to_response(v: WorkflowVersion) -> WorkflowVersionResponse:
     return WorkflowVersionResponse(
         id=v.id,
         workflow_id=v.workflow_id,

@@ -1,17 +1,33 @@
-"""Run endpoints — start, list, inspect, respond.
+"""Run endpoints — start, list, inspect, respond, lifecycle controls.
 
 Edit policy:
   - any tenant user can start a run (read access on any workflow)
   - any tenant user can read run + events (full timeline UI)
   - only the run's started_by user can respond to a human.prompt for that
     run (prevents accidental cross-user responses)
+  - pause/resume/cancel require the run's starter or a tenant admin
+  - rerun follows the start policy (any tenant user) — it just starts a new
+    run pinned to the source run's workflow version and inputs
+
+Pause vs human.prompt: an operator pause holds the run between DAG layers;
+a human.prompt holds a single node inside a layer. Resume releases only the
+former — a pending prompt must be answered via /runs/{id}/respond (the
+precedence rule is documented in `aakaar.interpreter.controls`).
+
+Provenance: the rerun + lifecycle-control surface was designed against the
+diverged Aakaar-Ravi fork's equivalent endpoints as a reference for the
+feature's shape and edge cases. This implementation is independently written
+to this repo's idioms — shared `_create_and_schedule` launch path, an
+injected `AuditRecorder`, the `ControlHub`/`RunControlConflict` control model,
+and cooperative `RunCancelled` rather than the reference's direct
+`task.cancel()`.
 """
 
 from __future__ import annotations
 
 import logging
 import uuid
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -33,8 +49,9 @@ from aakaar.api.schemas import (
     RunResponse,
     RunStartRequest,
 )
-from aakaar.db.models import User
+from aakaar.db.models import Run, RunStatus, User, UserRole
 from aakaar.interpreter import RunOrchestrator
+from aakaar.interpreter.controls import RunControlConflict, RunNotActive
 from aakaar.interpreter.signals import SignalNotPending
 from aakaar.services.audit import AuditRecorder
 from aakaar.shared.dag.types import Dag
@@ -42,8 +59,10 @@ from aakaar.shared.dag.types import Dag
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["runs"])
 
+_TERMINAL_STATUSES = (RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.CANCELLED)
 
-def _to_run_response(run) -> RunResponse:
+
+def _to_run_response(run: Run) -> RunResponse:
     return RunResponse(
         id=run.id,
         tenant_id=run.tenant_id,
@@ -56,6 +75,85 @@ def _to_run_response(run) -> RunResponse:
         outputs=run.outputs or {},
         error=run.error,
     )
+
+
+def _get_tenant_run(session: Session, user: User, run_id: uuid.UUID) -> Run:
+    assert user.tenant_id is not None
+    run = runs_repo.get_run(session, user.tenant_id, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    return run
+
+
+def _require_run_controller(run: Run, user: User) -> None:
+    """Lifecycle mutations (pause/resume/cancel): starter or tenant admin."""
+    if run.started_by != user.id and user.role != UserRole.TENANT_ADMIN:
+        logger.info(
+            "run control denied run_id=%s started_by=%s caller=%s",
+            run.id,
+            run.started_by,
+            user.id,
+        )
+        raise HTTPException(
+            status_code=403,
+            detail="only the run's starter or a tenant admin can control it",
+        )
+
+
+def _snapshot_grants(session: Session, tenant_id: uuid.UUID) -> dict[str, dict[str, object]]:
+    """Snapshot enabled grants at schedule time; re-grants mid-run are not
+    honored (and a rerun re-snapshots at rerun time)."""
+    granted: dict[str, dict[str, object]] = {}
+    for g in grants_repo.list_grants(session, tenant_id):
+        if g.enabled:
+            granted.setdefault(g.capability_ref, {})[g.account_alias] = {
+                "vault_ref": g.vault_ref,
+                "input_defaults": dict(g.input_defaults or {}),
+            }
+    return granted
+
+
+def _create_and_schedule(
+    *,
+    session: Session,
+    orchestrator: RunOrchestrator,
+    tenant_id: uuid.UUID,
+    workflow_id: uuid.UUID,
+    version: int,
+    dag: Dag,
+    started_by: uuid.UUID,
+    inputs: dict[str, Any],
+    target: str | None,
+) -> Run:
+    """Shared launch path for start_run and rerun_run: persist the run row,
+    then hand it to the orchestrator."""
+    granted_caps = _snapshot_grants(session, tenant_id)
+    run = runs_repo.create_run(
+        session,
+        tenant_id=tenant_id,
+        workflow_id=workflow_id,
+        workflow_version=version,
+        started_by=started_by,
+        inputs=inputs,
+    )
+    session.commit()
+    logger.info(
+        "run created run_id=%s workflow_id=%s version=%s nodes=%d granted_caps=%d",
+        run.id,
+        workflow_id,
+        version,
+        len(dag.nodes),
+        len(granted_caps),
+    )
+    orchestrator.schedule(
+        run_id=run.id,
+        tenant_id=tenant_id,
+        dag=dag,
+        granted_caps=granted_caps,
+        run_target=target,
+    )
+    logger.debug("run scheduled run_id=%s run_target=%s", run.id, target)
+    return run
 
 
 @router.post(
@@ -94,41 +192,17 @@ async def start_run(
 
     dag = Dag.model_validate(wfv.dag)
 
-    # Collect grants once at start; re-grants mid-run are not honored.
-    granted_caps: dict[str, dict[str, object]] = {}
-    for g in grants_repo.list_grants(session, user.tenant_id):
-        if g.enabled:
-            granted_caps.setdefault(g.capability_ref, {})[g.account_alias] = {
-                "vault_ref": g.vault_ref,
-                "input_defaults": dict(g.input_defaults or {}),
-            }
-
-    run = runs_repo.create_run(
-        session,
+    run = _create_and_schedule(
+        session=session,
+        orchestrator=orchestrator,
         tenant_id=user.tenant_id,
         workflow_id=workflow_id,
-        workflow_version=target_version,
+        version=target_version,
+        dag=dag,
         started_by=user.id,
         inputs=body.inputs,
+        target=body.target,
     )
-    session.commit()
-    logger.info(
-        "run created run_id=%s workflow_id=%s version=%s nodes=%d granted_caps=%d",
-        run.id,
-        workflow_id,
-        target_version,
-        len(dag.nodes),
-        len(granted_caps),
-    )
-
-    orchestrator.schedule(
-        run_id=run.id,
-        tenant_id=user.tenant_id,
-        dag=dag,
-        granted_caps=granted_caps,
-        run_target=body.target,
-    )
-    logger.debug("run scheduled run_id=%s run_target=%s", run.id, body.target)
     audit.record(
         action="run.start",
         tenant_id=user.tenant_id,
@@ -192,6 +266,169 @@ def get_run(
     return RunDetailResponse(
         run=_to_run_response(run), events=events, pending_prompts=pending
     )
+
+
+@router.post("/runs/{run_id}/pause", response_model=RunResponse)
+async def pause_run(
+    run_id: uuid.UUID,
+    user: Annotated[User, Depends(require_tenant_user)],
+    session: Annotated[Session, Depends(get_session)],
+    orchestrator: Annotated[RunOrchestrator, Depends(get_orchestrator)],
+    audit: Annotated[AuditRecorder, Depends(get_audit)],
+) -> RunResponse:
+    """Operator pause: in-flight nodes finish, no new DAG layer starts."""
+    run = _get_tenant_run(session, user, run_id)
+    _require_run_controller(run, user)
+    if run.status in _TERMINAL_STATUSES:
+        raise HTTPException(status_code=409, detail="run already finished")
+    try:
+        orchestrator.pause_run(run_id=run_id)
+    except RunNotActive:
+        raise HTTPException(
+            status_code=409, detail="run is not active on this server"
+        ) from None
+    except RunControlConflict as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    audit.record(
+        action="run.pause",
+        tenant_id=user.tenant_id,
+        actor_id=user.id,
+        target_kind="run",
+        target_id=str(run_id),
+        payload={},
+    )
+    session.expire(run)  # orchestrator persisted PAUSED in its own session
+    return _to_run_response(run)
+
+
+@router.post("/runs/{run_id}/resume", response_model=RunResponse)
+async def resume_run(
+    run_id: uuid.UUID,
+    user: Annotated[User, Depends(require_tenant_user)],
+    session: Annotated[Session, Depends(get_session)],
+    orchestrator: Annotated[RunOrchestrator, Depends(get_orchestrator)],
+    audit: Annotated[AuditRecorder, Depends(get_audit)],
+) -> RunResponse:
+    """Release an operator pause. A run waiting on a human.prompt is NOT
+    operator-paused — answer it via /runs/{run_id}/respond instead."""
+    run = _get_tenant_run(session, user, run_id)
+    _require_run_controller(run, user)
+    if run.status in _TERMINAL_STATUSES:
+        raise HTTPException(status_code=409, detail="run already finished")
+    try:
+        orchestrator.resume_run(run_id=run_id)
+    except RunNotActive:
+        raise HTTPException(
+            status_code=409, detail="run is not active on this server"
+        ) from None
+    except RunControlConflict as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    audit.record(
+        action="run.resume",
+        tenant_id=user.tenant_id,
+        actor_id=user.id,
+        target_kind="run",
+        target_id=str(run_id),
+        payload={},
+    )
+    session.expire(run)
+    return _to_run_response(run)
+
+
+@router.post("/runs/{run_id}/cancel", response_model=RunResponse)
+async def cancel_run(
+    run_id: uuid.UUID,
+    user: Annotated[User, Depends(require_tenant_user)],
+    session: Annotated[Session, Depends(get_session)],
+    orchestrator: Annotated[RunOrchestrator, Depends(get_orchestrator)],
+    audit: Annotated[AuditRecorder, Depends(get_audit)],
+) -> RunResponse:
+    """Cooperative cancel: in-flight nodes finish (long waits and pending
+    prompts are interrupted), then the run unwinds to CANCELLED. The
+    response may still show the pre-terminal status; poll the run for the
+    final state. Idempotent while the run is still unwinding."""
+    run = _get_tenant_run(session, user, run_id)
+    _require_run_controller(run, user)
+    if run.status in _TERMINAL_STATUSES:
+        raise HTTPException(status_code=409, detail="run already finished")
+    try:
+        await orchestrator.cancel_run(run_id=run_id)
+    except RunNotActive:
+        raise HTTPException(
+            status_code=409, detail="run is not active on this server"
+        ) from None
+    audit.record(
+        action="run.cancel",
+        tenant_id=user.tenant_id,
+        actor_id=user.id,
+        target_kind="run",
+        target_id=str(run_id),
+        payload={},
+    )
+    session.expire(run)
+    return _to_run_response(run)
+
+
+@router.post("/runs/{run_id}/rerun", response_model=RunResponse, status_code=201)
+async def rerun_run(
+    run_id: uuid.UUID,
+    user: Annotated[User, Depends(require_tenant_user)],
+    session: Annotated[Session, Depends(get_session)],
+    orchestrator: Annotated[RunOrchestrator, Depends(get_orchestrator)],
+    audit: Annotated[AuditRecorder, Depends(get_audit)],
+) -> RunResponse:
+    """Start a NEW run pinned to the source run's workflow version and
+    inputs. Only terminal runs can be re-run; capability grants are
+    re-snapshotted at rerun time (not copied from the source run).
+
+    The launch-time run target is NOT carried over (we pass target=None, so
+    the rerun uses each node's own target): the Run row does not persist the
+    launch placement today. A run pinned to a specific agent/pool at start
+    will rerun unpinned. See the followup to persist and restore it."""
+    assert user.tenant_id is not None
+    source = _get_tenant_run(session, user, run_id)
+    if source.status not in _TERMINAL_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail="run is still active; rerun is only allowed once it has finished",
+        )
+    wfv = workflows_repo.get_version(
+        session, user.tenant_id, source.workflow_id, source.workflow_version
+    )
+    if wfv is None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"workflow version {source.workflow_version} no longer exists",
+        )
+    dag = Dag.model_validate(wfv.dag)
+
+    run = _create_and_schedule(
+        session=session,
+        orchestrator=orchestrator,
+        tenant_id=user.tenant_id,
+        workflow_id=source.workflow_id,
+        version=source.workflow_version,
+        dag=dag,
+        started_by=user.id,
+        inputs=dict(source.inputs or {}),
+        target=None,
+    )
+    audit.record(
+        action="run.rerun",
+        tenant_id=user.tenant_id,
+        actor_id=user.id,
+        target_kind="run",
+        target_id=str(run.id),
+        payload={
+            "rerun_of": str(run_id),
+            "workflow": {
+                "id": str(source.workflow_id),
+                "version": source.workflow_version,
+            },
+            "node_count": len(dag.nodes),
+        },
+    )
+    return _to_run_response(run)
 
 
 @router.post("/runs/{run_id}/respond", status_code=204)

@@ -247,6 +247,13 @@ def test_expand_entry_rejects_bool() -> None:
         _expand_entry(True)
 
 
+def test_expand_entry_refuses_oversize_range() -> None:
+    # Guard against a memory bomb: a span past _MAX_RANGE_SPAN must be rejected
+    # by arithmetic before list(range(...)) allocates the whole span.
+    with pytest.raises(RuntimeError, match="spans more than"):
+        _expand_entry("1-2000000000")
+
+
 def test_output_key_with_and_without_prefix() -> None:
     assert _output_key("runs/x/pdf_tools").startswith("runs/x/pdf_tools/")
     assert _output_key("runs/x/pdf_tools").endswith(".pdf")

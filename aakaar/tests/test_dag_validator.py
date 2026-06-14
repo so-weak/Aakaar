@@ -7,7 +7,6 @@ import pytest
 from aakaar.shared.dag import Dag, Edge, Node, NodeKind, ValidationError, validate_dag
 from aakaar.shared.registry import build_default_registry
 
-
 # ---------- helpers --------------------------------------------------------
 
 
@@ -201,6 +200,7 @@ def test_capability_grant_required() -> None:
     # We don't have any capabilities in the default registry, so let's add a
     # synthetic one for the test by going through the registry directly.
     from pydantic import BaseModel as _BM
+
     from aakaar.shared.registry.types import CapabilityDefinition
 
     class _In(_BM):

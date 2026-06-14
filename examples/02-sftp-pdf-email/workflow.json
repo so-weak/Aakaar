@@ -1,0 +1,56 @@
+{
+  "name": "SFTP invoice to email",
+  "description": "Fetch a PDF from an SFTP server, extract its text, and email the text with the PDF attached.",
+  "rationale": "Example: credentialed capabilities (SFTP, SMTP) composed with a document extractor; secrets stay in the vault.",
+  "dag": {
+    "id": "",
+    "version": 0,
+    "nodes": [
+      {
+        "id": "login",
+        "kind": "capability",
+        "ref": "cap.sftp_login",
+        "inputs": {
+          "account_alias": "primary"
+        },
+        "outputs_as": "sftp"
+      },
+      {
+        "id": "fetch",
+        "kind": "capability",
+        "ref": "cap.sftp_read",
+        "inputs": {
+          "session": "${sftp.session}",
+          "remote_path": "/inbound/invoice.pdf"
+        },
+        "retry": { "max_attempts": 3, "backoff_ms": 2000 }
+      },
+      {
+        "id": "extract_text",
+        "kind": "capability",
+        "ref": "cap.pdf_extract",
+        "inputs": {
+          "source": "${fetch.uri}",
+          "max_pages": 10
+        }
+      },
+      {
+        "id": "send",
+        "kind": "capability",
+        "ref": "cap.email_send",
+        "inputs": {
+          "account_alias": "primary",
+          "to": ["accounts@example.com"],
+          "subject": "Invoice fetched from SFTP",
+          "body": "${extract_text.text}",
+          "attachments": ["${fetch.uri}"]
+        }
+      }
+    ],
+    "edges": [
+      { "from": "login", "to": "fetch" },
+      { "from": "fetch", "to": "extract_text" },
+      { "from": "extract_text", "to": "send" }
+    ]
+  }
+}

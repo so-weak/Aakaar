@@ -237,6 +237,19 @@ async def test_unknown_extension_without_override_raises(tmp_path: Path) -> None
         await handler(ctx, {"source": src, "ops": []})
 
 
+@pytest.mark.asyncio
+async def test_oversized_source_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import aakaar.capabilities.data.data_transform as mod
+
+    ctx = _ctx(tmp_path)
+    monkeypatch.setattr(mod, "_MAX_SOURCE_BYTES", 16)
+    src = _seed(ctx, "in/sales.csv", _CSV.encode("utf-8"))
+    with pytest.raises(RuntimeError, match="byte limit"):
+        await handler(ctx, {"source": src, "ops": []})
+
+
 # --------------------------------------------------------------------------
 # Definition + pure helpers
 # --------------------------------------------------------------------------

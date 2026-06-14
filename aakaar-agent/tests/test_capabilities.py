@@ -28,8 +28,12 @@ def test_load_and_advertise() -> None:
     assert "cap.shell_exec" in refs
     assert "cap.system_info" in refs
     assert "cap.desktop_click" in refs
+    assert "cap.desktop_scroll" in refs
+    assert "cap.key_send" in refs
+    assert "cap.activity_recording" in refs
     assert reg["cap.shell_exec"].GUI is False
     assert reg["cap.desktop_click"].GUI is True
+    assert reg["cap.activity_recording"].GUI is True
 
 
 def test_shared_caps_come_from_the_shared_library() -> None:

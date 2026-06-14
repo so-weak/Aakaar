@@ -7,6 +7,7 @@ require_superuser dependency localized to that file.
 
 from __future__ import annotations
 
+import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
@@ -19,6 +20,7 @@ from aakaar.api.schemas import (
     DailyVolume,
     DashboardStatsResponse,
     FailureSummary,
+    TenantVolume,
     VolumeBucket,
 )
 from aakaar.db.models import User, UserRole
@@ -52,8 +54,8 @@ def _build_dashboard(
     session: Session,
     *,
     scope: str,
-    tenant_id,
-    user_id,
+    tenant_id: uuid.UUID | None,
+    user_id: uuid.UUID | None,
     include_per_tenant: bool = False,
 ) -> DashboardStatsResponse:
     """Shared computation. Imported by superuser router for the global
@@ -86,12 +88,12 @@ def _build_dashboard(
         session, tenant_id=tenant_id, user_id=user_id, days=30
     )
 
-    per_tenant = None
+    per_tenant: list[TenantVolume] | None = None
     if include_per_tenant:
-        per_tenant = stats_repo.per_tenant_volume(session, since=win24)
-        from aakaar.api.schemas import TenantVolume
-
-        per_tenant = [TenantVolume(**row) for row in per_tenant]
+        per_tenant = [
+            TenantVolume(**row)
+            for row in stats_repo.per_tenant_volume(session, since=win24)
+        ]
 
     return DashboardStatsResponse(
         scope=scope,

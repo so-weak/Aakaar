@@ -287,8 +287,9 @@ def test_grant_delete(deps: AppDependencies, client: TestClient) -> None:
     assert r.status_code == 204
 
     # Vault entry is gone.
-    from aakaar.vault import VaultNotFound
     import pytest
+
+    from aakaar.vault import VaultNotFound
 
     with pytest.raises(VaultNotFound):
         deps.vault.fetch(str(tenant.id), f"grants/{create['id']}")

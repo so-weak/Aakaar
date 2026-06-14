@@ -30,7 +30,10 @@ white background (JPEG has no alpha channel).
 
 Pillow is imported lazily inside the handler so importing this module never
 fails when the library is absent; a clear RuntimeError is raised if Pillow
-is unavailable at run time. No secrets, no network.
+is unavailable at run time. Decompression bombs are refused: the source's
+pixel count is checked before any pixel data is decoded, output geometry of
+resize/crop is checked before allocation, and Pillow's own MAX_IMAGE_PIXELS
+threshold stays in force underneath. No secrets, no network.
 """
 
 from __future__ import annotations
@@ -67,6 +70,14 @@ _FORMAT_ALIASES = {
 # Formats that carry no alpha channel; an RGBA/LA/P image must be flattened
 # before saving to one of these or Pillow raises.
 _NO_ALPHA_FORMATS = {"JPEG", "BMP"}
+
+# Decompression-bomb guard: refuse to decode (or produce) images above this
+# pixel count. Checked on the source after the header parse, before the full
+# pixel decode, and again on the computed output geometry of resize/thumbnail/
+# crop so a tiny source can't be inflated into a memory bomb. Deliberately
+# well below Pillow's own MAX_IMAGE_PIXELS DecompressionBombError threshold
+# (~178M px), which stays in force as a second line of defense.
+_MAX_PIXELS = 64_000_000  # 64 MP, e.g. 8000x8000
 
 
 class _Inputs(BaseModel):
@@ -119,7 +130,8 @@ definition = CapabilityDefinition(
         "Apply one image operation (resize, crop, rotate, convert, grayscale, "
         "or thumbnail) to a stored image using Pillow, write the result back to "
         "the object store, and return its URI and dimensions. Optionally "
-        "re-encodes to a different format/quality. Lazy Pillow import; no "
+        "re-encodes to a different format/quality. Refuses decompression bombs "
+        "(source and output capped at 64M pixels). Lazy Pillow import; no "
         "secrets, no network."
     ),
     input_schema=_Inputs,
@@ -172,6 +184,15 @@ def _as_int(params: dict[str, Any], name: str) -> int | None:
         ) from e
 
 
+def _assert_pixels(width: int, height: int, what: str) -> None:
+    """Refuse a pixel count above the bomb guard with a clear error."""
+    if width * height > _MAX_PIXELS:
+        raise RuntimeError(
+            f"cap.image_convert: {what} is {width}x{height} "
+            f"({width * height} pixels), exceeding the {_MAX_PIXELS}-pixel limit"
+        )
+
+
 def _scaled_dim(target: int | None, this_src: int, other_target: int | None, other_src: int) -> int:
     """Compute one output dimension, deriving it from the other to keep aspect."""
     if target is not None:
@@ -196,9 +217,10 @@ def _op_resize(img: Any, params: dict[str, Any]) -> Any:
     src_w, src_h = img.size
     out_w = _scaled_dim(w, src_w, h, src_h)
     out_h = _scaled_dim(h, src_h, w, src_w)
+    _assert_pixels(out_w, out_h, "resize target")
     from PIL import Image as PILImage
 
-    return img.resize((out_w, out_h), PILImage.LANCZOS)
+    return img.resize((out_w, out_h), PILImage.Resampling.LANCZOS)
 
 
 def _op_crop(img: Any, params: dict[str, Any]) -> Any:
@@ -207,11 +229,14 @@ def _op_crop(img: Any, params: dict[str, Any]) -> Any:
         raise ValueError(
             "cap.image_convert: crop needs params.left, top, right, bottom"
         )
-    left, top, right, bottom = box  # type: ignore[misc]
+    left, top, right, bottom = box
     if right <= left or bottom <= top:  # type: ignore[operator]
         raise ValueError(
             "cap.image_convert: crop box must have right>left and bottom>top"
         )
+    # A crop box beyond the image bounds pads with background, so the output
+    # geometry — not the source — is what must respect the pixel cap.
+    _assert_pixels(right - left, bottom - top, "crop region")  # type: ignore[operator]
     return img.crop((left, top, right, bottom))
 
 
@@ -247,12 +272,15 @@ def _op_thumbnail(img: Any, params: dict[str, Any]) -> Any:
         raise ValueError(
             "cap.image_convert: thumbnail needs params.width and/or params.height"
         )
+    # At least one of w/h is set (guarded above); fall back to the other so
+    # both dimensions are concrete ints for the thumbnail box.
     box_w = w if w is not None else h
     box_h = h if h is not None else w
+    assert box_w is not None and box_h is not None
     from PIL import Image as PILImage
 
     out = img.copy()
-    out.thumbnail((max(1, box_w), max(1, box_h)), PILImage.LANCZOS)  # type: ignore[arg-type]
+    out.thumbnail((max(1, box_w), max(1, box_h)), PILImage.Resampling.LANCZOS)
     return out
 
 
@@ -327,13 +355,22 @@ async def handler(ctx: ActivityContext, inputs: dict[str, Any]) -> dict[str, Any
 
     raw = ctx.object_store.get(source)
     try:
-        with PILImage.open(io.BytesIO(raw)) as opened:
-            opened.load()
-            img = opened.copy()
+        opened = PILImage.open(io.BytesIO(raw))
     except Exception as e:
         raise RuntimeError(
             f"cap.image_convert: could not decode image at {source!r}: {e}"
         ) from e
+    with opened:
+        # open() only parses the header, so the dimensions are known before
+        # any pixel data is decoded — the bomb check must precede load().
+        _assert_pixels(opened.size[0], opened.size[1], "source image")
+        try:
+            opened.load()
+            img = opened.copy()
+        except Exception as e:
+            raise RuntimeError(
+                f"cap.image_convert: could not decode image at {source!r}: {e}"
+            ) from e
 
     img = _OP_FUNCS[op](img, params)
     out_bytes = _encode(img, pil_format, quality)

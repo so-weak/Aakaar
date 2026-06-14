@@ -15,7 +15,7 @@ itself never carries credentials or live data — only configuration and referen
 from __future__ import annotations
 
 import re
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -29,7 +29,7 @@ REF_RE = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$")
 TARGET_RE = re.compile(r"^(server|[a-z][a-z0-9_:\-]{0,63})$")
 
 
-class NodeKind(str, Enum):
+class NodeKind(StrEnum):
     CAPABILITY = "capability"
     ACTION = "action"
     CONTROL = "control"

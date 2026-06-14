@@ -59,6 +59,12 @@ def make_engine(config: EngineConfig) -> Engine:
         def _on_connect(dbapi_conn, _record):  # type: ignore[no-untyped-def]
             cur = dbapi_conn.cursor()
             cur.execute("PRAGMA foreign_keys = ON")
+            # WAL lets concurrent readers proceed during a write (the API +
+            # scheduler + workers share one file DB); busy_timeout makes a
+            # writer wait out a short lock instead of failing immediately
+            # with "database is locked". Both are no-ops on :memory: DBs.
+            cur.execute("PRAGMA journal_mode = WAL")
+            cur.execute("PRAGMA busy_timeout = 5000")
             cur.close()
     elif engine.dialect.name == "postgresql":
         strict = config.rls_strict

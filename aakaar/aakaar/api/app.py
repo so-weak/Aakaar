@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -51,6 +52,9 @@ from aakaar.api.routers import (
     oidc as oidc_router,
 )
 from aakaar.api.routers import (
+    recordings as recordings_router,
+)
+from aakaar.api.routers import (
     runs as runs_router,
 )
 from aakaar.api.routers import (
@@ -72,11 +76,54 @@ from aakaar.core.errors import install_handlers
 from aakaar.core.middleware.metrics import MetricsMiddleware, metrics_response
 from aakaar.core.middleware.rate_limit import RateLimitMiddleware, TokenBucketLimiter
 from aakaar.core.middleware.request_id import RequestIdMiddleware
+from aakaar.services.recordings import RecordingService
+
+if TYPE_CHECKING:
+    from aakaar.workers.remote.broker_link import BrokerLink
 
 logger = logging.getLogger(__name__)
 
 
+def _build_broker_link(deps: AppDependencies) -> BrokerLink | None:
+    """Optional master link to a rendezvous broker (see aakaar-broker/).
+
+    Relayed agent sessions go through the exact same key verification +
+    hello/registration path as direct /ws/agents connections; the broker never
+    sees or checks agent keys. None when no broker is configured."""
+    settings = deps.settings
+    if not settings.broker_url:
+        return None
+    if not settings.broker_token:
+        # load_settings enforces this for env-built settings; fail closed for
+        # directly-constructed Settings too.
+        raise RuntimeError(
+            "broker_url is set but broker_token is empty; refusing to start"
+        )
+    if not settings.remote_exec_enabled:
+        # Parity with /ws/agents, which refuses connections when remote
+        # execution is off — don't accept them through the back door either.
+        logger.warning(
+            "AAKAAR_BROKER_URL is set but remote execution is disabled; "
+            "broker link not started"
+        )
+        return None
+    from aakaar.workers.remote.broker_link import BrokerLink
+
+    return BrokerLink(
+        url=settings.broker_url,
+        token=settings.broker_token,
+        session_factory=deps.session_factory,
+        agent_registry=deps.agent_registry,
+        recorder=deps.event_recorder,
+    )
+
+
 def create_app(deps: AppDependencies) -> FastAPI:
+    recordings = RecordingService(
+        dispatcher=deps.remote_dispatcher, agents=deps.agent_registry
+    )
+    broker_link = _build_broker_link(deps)
+
     @asynccontextmanager
     async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
         logger.info("lifespan: startup")
@@ -89,10 +136,26 @@ def create_app(deps: AppDependencies) -> FastAPI:
             logger.exception("startup: interrupted-run recovery failed")
         if deps.settings.scheduler_enabled:
             await deps.scheduler.start()
+        # Expires abandoned recording entries (and tells their agents to stop
+        # capturing) even when no recordings request ever comes in again.
+        await recordings.start()
+        if broker_link is not None:
+            # Dial OUT to the rendezvous broker; relayed agents register
+            # through the same verification path as direct connections.
+            await broker_link.start()
         try:
             yield
         finally:
             logger.info("lifespan: shutdown")
+            if broker_link is not None:
+                try:
+                    await broker_link.stop()
+                except Exception:
+                    logger.exception("broker link shutdown failed")
+            try:
+                await recordings.stop()
+            except Exception:
+                logger.exception("recording service shutdown failed")
             if deps.settings.scheduler_enabled:
                 try:
                     await deps.scheduler.stop()
@@ -111,6 +174,8 @@ def create_app(deps: AppDependencies) -> FastAPI:
 
     app = FastAPI(title="Aakaar", version="0.1.0", lifespan=_lifespan)
     app.state.deps = deps
+    app.state.recordings = recordings
+    app.state.broker_link = broker_link  # None unless AAKAAR_BROKER_URL is set
 
     # Middleware note: Starlette runs the LAST-added middleware OUTERMOST. We
     # add CORS last so it wraps everything — even a 429 from the rate limiter
@@ -160,6 +225,7 @@ def create_app(deps: AppDependencies) -> FastAPI:
     app.include_router(schedules_router.router)
     app.include_router(ws_router.router)
     app.include_router(agents_router.router)
+    app.include_router(recordings_router.router)
 
     @app.get("/healthz")
     def _healthz() -> dict[str, str]:

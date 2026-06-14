@@ -52,6 +52,10 @@ from aakaar.storage.object_store import parse_uri
 logger = logging.getLogger(__name__)
 CAP_REF = "cap.data_transform"
 
+# Pandas materializes the whole frame in memory (often at several times the
+# on-disk size), so an unbounded source is a memory bomb; refuse early.
+_MAX_SOURCE_BYTES = 64 * 1024 * 1024  # 64 MiB
+
 _KNOWN_OPS = {
     "filter",
     "sort",
@@ -492,6 +496,11 @@ async def handler(ctx: ActivityContext, inputs: dict[str, Any]) -> dict[str, Any
     )
 
     raw = ctx.object_store.get(source)
+    if len(raw) > _MAX_SOURCE_BYTES:
+        raise RuntimeError(
+            f"cap.data_transform: source is {len(raw)} bytes, exceeding the "
+            f"{_MAX_SOURCE_BYTES}-byte limit"
+        )
     df = _read_frame(raw, source_format, sep_tsv=is_tsv)
     df = apply_ops(df, ops)
 

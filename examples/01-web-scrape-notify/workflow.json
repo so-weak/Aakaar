@@ -1,0 +1,45 @@
+{
+  "name": "Scrape page and notify webhook",
+  "description": "Scrape a public page, extract structured data from it, and POST the result (with a timestamp) to an outbound webhook.",
+  "rationale": "Example: parallel first layer (timestamp + scrape) joined by a webhook notification.",
+  "dag": {
+    "id": "",
+    "version": 0,
+    "nodes": [
+      {
+        "id": "stamp",
+        "kind": "action",
+        "ref": "time.now",
+        "inputs": {}
+      },
+      {
+        "id": "scrape",
+        "kind": "capability",
+        "ref": "cap.web_scrape",
+        "inputs": {
+          "url": "https://example.com/",
+          "extract": "the page's main heading and the first paragraph of body text"
+        }
+      },
+      {
+        "id": "notify",
+        "kind": "capability",
+        "ref": "cap.webhook_send",
+        "inputs": {
+          "url": "https://webhook.example.com/REPLACE-WITH-YOUR-ENDPOINT",
+          "payload": {
+            "event": "page_scraped",
+            "page": "${scrape.url}",
+            "scraped_at": "${stamp.utc_datetime}",
+            "data": "${scrape.data}"
+          },
+          "timeout_s": 30
+        }
+      }
+    ],
+    "edges": [
+      { "from": "stamp", "to": "notify" },
+      { "from": "scrape", "to": "notify" }
+    ]
+  }
+}

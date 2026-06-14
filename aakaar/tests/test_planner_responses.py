@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import pytest
-from pydantic import TypeAdapter, ValidationError as PydValidationError
+from pydantic import TypeAdapter
+from pydantic import ValidationError as PydValidationError
 
 from aakaar.shared.dag import Dag, Node, NodeKind
 from aakaar.shared.planner import (
@@ -13,7 +14,6 @@ from aakaar.shared.planner import (
     PlannerResponse,
     PlannerResponseKind,
 )
-
 
 _ADAPTER = TypeAdapter(PlannerResponse)
 

@@ -16,7 +16,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -61,6 +61,11 @@ from aakaar.storage.vector_store import VectorStore
 from aakaar.vault import Vault
 from aakaar.workers.browser import BrowserPool
 from aakaar.workers.remote import AgentRegistry, RemoteDispatcher
+
+if TYPE_CHECKING:
+    # Imported lazily at runtime inside __post_init__ (only when a browser_pool
+    # is configured); referenced here solely for the field annotation.
+    from aakaar.planner.agentic.service import AgenticPlannerService
 
 logger = logging.getLogger(__name__)
 
@@ -198,7 +203,7 @@ class AppDependencies:
 
 def get_deps(request: Request) -> AppDependencies:
     deps = getattr(request.app.state, "deps", None)
-    if deps is None:
+    if not isinstance(deps, AppDependencies):
         raise RuntimeError("AppDependencies not attached to app.state.deps")
     return deps
 
@@ -227,7 +232,7 @@ def get_planner(deps: Annotated[AppDependencies, Depends(get_deps)]) -> PlannerS
 
 def get_agentic_planner(
     deps: Annotated[AppDependencies, Depends(get_deps)],
-):
+) -> AgenticPlannerService | None:
     """Returns the agentic planner if configured, else None. Routers branch
     on the Optional rather than receiving a NotImplemented stub."""
     return deps.agentic_planner

@@ -7,7 +7,9 @@ write-grant creates both atomically, delete-grant removes both.
 
 from __future__ import annotations
 
+import contextlib
 import uuid
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -29,7 +31,7 @@ def create_grant(
     capability_ref: str,
     account_alias: str,
     secrets: dict[str, str],
-    input_defaults: dict | None = None,
+    input_defaults: dict[str, Any] | None = None,
 ) -> CapabilityGrant:
     existing = session.scalars(
         select(CapabilityGrant).where(
@@ -90,13 +92,11 @@ def delete_grant(
     grant = session.get(CapabilityGrant, grant_id)
     if grant is None or grant.tenant_id != tenant_id:
         return False
-    try:
+    # If the vault entry is already gone we still want to remove the row.
+    # A real deployment would surface this rather than swallow it; v1 logs
+    # via the caller's exception handler.
+    with contextlib.suppress(Exception):
         vault.delete(str(tenant_id), grant.vault_ref)
-    except Exception:
-        # If the vault entry is already gone we still want to remove the row.
-        # A real deployment would surface this rather than swallow it; v1 logs
-        # via the caller's exception handler.
-        pass
     session.delete(grant)
     session.flush()
     return True
@@ -119,7 +119,7 @@ def update_grant(
     grant_id: uuid.UUID,
     account_alias: str | None = None,
     secrets: dict[str, str] | None = None,
-    input_defaults: dict | None = None,
+    input_defaults: dict[str, Any] | None = None,
     enabled: bool | None = None,
 ) -> CapabilityGrant | None:
     """Patch a grant. Each parameter is optional — None means "leave alone".

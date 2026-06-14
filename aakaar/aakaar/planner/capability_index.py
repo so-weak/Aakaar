@@ -63,7 +63,7 @@ class CapabilityIndex:
         if not refs:
             return
         vectors = self.embeddings.embed(texts)
-        for ref, vec, text in zip(refs, vectors, texts):
+        for ref, vec, text in zip(refs, vectors, texts, strict=True):
             items.append(VectorItem(id=ref, vector=vec, payload={"description": text}))
         self.vector_store.upsert(tenant_id, _NAMESPACE, items)
 

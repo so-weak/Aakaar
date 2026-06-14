@@ -40,7 +40,7 @@ from aakaar.api.schemas import (
     ChatSessionSummaryResponse,
     WorkflowResponse,
 )
-from aakaar.db.models import ChatMessage, ChatSession, User
+from aakaar.db.models import ChatMessage, ChatSession, User, Workflow
 from aakaar.planner import PlannerError, PlannerService
 from aakaar.planner.llm import LLMMessage, Role
 from aakaar.shared.dag.types import Dag
@@ -405,10 +405,10 @@ def save_session(
     saved = _saved_dag(db, tenant_id=user.tenant_id, sess=sess)
     if not sessions_repo.compute_dirty(sess, saved):
         # Nothing changed; return the existing workflow.
-        workflow = workflows_repo.get_workflow(db, user.tenant_id, sess.workflow_id)
-        if workflow is None:
+        existing = workflows_repo.get_workflow(db, user.tenant_id, sess.workflow_id)
+        if existing is None:
             raise HTTPException(status_code=410, detail="bound workflow has been deleted")
-        return _to_workflow_response(workflow)
+        return _to_workflow_response(existing)
     if not body.confirm:
         raise HTTPException(
             status_code=409,
@@ -431,12 +431,12 @@ def save_session(
         raise HTTPException(status_code=410, detail=f"workflow gone: {e}") from e
     sess.saved_version = version.version
     db.commit()
-    workflow = workflows_repo.get_workflow(db, user.tenant_id, sess.workflow_id)
-    assert workflow is not None
-    return _to_workflow_response(workflow)
+    updated = workflows_repo.get_workflow(db, user.tenant_id, sess.workflow_id)
+    assert updated is not None
+    return _to_workflow_response(updated)
 
 
-def _to_workflow_response(workflow) -> WorkflowResponse:
+def _to_workflow_response(workflow: Workflow) -> WorkflowResponse:
     return WorkflowResponse(
         id=workflow.id,
         tenant_id=workflow.tenant_id,

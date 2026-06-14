@@ -5,12 +5,17 @@ suitable online agent (placement), builds the task (resolved inputs + a
 just-in-time credential envelope fetched from the vault), dispatches under a
 deadline, audits which agent ran it, and maps the result back into the node's
 outputs (or raises so the executor's normal failure/retry path handles it).
+
+`invoke` is the run-less variant for one-off control calls (e.g. starting or
+stopping an activity recording): same placement + wire path, but no run/node
+identity, no credential envelope, and no run-timeline events.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from typing import Any
 
 from aakaar.interpreter.activities.types import ActivityContext
@@ -115,6 +120,46 @@ class RemoteDispatcher:
             raise RemoteExecError(
                 f"node {node.id!r} failed on agent {agent_alias!r}: "
                 f"{err.get('message', 'remote error')}"
+            )
+        return result.outputs
+
+    async def invoke(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        target: str,
+        ref: str,
+        inputs: dict[str, Any],
+        timeout_s: float | None = None,
+    ) -> dict[str, Any]:
+        """One-off capability invocation outside any run. Resolves the target
+        like `run` and reuses the same task wire format with empty run/node
+        identity; the agent treats it as a normal task. No secrets envelope."""
+        try:
+            conn = self._agents.resolve(tenant_id, target, ref=ref)
+        except NoAgentAvailable as e:
+            raise RemoteExecError(f"{ref} cannot be placed: {e}") from e
+        timeout = self._timeout if timeout_s is None else timeout_s
+        task = RemoteTask(
+            task_id=new_task_id(),
+            run_id="",
+            node_id="",
+            ref=ref,
+            inputs=inputs,
+            timeout_s=timeout,
+        )
+        agent_alias = conn.info.alias
+        logger.info("remote invoke ref=%s -> agent=%s", ref, agent_alias)
+        try:
+            result = await asyncio.wait_for(conn.dispatch(task), timeout=timeout + 5.0)
+        except TimeoutError as e:
+            raise RemoteExecError(f"{ref} timed out on agent {agent_alias!r}") from e
+        except ConnectionError as e:
+            raise RemoteExecError(f"{ref} lost its agent {agent_alias!r}: {e}") from e
+        if not result.ok:
+            err = result.error or {}
+            raise RemoteExecError(
+                f"{ref} failed on agent {agent_alias!r}: {err.get('message', 'remote error')}"
             )
         return result.outputs
 

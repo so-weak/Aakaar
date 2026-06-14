@@ -14,6 +14,7 @@ seeded with two files, covering:
 from __future__ import annotations
 
 import io
+import os
 import tarfile
 import uuid
 import zipfile
@@ -150,6 +151,131 @@ async def test_extract_rejects_tar_symlink(tmp_path: Path) -> None:
     evil = _seed(ctx, "in/evil.tar", buf.getvalue())
     with pytest.raises(RuntimeError, match="non-regular archive member"):
         await handler(ctx, {"op": "extract", "archive": evil, "format": "tar"})
+
+
+# --------------------------------------------------------------------------
+# Security: decompression-bomb limits
+# --------------------------------------------------------------------------
+
+
+def _zip_of(members: dict[str, bytes]) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for name, data in members.items():
+            zf.writestr(name, data)
+    return buf.getvalue()
+
+
+@pytest.mark.asyncio
+async def test_extract_rejects_too_many_members(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import aakaar.capabilities.files.archive_manage as mod
+
+    ctx = _ctx(tmp_path)
+    monkeypatch.setattr(mod, "_MAX_MEMBERS", 2)
+    bomb = _seed(ctx, "in/many.zip", _zip_of({f"f{i}.txt": b"x" for i in range(3)}))
+    with pytest.raises(RuntimeError, match="exceeding the limit"):
+        await handler(ctx, {"op": "extract", "archive": bomb})
+
+
+@pytest.mark.asyncio
+async def test_list_rejects_too_many_members(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import aakaar.capabilities.files.archive_manage as mod
+
+    ctx = _ctx(tmp_path)
+    monkeypatch.setattr(mod, "_MAX_MEMBERS", 1)
+    bomb = _seed(ctx, "in/many.zip", _zip_of({"a.txt": b"x", "b.txt": b"y"}))
+    with pytest.raises(RuntimeError, match="exceeding the limit"):
+        await handler(ctx, {"op": "list", "archive": bomb})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fmt", ["zip", "tar.gz"])
+async def test_extract_rejects_uncompressed_size_bomb(
+    tmp_path: Path, fmt: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import aakaar.capabilities.files.archive_manage as mod
+
+    ctx = _ctx(tmp_path)
+    monkeypatch.setattr(mod, "_MAX_TOTAL_UNCOMPRESSED", 64)
+    # Highly compressible payload: tiny archive, large decompressed stream —
+    # the limit must bind on the *decompressed* bytes.
+    payload = b"\x00" * 4096
+    if fmt == "zip":
+        raw = _zip_of({"bomb.bin": payload})
+    else:
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+            info = tarfile.TarInfo(name="bomb.bin")
+            info.size = len(payload)
+            tf.addfile(info, io.BytesIO(payload))
+        raw = buf.getvalue()
+    bomb = _seed(ctx, f"in/bomb.{fmt}", raw)
+    with pytest.raises(RuntimeError, match="total uncompressed size"):
+        await handler(ctx, {"op": "extract", "archive": bomb})
+
+
+@pytest.mark.asyncio
+async def test_extract_size_budget_spans_members(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import aakaar.capabilities.files.archive_manage as mod
+
+    ctx = _ctx(tmp_path)
+    # Each member fits alone, but together they bust the shared budget.
+    monkeypatch.setattr(mod, "_MAX_TOTAL_UNCOMPRESSED", 100)
+    bomb = _seed(ctx, "in/two.zip", _zip_of({"a.bin": b"x" * 80, "b.bin": b"y" * 80}))
+    with pytest.raises(RuntimeError, match="total uncompressed size"):
+        await handler(ctx, {"op": "extract", "archive": bomb})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("op", ["list", "extract"])
+async def test_rejects_oversize_archive_on_ingest(
+    tmp_path: Path, op: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An over-budget archive is refused by byte size *before* zipfile parses
+    its central directory — the member-count guard alone fires too late."""
+    import aakaar.capabilities.files.archive_manage as mod
+
+    ctx = _ctx(tmp_path)
+    # Incompressible payload so the stored bytes actually exceed the cap (a run
+    # of zeros would DEFLATE down past it and never trigger the guard).
+    big = _zip_of({"pad.bin": os.urandom(4096)})
+    monkeypatch.setattr(mod, "_MAX_ARCHIVE_BYTES", len(big) - 1)
+    uri = _seed(ctx, "in/big.zip", big)
+    with pytest.raises(RuntimeError, match="ingest limit"):
+        await handler(ctx, {"op": op, "archive": uri})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fmt", ["zip", "tar.gz"])
+async def test_member_count_bails_during_lazy_enumeration(
+    tmp_path: Path, fmt: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The member-count cap must fire from the lazy enumeration path for both
+    formats (tar is iterated header-by-header, never via getmembers())."""
+    import aakaar.capabilities.files.archive_manage as mod
+
+    ctx = _ctx(tmp_path)
+    monkeypatch.setattr(mod, "_MAX_MEMBERS", 2)
+    members = {f"f{i}.txt": b"x" for i in range(5)}
+    if fmt == "zip":
+        raw = _zip_of(members)
+    else:
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+            for name, data in members.items():
+                info = tarfile.TarInfo(name=name)
+                info.size = len(data)
+                tf.addfile(info, io.BytesIO(data))
+        raw = buf.getvalue()
+    bomb = _seed(ctx, f"in/many.{fmt}", raw)
+    with pytest.raises(RuntimeError, match="exceeding the limit"):
+        await handler(ctx, {"op": "list", "archive": bomb})
 
 
 # --------------------------------------------------------------------------

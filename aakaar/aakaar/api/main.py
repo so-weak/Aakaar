@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import logging
-import httpx
 
+import httpx
 from openai import OpenAI
 
-from aakaar.api import AppDependencies, create_app, load_settings
+from aakaar.api import AppDependencies, Settings, create_app, load_settings
 from aakaar.core.logging import setup_logging
 from aakaar.db.session import EngineConfig, SessionFactory, make_engine
 from aakaar.planner import FakeEmbeddingsClient, FakeLLMClient
@@ -19,6 +19,27 @@ from aakaar.vault import LocalVault
 from aakaar.workers.browser.playwright import PlaywrightBrowserPool
 
 logger = logging.getLogger(__name__)
+
+
+def build_openai_client(settings: Settings) -> OpenAI:
+    """Construct the OpenAI SDK client. A custom base_url (local LLM gateway)
+    may use a self-signed certificate; AAKAAR_OPENAI_TLS_VERIFY=false disables
+    verification for that case only — never against the default endpoint."""
+    if not settings.openai_base_url:
+        return OpenAI(api_key=settings.openai_api_key)
+    http_client = None
+    if not settings.openai_tls_verify:
+        logger.warning(
+            "LLM: TLS certificate verification DISABLED for base_url=%s "
+            "(AAKAAR_OPENAI_TLS_VERIFY=false)",
+            settings.openai_base_url,
+        )
+        http_client = httpx.Client(verify=False)
+    return OpenAI(
+        api_key=settings.openai_api_key,
+        base_url=settings.openai_base_url,
+        http_client=http_client,
+    )
 
 
 def build_app() -> object:
@@ -41,12 +62,13 @@ def build_app() -> object:
     engine = make_engine(EngineConfig(url=settings.db_url, rls_strict=settings.rls_strict))
 
     if settings.openai_api_key:
-        if settings.openai_base_url:
-            openai_client = OpenAI(api_key=settings.openai_api_key, base_url=settings.openai_base_url, http_client=httpx.Client(ssl_verify=True))
-            logger.info("LLM: OpenAI client (base_url=%s, model=%s)", settings.openai_base_url, settings.llm_model)
-        else:
-            openai_client = OpenAI(api_key=settings.openai_api_key)
-            logger.info("LLM: OpenAI client (default base_url, model=%s)", settings.llm_model)
+        openai_client = build_openai_client(settings)
+        logger.info(
+            "LLM: OpenAI client (base_url=%s, model=%s, tls_verify=%s)",
+            settings.openai_base_url or "default",
+            settings.llm_model,
+            settings.openai_tls_verify,
+        )
         llm = OpenAILLMClient(openai_client, model=settings.llm_model)
         embeddings = BGEEmbeddingsClient(
             model_name=settings.embedding_model,
@@ -68,7 +90,11 @@ def build_app() -> object:
 
     vector_store = ChromaVectorStore(settings.data_dir / "vector", dim=embeddings.dim)
     object_store = LocalFsObjectStore(settings.data_dir / "objects")
-    vault = LocalVault(settings.data_dir)
+    vault = LocalVault(
+        settings.data_dir,
+        keys=settings.vault_keys,
+        require_encryption=settings.vault_require_encryption,
+    )
 
     # Construction is cheap (Chromium isn't launched until the first
     # checkout), so we always wire the pool unless explicitly disabled.

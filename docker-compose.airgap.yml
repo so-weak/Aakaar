@@ -1,0 +1,79 @@
+# Airgapped / single-node stack: API + web ONLY. No Postgres, no Redis, no
+# external services of any kind — SQLite, the filesystem vault, the local
+# object store, and Chroma all live inside the single `aakaar-data` volume.
+# This mirrors the real deployment constraint; the Postgres-backed stack in
+# docker-compose.yml is the alternative when a DB server is available.
+#
+# Bring up:
+#   AAKAAR_JWT_SECRET=$(openssl rand -hex 32) \
+#   AAKAAR_VAULT_KEY=$(python3 -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())') \
+#   docker compose -f docker-compose.airgap.yml up --build
+#
+# Both secrets are REQUIRED (fail-closed): without a vault key the API would
+# store tenant credentials as plaintext JSON. Keep both values in your secret
+# store; the vault key also guards your backups (runbooks/03).
+#
+# Truly offline target? Build the two images on a networked machine
+# (`docker compose -f docker-compose.airgap.yml build`), move them with
+# `docker save`/`docker load`, and run with `up --no-build`.
+#
+# Backups: snapshot the aakaar-data volume — see runbooks/01-sqlite-backup-restore.md
+# (sqlite3 .backup against /data/aakaar.sqlite plus the sibling dirs).
+services:
+  aakaar-api:
+    build:
+      context: ./aakaar
+      dockerfile: Dockerfile
+    environment:
+      # SQLite file inside the data volume (WAL mode + busy_timeout are set
+      # by the engine on every connect). The image runs `alembic upgrade
+      # head` before uvicorn.
+      AAKAAR_DB_URL: sqlite:////data/aakaar.sqlite
+      AAKAAR_DATA_DIR: /data
+      AAKAAR_JWT_SECRET: ${AAKAAR_JWT_SECRET:?set AAKAAR_JWT_SECRET in env}
+      # Secrets at rest — fail closed if no key is provided.
+      AAKAAR_VAULT_KEY: ${AAKAAR_VAULT_KEY:?set AAKAAR_VAULT_KEY in env}
+      AAKAAR_VAULT_REQUIRE_ENCRYPTION: "1"
+      AAKAAR_CORS_ORIGINS: ${AAKAAR_CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+      AAKAAR_BROWSER_HEADLESS: "true"
+      # Embeddings never reach the Hugging Face hub: the BGE model must be
+      # pre-staged into the volume at /data/hf_cache (copy it from a
+      # networked machine's cache). Without it, leave OPENAI_API_KEY unset
+      # and the app boots with fake LLM/embedding clients — every feature
+      # except NL planning works.
+      AAKAAR_HF_OFFLINE: "true"
+      # Optional local LLM gateway on the closed network (vLLM/llama.cpp):
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      AAKAAR_OPENAI_BASE_URL: ${AAKAAR_OPENAI_BASE_URL:-}
+      AAKAAR_LLM_MODEL: ${AAKAAR_LLM_MODEL:-gpt-4.1-mini}
+    volumes:
+      - aakaar-data:/data
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    # The image's baked-in healthcheck probes /health, but the app serves
+    # /healthz — override with the real endpoint.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/healthz || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+  aakaar-web:
+    build:
+      context: ./aakaar-web
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE: /api
+    depends_on:
+      aakaar-api:
+        condition: service_healthy
+    environment:
+      AAKAAR_BACKEND_URL: http://aakaar-api:8000
+    ports:
+      - "5173:80"
+    restart: unless-stopped
+
+volumes:
+  aakaar-data:

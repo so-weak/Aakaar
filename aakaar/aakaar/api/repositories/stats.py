@@ -15,8 +15,9 @@ from __future__ import annotations
 import uuid
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta, timezone
+from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session
 
 from aakaar.db.models import (
@@ -41,7 +42,9 @@ _ACTIVE_STATUSES: tuple[str, ...] = (
 # ---------- helpers ----------------------------------------------------
 
 
-def _scope_filter(stmt, *, tenant_id: uuid.UUID | None, user_id: uuid.UUID | None):
+def _scope_filter(
+    stmt: Select[Any], *, tenant_id: uuid.UUID | None, user_id: uuid.UUID | None
+) -> Select[Any]:
     """Apply (tenant_id, user_id) constraints to a Run-based query."""
     if tenant_id is not None:
         stmt = stmt.where(Run.tenant_id == tenant_id)
@@ -51,8 +54,8 @@ def _scope_filter(stmt, *, tenant_id: uuid.UUID | None, user_id: uuid.UUID | Non
 
 
 def _scope_filter_event(
-    stmt, *, tenant_id: uuid.UUID | None, user_id: uuid.UUID | None
-):
+    stmt: Select[Any], *, tenant_id: uuid.UUID | None, user_id: uuid.UUID | None
+) -> Select[Any]:
     """Apply scope to a RunEvent query. user_id requires a join through Run."""
     if tenant_id is not None:
         stmt = stmt.where(RunEvent.tenant_id == tenant_id)
@@ -143,7 +146,7 @@ def capability_usage(
                 target[ref] += 1
 
     refs = set(completed.keys()) | set(failed.keys())
-    rows = [
+    rows: list[dict[str, int | str]] = [
         {
             "capability_ref": r,
             "count": completed.get(r, 0) + failed.get(r, 0),
@@ -151,7 +154,9 @@ def capability_usage(
         }
         for r in refs
     ]
-    rows.sort(key=lambda x: x["count"], reverse=True)  # type: ignore[arg-type]
+    # "count" is always an int by construction; the cast narrows the heterogeneous
+    # dict value type for the comparison key.
+    rows.sort(key=lambda x: int(x["count"]), reverse=True)
     return rows[:limit]
 
 
@@ -164,7 +169,7 @@ def recent_failures(
     tenant_id: uuid.UUID | None,
     user_id: uuid.UUID | None,
     limit: int = 10,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """Most recent failed runs, with the workflow name + error joined in.
 
     Returned dicts include `tenant_slug` only when the scope is global —
@@ -180,7 +185,7 @@ def recent_failures(
     stmt = _scope_filter(stmt, tenant_id=tenant_id, user_id=user_id)
     stmt = stmt.order_by(Run.started_at.desc()).limit(limit)
 
-    out: list[dict] = []
+    out: list[dict[str, Any]] = []
     cross_tenant = tenant_id is None and user_id is None
     for run, wf_name, t_slug in session.execute(stmt).all():
         err = run.error or {}
@@ -202,7 +207,7 @@ def recent_failures(
 # ---------- per-tenant breakdown (global scope only) -------------------
 
 
-def per_tenant_volume(session: Session, *, since: datetime) -> list[dict]:
+def per_tenant_volume(session: Session, *, since: datetime) -> list[dict[str, Any]]:
     """For the superuser dashboard: per-tenant run volume + success rate
     over the window. Active tenants only (tenants with zero runs are
     omitted; the tenant list page is the right surface for those)."""
@@ -218,7 +223,7 @@ def per_tenant_volume(session: Session, *, since: datetime) -> list[dict]:
         .where(Run.started_at >= since)
         .group_by(Run.tenant_id, Tenant.slug, Tenant.name, Run.status)
     )
-    by_tenant: dict[uuid.UUID, dict] = {}
+    by_tenant: dict[uuid.UUID, dict[str, Any]] = {}
     for tid, slug, name, status, count in session.execute(stmt).all():
         bucket = by_tenant.setdefault(
             tid,
@@ -259,7 +264,7 @@ def daily_volume(
     tenant_id: uuid.UUID | None,
     user_id: uuid.UUID | None,
     days: int = 30,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """Per-IST-day status counts for the last `days` days.
 
     Returns a contiguous series (empty days included as zeros) so the
@@ -284,7 +289,7 @@ def daily_volume(
         bucket[status] = bucket.get(status, 0) + 1
 
     today_ist = datetime.now(_IST).date()
-    out: list[dict] = []
+    out: list[dict[str, Any]] = []
     for i in range(days - 1, -1, -1):
         d = today_ist - timedelta(days=i)
         key = d.isoformat()

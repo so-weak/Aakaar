@@ -28,7 +28,6 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from aakaar.capabilities.file_download.discovery import (
     DISCOVERY_JS,
     Candidate,
-    Pick,
     decide,
     rank_candidates,
 )

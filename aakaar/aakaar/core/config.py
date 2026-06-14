@@ -26,6 +26,10 @@ class Settings:
     superuser_password: str | None = None
     openai_api_key: str | None = None
     openai_base_url: str | None = None
+    openai_tls_verify: bool = True
+    """Verify the TLS certificate of a custom OPENAI_BASE_URL endpoint. Set
+    AAKAAR_OPENAI_TLS_VERIFY=false only for self-signed local LLM gateways
+    (e.g. a vLLM box on the LAN); never disable against a public endpoint."""
     llm_model: str = "gpt-4.1-mini"
     embedding_model: str = "BAAI/bge-small-en-v1.5"
     embeddings_dim: int = 16  # only used by FakeEmbeddingsClient; BGE derives its own dim
@@ -111,6 +115,31 @@ class Settings:
     to an existing local user with that email instead of provisioning a new
     one. Off by default — account linking is a deliberate policy choice."""
 
+    # ---- Vault encryption at rest ----------------------------------------
+    vault_keys: tuple[str, ...] = ()
+    """Fernet keys for LocalVault encryption at rest (AAKAAR_VAULT_KEY,
+    comma-separated). The FIRST key encrypts every new write; the rest are
+    old keys kept so existing entries stay decryptable during rotation
+    (MultiFernet semantics). Empty = plaintext storage with a startup
+    warning. Generate a key with:
+    `python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'`."""
+    vault_require_encryption: bool = False
+    """When true (AAKAAR_VAULT_REQUIRE_ENCRYPTION=1) and no vault key is
+    configured, refuse to start instead of falling back to plaintext."""
+
+    # ---- Rendezvous broker (see aakaar-broker/) ---------------------------
+    broker_url: str | None = None
+    """Base URL of a rendezvous broker (AAKAAR_BROKER_URL, e.g.
+    ``wss://broker.example.com``). When set, the API dials OUT to the broker's
+    master link and serves relayed agent sessions through the same key
+    verification + registration path as direct /ws/agents connections. Unset
+    (the default) = direct connections only; the broker is purely additive."""
+    broker_token: str | None = None
+    """Shared secret presented on the broker master link (AAKAAR_BROKER_TOKEN;
+    same value the broker process was started with). REQUIRED whenever
+    broker_url is set — startup fails closed rather than dialing out with a
+    link anyone could impersonate."""
+
     # ---- Row-Level Security ----------------------------------------------
     rls_strict: bool = False
     """When true, a DB session with neither a tenant nor a system scope active
@@ -162,6 +191,22 @@ def load_settings() -> Settings:
     raw_key_dir = os.environ.get("AAKAAR_JWT_KEY_DIR", "").strip()
     jwt_key_dir = Path(raw_key_dir).expanduser() if raw_key_dir else None
 
+    # Comma-separated Fernet keys; first = active encryption key, rest = old
+    # keys still accepted for decryption (rotation window).
+    vault_keys = tuple(
+        k.strip() for k in os.environ.get("AAKAAR_VAULT_KEY", "").split(",") if k.strip()
+    )
+
+    broker_url = os.environ.get("AAKAAR_BROKER_URL", "").strip() or None
+    broker_token = os.environ.get("AAKAAR_BROKER_TOKEN", "").strip() or None
+    if broker_url and not broker_token:
+        # Fail closed: an unauthenticated master link would let anyone who can
+        # reach the broker impersonate the API and receive agent sessions.
+        raise RuntimeError(
+            "AAKAAR_BROKER_URL is set but AAKAAR_BROKER_TOKEN is not; refusing to "
+            "start. Set the same token the broker process was started with."
+        )
+
     return Settings(
         db_url=os.environ.get("AAKAAR_DB_URL", f"sqlite:///{data_dir/'aakaar.sqlite'}"),
         data_dir=data_dir,
@@ -174,6 +219,7 @@ def load_settings() -> Settings:
         openai_base_url=(
             os.environ.get("OPENAI_BASE_URL") or os.environ.get("AAKAAR_OPENAI_BASE_URL") or None
         ),
+        openai_tls_verify=_bool("AAKAAR_OPENAI_TLS_VERIFY", "true"),
         llm_model=os.environ.get("AAKAAR_LLM_MODEL", "gpt-4.1-mini"),
         embedding_model=os.environ.get("AAKAAR_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5"),
         embeddings_dim=int(os.environ.get("AAKAAR_EMBEDDINGS_DIM", "16")),
@@ -220,6 +266,10 @@ def load_settings() -> Settings:
         ),
         oidc_default_tenant_slug=os.environ.get("AAKAAR_OIDC_DEFAULT_TENANT_SLUG") or None,
         oidc_link_by_verified_email=_bool("AAKAAR_OIDC_LINK_BY_VERIFIED_EMAIL"),
+        vault_keys=vault_keys,
+        vault_require_encryption=_bool("AAKAAR_VAULT_REQUIRE_ENCRYPTION"),
+        broker_url=broker_url,
+        broker_token=broker_token,
         rls_strict=_bool("AAKAAR_RLS_STRICT"),
     )
 

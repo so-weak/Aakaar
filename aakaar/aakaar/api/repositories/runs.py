@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -23,7 +24,7 @@ def create_run(
     workflow_id: uuid.UUID,
     workflow_version: int,
     started_by: uuid.UUID,
-    inputs: dict | None = None,
+    inputs: dict[str, Any] | None = None,
 ) -> Run:
     run = Run(
         tenant_id=tenant_id,
@@ -44,8 +45,8 @@ def update_status(
     *,
     run_id: uuid.UUID,
     status: str,
-    outputs: dict | None = None,
-    error: dict | None = None,
+    outputs: dict[str, Any] | None = None,
+    error: dict[str, Any] | None = None,
     end: bool = False,
 ) -> Run | None:
     run = session.get(Run, run_id)

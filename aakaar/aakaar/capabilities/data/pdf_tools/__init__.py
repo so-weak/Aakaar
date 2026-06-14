@@ -47,6 +47,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from aakaar.capabilities.data._pdf_pages import expand_entry, parse_page_selector
 from aakaar.interpreter.activities.types import ActivityContext
 from aakaar.shared.registry import CapabilityDefinition
 
@@ -128,55 +129,13 @@ definition = CapabilityDefinition(
 
 
 def _parse_pages(pages: list[int | str] | None, page_count: int) -> list[int]:
-    """Resolve a 1-based page selector into a list of 0-based page indices.
-
-    Accepts integers and inclusive 'start-end' range strings. Preserves the
-    caller's order (and allows duplicates — useful for extract). Raises
-    RuntimeError on a malformed entry or an out-of-range page.
-    """
-    if page_count <= 0:
-        raise RuntimeError("cap.pdf_tools: source PDF has no pages")
-    indices: list[int] = []
-    for entry in pages or []:
-        for one_based in _expand_entry(entry):
-            if one_based < 1 or one_based > page_count:
-                raise RuntimeError(
-                    f"cap.pdf_tools: page {one_based} out of range; the "
-                    f"document has {page_count} page(s)"
-                )
-            indices.append(one_based - 1)
-    return indices
+    """Resolve a 1-based page selector into 0-based indices (shared helper)."""
+    return parse_page_selector(pages, page_count, cap_ref=CAP_REF)
 
 
 def _expand_entry(entry: int | str) -> list[int]:
-    """Expand one page-selector entry into a list of 1-based page numbers."""
-    if isinstance(entry, bool):  # bool is an int subclass; reject explicitly
-        raise RuntimeError(f"cap.pdf_tools: invalid page entry {entry!r}")
-    if isinstance(entry, int):
-        return [entry]
-    if isinstance(entry, str):
-        text = entry.strip()
-        if "-" in text:
-            lo_s, _, hi_s = text.partition("-")
-            try:
-                lo, hi = int(lo_s.strip()), int(hi_s.strip())
-            except ValueError as e:
-                raise RuntimeError(
-                    f"cap.pdf_tools: malformed page range {entry!r}"
-                ) from e
-            if lo > hi:
-                raise RuntimeError(
-                    f"cap.pdf_tools: page range {entry!r} is reversed "
-                    f"(start > end)"
-                )
-            return list(range(lo, hi + 1))
-        try:
-            return [int(text)]
-        except ValueError as e:
-            raise RuntimeError(
-                f"cap.pdf_tools: malformed page entry {entry!r}"
-            ) from e
-    raise RuntimeError(f"cap.pdf_tools: invalid page entry {entry!r}")
+    """Expand one page-selector entry into 1-based page numbers (shared helper)."""
+    return expand_entry(entry, cap_ref=CAP_REF)
 
 
 def _default_prefix(run_id: Any) -> str:

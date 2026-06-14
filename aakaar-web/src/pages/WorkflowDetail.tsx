@@ -5,6 +5,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import {
   AlertTriangle,
   CalendarClock,
+  History,
   MessageSquarePlus,
   MonitorSmartphone,
   Pencil,
@@ -57,6 +58,16 @@ function placementTargetsOf(agents: RemoteAgent[] | undefined): {
   return { aliases, pools: Array.from(pools).sort() };
 }
 
+// Build the selectable version numbers, newest first, for a workflow whose
+// highest published version is `latest`. There is no list-versions endpoint,
+// so we synthesise 1..latest locally; a non-positive `latest` (nothing
+// published yet) yields an empty list rather than a bogus "v0" option.
+function descendingVersions(latest: number): number[] {
+  const out: number[] = [];
+  for (let v = Math.max(0, Math.trunc(latest)); v >= 1; v--) out.push(v);
+  return out;
+}
+
 // Shallow-copy the dag with every non-control node's target overridden to the
 // chosen run-level target. Control nodes always stay on the server. Used to
 // pre-flight a run-level placement override against /placement/check.
@@ -81,10 +92,22 @@ export function WorkflowDetailPage() {
     queryFn: () => workflowsApi.get(id),
     enabled: !!id,
   });
+
+  // Version history. `pinnedVersion` holds an explicit user pick; while it is
+  // null we track whatever the workflow currently reports as latest. A picked
+  // version that later 404s (e.g. pruned) surfaces an inline banner rather
+  // than a dead page — see versionMissing below.
+  const [pinnedVersion, setPinnedVersion] = useState<number | null>(null);
+  const latestVersion = workflowQ.data?.latest_version;
+  const viewedVersion = pinnedVersion ?? latestVersion;
+  const isLatest = latestVersion != null && viewedVersion === latestVersion;
+
   const versionQ = useQuery({
-    queryKey: ["workflow", id, "latest"],
-    queryFn: () => workflowsApi.getLatestVersion(id),
-    enabled: !!id,
+    queryKey: ["workflow", id, "version", viewedVersion],
+    queryFn: () => workflowsApi.getVersion(id, viewedVersion!),
+    enabled: !!id && viewedVersion != null,
+    // Versions are immutable once written.
+    staleTime: Infinity,
   });
   // Registry refs feed the DAG editor palette + ref validation.
   const capabilitiesQ = useQuery({
@@ -105,7 +128,10 @@ export function WorkflowDetailPage() {
   const [launchOpen, setLaunchOpen] = useState(false);
 
   const start = useMutation({
-    mutationFn: (target: string | null) => runsApi.start(id, {}, target),
+    // Pin the run to the version on screen — what you see is what runs, even
+    // if someone publishes a newer version mid-launch.
+    mutationFn: (target: string | null) =>
+      runsApi.start(id, {}, target, viewedVersion ?? null),
     onSuccess: (run) => {
       queryClient.invalidateQueries({ queryKey: ["runs"] });
       navigate(`/runs/${run.id}`);
@@ -158,8 +184,10 @@ export function WorkflowDetailPage() {
       workflowsApi.update(id, { dag, rationale: "Edited in DAG editor" }),
     onSuccess: () => {
       setEditing(false);
+      // Jump back to following the (new) latest version. Invalidating the
+      // ["workflow", id] prefix covers the per-version queries too.
+      setPinnedVersion(null);
       queryClient.invalidateQueries({ queryKey: ["workflow", id] });
-      queryClient.invalidateQueries({ queryKey: ["workflow", id, "latest"] });
       queryClient.invalidateQueries({ queryKey: ["workflows"] });
     },
   });
@@ -189,27 +217,57 @@ export function WorkflowDetailPage() {
     [capabilitiesQ.data],
   );
 
-  if (workflowQ.isLoading || versionQ.isLoading) {
+  if (workflowQ.isLoading) {
     return <div className="p-7 text-sm text-ink-400">Loading…</div>;
   }
-  if (workflowQ.error || versionQ.error) {
+  if (workflowQ.error) {
     return (
       <div className="p-7">
-        <ErrorBanner error={workflowQ.error ?? versionQ.error} />
+        <ErrorBanner error={workflowQ.error} />
       </div>
     );
   }
   const workflow = workflowQ.data!;
-  const version = versionQ.data!;
+  // null while the selected version loads or when it 404s (handled inline —
+  // a pruned version must not take down the whole page).
+  const version = versionQ.data ?? null;
   const isOwner = claims?.user_id === workflow.created_by;
+  const versionMissing =
+    versionQ.error instanceof ApiError && versionQ.error.status === 404;
+  const versionChoices = descendingVersions(workflow.latest_version);
+
+  // Move to an explicit version, or back to "follow latest" when the latest is
+  // chosen. Either way any stale pre-flight result is dropped — the picked
+  // version may have a different DAG.
+  const pickVersion = (v: number) => {
+    setPinnedVersion(v === workflow.latest_version ? null : v);
+    setPlacementIssues([]);
+    launch.reset();
+    start.reset();
+  };
 
   return (
     <div className="flex h-full flex-col">
       <PageHeader
         title={workflow.name}
-        subtitle={`v${version.version} · ${workflow.description || "No description"}`}
+        subtitle={`v${viewedVersion ?? "?"} · ${workflow.description || "No description"}`}
         actions={
           <>
+            <label className="flex items-center gap-1.5">
+              <History size={13} className="text-ink-400" />
+              <select
+                className="input !min-h-0 w-auto py-1.5 text-xs"
+                value={viewedVersion ?? workflow.latest_version}
+                onChange={(e) => pickVersion(Number(e.target.value))}
+                aria-label="Workflow version"
+              >
+                {versionChoices.map((v) => (
+                  <option key={v} value={v}>
+                    {v === workflow.latest_version ? `v${v} (latest)` : `v${v}`}
+                  </option>
+                ))}
+              </select>
+            </label>
             {isOwner ? (
               <button
                 type="button"
@@ -231,21 +289,28 @@ export function WorkflowDetailPage() {
               type="button"
               className="btn-ghost"
               onClick={() => refine.mutate()}
-              disabled={refine.isPending}
-              title="Open a chat session to refine this workflow"
+              disabled={refine.isPending || !isLatest}
+              title={
+                isLatest
+                  ? "Open a chat session to refine this workflow"
+                  : "Switch to the latest version to refine"
+              }
             >
               <MessageSquarePlus size={15} />
               {refine.isPending ? "Opening…" : "Refine"}
             </button>
-            <button
-              type="button"
-              className="btn-ghost"
-              onClick={() => setEditing(true)}
-              title="Edit the DAG and save a new version"
-            >
-              <Pencil size={15} />
-              Edit DAG
-            </button>
+            {isLatest ? (
+              <button
+                type="button"
+                className="btn-ghost"
+                onClick={() => setEditing(true)}
+                disabled={!version}
+                title="Edit the DAG and save a new version"
+              >
+                <Pencil size={15} />
+                Edit DAG
+              </button>
+            ) : null}
             <button
               type="button"
               className="btn-primary"
@@ -256,7 +321,7 @@ export function WorkflowDetailPage() {
                 setLaunchTarget(null);
                 setLaunchOpen(true);
               }}
-              disabled={launching}
+              disabled={launching || !version}
             >
               <Play size={15} /> {labels.runYajna}
             </button>
@@ -270,17 +335,59 @@ export function WorkflowDetailPage() {
         </div>
       ) : null}
 
+      {!isLatest ? (
+        <div className="flex items-center gap-2 border-b border-amber-300/25 bg-amber-950/40 px-7 py-2.5 text-xs text-amber-100">
+          <History size={13} className="shrink-0" />
+          <span className="min-w-0 flex-1">
+            Read-only — viewing v{viewedVersion} of v{workflow.latest_version}.
+            Past versions are immutable; editing and refine work on the latest.
+            Running from here pins the run to v{viewedVersion}.
+          </span>
+          <button
+            type="button"
+            className="btn-ghost !min-h-0 shrink-0 !px-2 !py-1 text-xs text-amber-200 hover:bg-amber-500/10"
+            onClick={() => setPinnedVersion(null)}
+          >
+            Back to latest
+          </button>
+        </div>
+      ) : null}
+
       <div className="relative z-10 grid min-h-0 flex-1 grid-cols-3 overflow-hidden">
         <div className="col-span-2 min-h-0 overflow-hidden border-r border-ink-700/80">
-          <DagViewer dag={version.dag} />
+          {version ? (
+            <DagViewer dag={version.dag} />
+          ) : versionQ.error ? (
+            <div className="space-y-3 p-6">
+              <ErrorBanner
+                error={
+                  versionMissing
+                    ? `Version ${viewedVersion} of this workflow no longer exists on the server.`
+                    : versionQ.error
+                }
+              />
+              {pinnedVersion !== null ? (
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  onClick={() => setPinnedVersion(null)}
+                >
+                  Back to latest
+                </button>
+              ) : null}
+            </div>
+          ) : (
+            <div className="p-6 text-sm text-ink-400">Loading version…</div>
+          )}
         </div>
         <aside className="min-h-0 overflow-y-auto bg-ink-950/45 px-5 py-5 backdrop-blur">
           <SchedulesPanel workflowId={id} agents={agentsQ.data} />
         </aside>
       </div>
 
-      {launchOpen ? (
+      {launchOpen && version ? (
         <LaunchModal
+          pinnedVersion={version.version}
           target={launchTarget}
           onTargetChange={(t) => {
             // Changing the target invalidates any prior pre-flight result; the
@@ -306,7 +413,7 @@ export function WorkflowDetailPage() {
         />
       ) : null}
 
-      {editing ? (
+      {editing && version ? (
         <DagEditorModal
           dag={version.dag}
           availableRefs={availableRefs}
@@ -459,6 +566,7 @@ function RunOnSelect({
 // ---------- launch modal ----------------------------------------------------
 
 function LaunchModal({
+  pinnedVersion,
   target,
   onTargetChange,
   agents,
@@ -470,6 +578,7 @@ function LaunchModal({
   onRunAnyway,
   onClose,
 }: {
+  pinnedVersion: number;
   target: string | null;
   onTargetChange: (target: string | null) => void;
   agents: RemoteAgent[] | undefined;
@@ -489,6 +598,7 @@ function LaunchModal({
           <h3 className="flex items-center gap-2 text-base font-semibold text-ink-50">
             <Play size={16} className="text-accent-300" />
             Launch run
+            <span className="badge ring-ink-700 text-ink-300">v{pinnedVersion}</span>
           </h3>
           <button
             type="button"

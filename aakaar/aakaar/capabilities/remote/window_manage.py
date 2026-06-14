@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict
 
 from aakaar.shared.registry import CapabilityDefinition
@@ -16,7 +18,7 @@ class _Inputs(BaseModel):
 class _Outputs(BaseModel):
     model_config = ConfigDict(extra="forbid")
     ok: bool
-    windows: list | None = None
+    windows: list[Any] | None = None
 
 
 definition = CapabilityDefinition(

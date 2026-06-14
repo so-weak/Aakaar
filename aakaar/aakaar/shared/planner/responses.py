@@ -18,7 +18,7 @@ model. Pydantic models double as validators and schema sources.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -26,7 +26,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from aakaar.shared.dag.types import Dag
 
 
-class PlannerResponseKind(str, Enum):
+class PlannerResponseKind(StrEnum):
     DAG = "dag"
     CLARIFY = "clarify"
     MISSING = "missing"

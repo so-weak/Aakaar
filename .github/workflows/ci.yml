@@ -118,10 +118,65 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  backend-integration:
+    name: Backend integration (API smoke)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: aakaar
+    env:
+      AAKAAR_JWT_SECRET: ci-integration-only-secret-not-production
+      AAKAAR_DB_URL: sqlite:///./data/aakaar.sqlite
+      AAKAAR_SUPERUSER_EMAIL: smoke@example.com
+      AAKAAR_SUPERUSER_PASSWORD: smoke-password-1
+      # No OPENAI_API_KEY => fake LLM + fake embeddings (no model downloads);
+      # browser pool off => no Playwright browser install needed.
+      AAKAAR_BROWSER_POOL: none
+      AAKAAR_SCHEDULER_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: aakaar/pyproject.toml
+
+      # Runtime install only (no dev extras) — this job exercises the real
+      # app over HTTP, not the test suite. httpx (used by the smoke script)
+      # is a runtime dependency of the backend.
+      - name: Install (editable, runtime deps)
+        run: pip install -e . -e ../aakaar-capabilities
+
+      - name: Migrate (alembic upgrade head)
+        run: |
+          mkdir -p data
+          alembic upgrade head
+
+      - name: Boot API (uvicorn, SQLite, fake LLM)
+        run: |
+          nohup uvicorn aakaar.api.main:app --host 127.0.0.1 --port 8000 \
+            > api.log 2>&1 &
+          echo $! > uvicorn.pid
+
+      # smoke.py polls /healthz for up to 60s, then drives:
+      # superuser login -> tenant -> grants -> import example workflow ->
+      # run -> poll to SUCCEEDED -> artifact fetch from the object store.
+      - name: Smoke (login -> workflow -> run -> poll -> artifact)
+        run: python ../loadtest/ci/smoke.py
+
+      - name: API log on failure
+        if: failure()
+        run: tail -200 api.log || true
+
+      - name: Stop API
+        if: always()
+        run: kill "$(cat uvicorn.pid)" 2>/dev/null || true
+
 # Intentionally omitted (no supporting assets exist in Current Aakaar):
-#   - backend-integration : no docker-compose.test.yml, no tests/integration
-#     tree, and no `integration` pytest marker.
-#   - build-agent         : no agent installer assets (.spec / Inno Setup /
-#     NSSM) under aakaar-agent.
-#   - loadtest            : no loadtest/ assets.
-# These are deferred until the corresponding assets land in the repo.
+#   - build-agent : no agent installer assets (.spec / Inno Setup / NSSM)
+#     under aakaar-agent.
+# Load testing is not a CI gate: .github/workflows/loadtest.yml is a
+# manually-triggered (workflow_dispatch) k6 scenario over the same smoke
+# stack — see loadtest/README.md.

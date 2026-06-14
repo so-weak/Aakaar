@@ -91,8 +91,6 @@ async def test_fill_secret_refuses_unknown_secret_name(tmp_path: Path) -> None:
     sess = FakeBrowserSession()
     pool = FakeBrowserPool(next_sessions=[sess])
 
-    # Pre-stash a session as if open_session had run.
-    activities = build_default_activities()
     actx = ActivityContext(
         tenant_id=tenant_id,
         run_id=uuid.uuid4(),
@@ -104,6 +102,7 @@ async def test_fill_secret_refuses_unknown_secret_name(tmp_path: Path) -> None:
             "cap.web_login": {"primary": {"vault_ref": vault_ref, "input_defaults": {}}},
         },
     )
+    # Pre-stash a session as if open_session had run.
     cm = pool.checkout()
     s = await cm.__aenter__()
     actx.session_state[_stash_key(s.id)] = _SessionHolder(cm=cm, session=s)
@@ -125,7 +124,6 @@ async def test_fill_secret_refuses_unknown_secret_name(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_fill_secret_refuses_ungranted_capability(tmp_path: Path) -> None:
-    activities = build_default_activities()
     sess = FakeBrowserSession()
     pool = FakeBrowserPool(next_sessions=[sess])
     actx = ActivityContext(

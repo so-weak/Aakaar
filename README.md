@@ -32,10 +32,15 @@ flowchart LR
 | [`aakaar-capabilities/`](aakaar-capabilities/) | **Shared capability SDK** (`aakaar_caps`) — host-neutral capabilities that run identically on the server or the agent. | Python |
 | [`aakaar-mcp/`](aakaar-mcp/) | **MCP server** — projects the capability registry as [Model Context Protocol](https://modelcontextprotocol.io) tools so any MCP client (e.g. Claude Desktop) can call Aakaar capabilities. | Python |
 | `admin-app/`, `nbbl-app/` | **Example tenant web apps** only — sample sites a tenant might automate against. Not part of the platform runtime; ignore them for platform setup. | — |
+| [`runbooks/`](runbooks/) | **Incident runbooks** — backup/restore, corruption recovery, vault key rotation, agent fleet, broker outage, error rates, stuck runs, escalation. | — |
+| [`examples/`](examples/) | **Importable example workflows** — four worked DAGs (scrape→notify, SFTP→PDF→email, transform→archive, remote desktop) with grant setup. | — |
+| [`loadtest/`](loadtest/) | **Load & smoke testing** — k6 scenario + the CI smoke script. | — |
 | [`extras/`](extras/) | Ops assets — e.g. [`extras/rls/setup_app_role.sql`](extras/rls/setup_app_role.sql) (the Postgres role that makes RLS enforce). | — |
-| [`.github/workflows/`](.github/workflows/) | CI — lint, type-check, tests, dependency + secret scans, SBOM. | — |
+| [`.github/workflows/`](.github/workflows/) | CI — lint, type-check, tests, integration smoke, dependency + secret scans, SBOM, manual loadtest. | — |
 
 Per-service documentation: [backend](aakaar/README.md) · [web](aakaar-web/README.md) · [agent](aakaar-agent/README.md) · [MCP](aakaar-mcp/README.md).
+Contributing: [CONTRIBUTING.md](CONTRIBUTING.md) · Security policy & hardening checklist: [SECURITY.md](SECURITY.md).
+Deploying without external services (SQLite-only, API + web): [`docker-compose.airgap.yml`](docker-compose.airgap.yml); with Postgres + RLS: [`docker-compose.yml`](docker-compose.yml).
 
 ---
 
@@ -217,8 +222,11 @@ grants check, audit trail, and deterministic executor. See
 
 - **backend** — `ruff check`, `mypy` (strict), `pytest` (Python 3.12).
 - **frontend** — `npm run typecheck` + `npm run build`.
+- **backend-integration** — boots the real API on SQLite and runs the
+  [smoke script](loadtest/ci/smoke.py): login → tenant → workflow → run → artifact.
 - **dep-scan** (Trivy → SARIF) and **secret-scan** (gitleaks).
 - [`sbom.yml`](.github/workflows/sbom.yml) generates CycloneDX SBOMs on release tags.
+- [`loadtest.yml`](.github/workflows/loadtest.yml) — manual (workflow_dispatch) k6 scenario; see [`loadtest/`](loadtest/README.md).
 
 ---
 

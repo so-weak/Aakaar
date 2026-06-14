@@ -5,10 +5,14 @@ Walks topological layers, dispatches each node to either:
   - a control-node handler (control.wait, human.prompt) the executor knows
     about directly
 
-Within a layer, nodes run concurrently with `asyncio.gather`. On any node
-failure, in-flight peers are allowed to finish (we don't cancel them mid-
-flight — they may hold external state like browser sessions that needs
-graceful close), but no further layers start.
+Within a layer, nodes run concurrently as explicit tasks. On any node
+failure — or an operator cancel surfacing as `RunCancelled` from a control
+node — in-flight peers are allowed to finish before the error is re-raised
+(we don't cancel them mid-flight — they may hold external state like browser
+sessions that needs graceful close), but no further layers start. Settling
+the whole layer first is what keeps the run's terminal status and session
+teardown from landing while a sibling is still executing detached (see
+`_run_layer`).
 
 This is the "Executor" half of the architecture spine. A future
 `TemporalExecutor` will satisfy the same Protocol; the rest of the system
@@ -27,9 +31,10 @@ from typing import Any, Protocol
 from aakaar.db.models import RunEventKind
 from aakaar.interpreter.activities.registry import ActivityRegistry
 from aakaar.interpreter.activities.types import ActivityContext
+from aakaar.interpreter.controls import RunCancelled, RunControlHandle
 from aakaar.interpreter.events import EventRecorder, node_span
 from aakaar.interpreter.refs import resolve_inputs
-from aakaar.interpreter.signals import SignalHub
+from aakaar.interpreter.signals import PendingPrompt, SignalHub
 from aakaar.interpreter.topology import topological_layers
 from aakaar.shared.dag.types import Dag, Node, NodeKind
 
@@ -49,12 +54,16 @@ class RunContext:
     own `target` for this run ("server" forces everything local; an agent/pool
     runs the whole workflow there). None falls back to per-node targets. Control
     nodes always run on the server regardless."""
+    controls: RunControlHandle | None = None
+    """Operator pause/cancel handle, consulted at every layer boundary. None
+    for direct executor use (unit tests); the orchestrator always supplies
+    one."""
 
 
 @dataclass
 class RunOutcome:
     run_id: uuid.UUID
-    status: str  # "succeeded" | "failed"
+    status: str  # "succeeded" | "failed" | "cancelled"
     outputs: dict[str, dict[str, Any]] = field(default_factory=dict)
     error: dict[str, Any] | None = None
 
@@ -108,6 +117,10 @@ class LocalExecutor:
         )
         try:
             for layer_idx, layer in enumerate(layers):
+                if ctx.controls is not None:
+                    # Layer-boundary control point: blocks while operator-
+                    # paused, raises RunCancelled once a cancel is requested.
+                    await ctx.controls.checkpoint()
                 logger.debug(
                     "run_id=%s layer %d/%d nodes=%s",
                     ctx.run_id,
@@ -115,17 +128,17 @@ class LocalExecutor:
                     len(layers),
                     [n.id for n in layer],
                 )
-                results = await asyncio.gather(
-                    *[
-                        self._run_node(node, env=env, alias_to_id=alias_to_id, ctx=ctx)
-                        for node in layer
-                    ],
-                    return_exceptions=False,
+                results = await self._run_layer(
+                    layer, env=env, alias_to_id=alias_to_id, ctx=ctx
                 )
-                for node, outputs in zip(layer, results):
+                for node, outputs in zip(layer, results, strict=True):
                     env[node.id] = outputs
             logger.info("execute run_id=%s succeeded", ctx.run_id)
             return RunOutcome(run_id=ctx.run_id, status="succeeded", outputs=env)
+        except RunCancelled:
+            logger.info("execute run_id=%s cancelled", ctx.run_id)
+            await self.signals.cancel_all_for(ctx.run_id)
+            return RunOutcome(run_id=ctx.run_id, status="cancelled", outputs=env)
         except Exception as e:
             logger.exception("execute run_id=%s failed: %s", ctx.run_id, e)
             await self.signals.cancel_all_for(ctx.run_id)
@@ -146,6 +159,63 @@ class LocalExecutor:
             if n.outputs_as is not None:
                 idx[n.outputs_as] = n.id
         return idx
+
+    async def _run_layer(
+        self,
+        layer: list[Node],
+        *,
+        env: dict[str, dict[str, Any]],
+        alias_to_id: dict[str, str],
+        ctx: RunContext,
+    ) -> list[dict[str, Any]]:
+        """Run a layer's nodes concurrently, settling all siblings before
+        surfacing any node's error.
+
+        A control node (human.prompt / control.wait) raising RunCancelled, or
+        any node failing, must not leave its in-flight peers running detached:
+        the orchestrator would stamp the run terminal and tear down shared
+        session_state (browser sessions, etc.) while those coroutines are still
+        touching it, and their late events would land after run_cancelled.
+
+        So we drive the layer as explicit tasks and `asyncio.wait` for ALL of
+        them to finish, even after the first failure. Peers are NOT cancelled —
+        an in-flight node may hold external state that needs a graceful close
+        (the same contract as the historical gather). Once everything has
+        settled we re-raise, preferring RunCancelled (operator intent) over an
+        incidental node failure, then the first failure otherwise.
+        """
+        tasks = [
+            asyncio.ensure_future(
+                self._run_node(node, env=env, alias_to_id=alias_to_id, ctx=ctx)
+            )
+            for node in layer
+        ]
+        await asyncio.wait(tasks)
+        cancelled: BaseException | None = None
+        failure: BaseException | None = None
+        for task in tasks:
+            if task.cancelled():
+                # A node task was hard-cancelled (not the cooperative
+                # RunCancelled path). `task.exception()` would re-raise here;
+                # treat it as a cancellation so the whole layer still settles
+                # and the run unwinds CANCELLED rather than leaking a bare
+                # CancelledError with a misleading status.
+                if cancelled is None:
+                    cancelled = RunCancelled("a node task was cancelled mid-layer")
+                continue
+            exc = task.exception()
+            if exc is None:
+                continue
+            if isinstance(exc, RunCancelled):
+                if cancelled is None:
+                    cancelled = exc
+            elif failure is None:
+                failure = exc
+        if cancelled is not None:
+            raise cancelled
+        if failure is not None:
+            raise failure
+        return [task.result() for task in tasks]
 
     async def _run_node(
         self,
@@ -369,8 +439,16 @@ class LocalExecutor:
         if node.ref == "control.wait":
             seconds = float(inputs.get("seconds", 0))
             logger.debug("control.wait run_id=%s node_id=%s seconds=%s", ctx.run_id, node.id, seconds)
-            await asyncio.sleep(seconds)
-            return {}
+            if ctx.controls is None:
+                await asyncio.sleep(seconds)
+                return {}
+            # Sleep, but wake early on an operator cancel so a long wait
+            # can't hold the run open past a cancel request.
+            try:
+                await asyncio.wait_for(ctx.controls.cancel_event.wait(), timeout=seconds)
+            except TimeoutError:
+                return {}
+            raise RunCancelled(f"run cancelled during control.wait node {node.id}")
         if node.ref == "human.prompt":
             message = inputs["message"]
             expects = inputs.get("expects", "text")
@@ -393,7 +471,20 @@ class LocalExecutor:
                 run_id=ctx.run_id, node_id=node.id, message=message, expects=expects,
             )
             try:
-                response = await asyncio.wait_for(prompt.future, timeout=timeout_seconds)
+                response = await self._await_prompt(prompt, timeout_seconds, ctx, node.id)
+            except RunCancelled:
+                # cancel_all_for (orchestrator) or _await_prompt's own race
+                # already removed/cancelled the prompt; surface cooperatively.
+                raise
+            except asyncio.CancelledError:
+                if ctx.controls is not None and ctx.controls.cancel_requested:
+                    # The orchestrator cancelled the prompt future as part
+                    # of an operator cancel — unwind cooperatively rather
+                    # than letting CancelledError kill the drive task.
+                    raise RunCancelled(
+                        f"run cancelled while waiting on human.prompt node {node.id}"
+                    ) from None
+                raise
             except TimeoutError as e:
                 logger.warning(
                     "human.prompt TIMEOUT run_id=%s node_id=%s after %ds",
@@ -422,10 +513,71 @@ class LocalExecutor:
                 tenant_id=ctx.tenant_id,
                 node_id=None,
                 kind=RunEventKind.RUN_RESUMED,
-                payload={},
+                payload={"reason": "human_prompt"},
             )
             return {"response": response}
         raise RuntimeError(f"unknown control ref: {node.ref!r}")
+
+    async def _await_prompt(
+        self,
+        prompt: PendingPrompt,
+        timeout_seconds: int,
+        ctx: RunContext,
+        node_id: str,
+    ) -> str:
+        """Wait for a human.prompt response, racing the response future against
+        an operator cancel and the per-node timeout.
+
+        Why race rather than just `wait_for(prompt.future, ...)`: a cancel that
+        lands in the window between the layer checkpoint and this `await`
+        (cancel_all_for ran before the prompt registered, so it popped nothing)
+        would otherwise leave the future un-cancelled and the run would sit out
+        the full timeout, then unwind via the TimeoutError->RuntimeError path
+        and finish FAILED — never CANCELLED. Watching cancel_event directly
+        closes that window: a cancel requested at ANY point wins the race.
+        """
+        controls = ctx.controls
+        if controls is None:
+            # No operator handle (direct executor use / unit tests): the only
+            # interrupt is the prompt timeout, same as the historical path.
+            try:
+                return await asyncio.wait_for(prompt.future, timeout=timeout_seconds)
+            except asyncio.CancelledError:
+                raise  # a real task cancel, not an operator cancel
+        if controls.cancel_requested:
+            # Cancel already requested before we got here — don't even start
+            # waiting. Drop the just-registered prompt so /respond 409s.
+            await self.signals.cancel_all_for(ctx.run_id)
+            raise RunCancelled(
+                f"run cancelled while waiting on human.prompt node {node_id}"
+            )
+        cancel_wait = asyncio.ensure_future(controls.cancel_event.wait())
+        # Heterogeneous result types (str response vs bool cancel flag); the
+        # results are read off the individual futures, never the wait() set.
+        waitable: set[asyncio.Future[Any]] = {prompt.future, cancel_wait}
+        try:
+            done, _pending = await asyncio.wait(
+                waitable,
+                timeout=timeout_seconds,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if controls.cancel_requested:
+                await self.signals.cancel_all_for(ctx.run_id)
+                raise RunCancelled(
+                    f"run cancelled while waiting on human.prompt node {node_id}"
+                )
+            if prompt.future in done:
+                # set_result-or-cancel: resolve() may have cancelled it (a
+                # racing cancel_all_for) — surface that as a cooperative cancel.
+                if prompt.future.cancelled():
+                    raise RunCancelled(
+                        f"run cancelled while waiting on human.prompt node {node_id}"
+                    )
+                return prompt.future.result()
+            # Neither cancel nor a response: the timeout elapsed.
+            raise TimeoutError
+        finally:
+            cancel_wait.cancel()
 
 
 # Refs whose outputs may carry user-typed secrets (OTPs, captcha answers,

@@ -8,7 +8,7 @@ import time
 from fastapi.testclient import TestClient
 
 from aakaar.api.deps import AppDependencies
-from aakaar.shared.dag.types import Dag, Edge, Node, NodeKind
+from aakaar.shared.dag.types import Dag, Node, NodeKind
 from tests._api_helpers import (
     auth_headers,
     login,

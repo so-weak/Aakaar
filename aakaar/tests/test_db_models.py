@@ -118,14 +118,11 @@ def test_tenancy_scope_basic() -> None:
 
 def test_tenancy_nested_same_tenant_ok() -> None:
     tid = uuid.uuid4()
-    with tenant_scope(tid):
-        with tenant_scope(tid):
-            assert current_tenant() == tid
+    with tenant_scope(tid), tenant_scope(tid):
+        assert current_tenant() == tid
 
 
 def test_tenancy_nested_switch_rejected() -> None:
     a, b = uuid.uuid4(), uuid.uuid4()
-    with tenant_scope(a):
-        with pytest.raises(TenancyError):
-            with tenant_scope(b):
-                pass
+    with tenant_scope(a), pytest.raises(TenancyError), tenant_scope(b):
+        pass

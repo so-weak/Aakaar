@@ -55,6 +55,10 @@ dev = [
     "pytest-asyncio>=0.23",
     "ruff>=0.5",
     "mypy>=1.10",
+    # Generates text-bearing PDFs in the document.parse_pdf tests; pypdf's
+    # add_blank_page produces no text layer, so the extraction path needs a
+    # real writer. Test-only — never imported by runtime code.
+    "reportlab>=4.0",
 ]
 # OCR needs the system `tesseract` binary in addition to this wrapper, so it
 # is opt-in; the ocr_extract capability imports it lazily and errors clearly
@@ -63,6 +67,13 @@ ocr = ["pytesseract>=0.3"]
 # Postgres driver — required when AAKAAR_DB_URL is postgresql+psycopg (prod /
 # RLS). Not needed for the SQLite dev default. The Docker image bundles it.
 postgres = ["psycopg[binary]>=3.1"]
+# Document (PDF) and image processing for cap.pdf_extract / cap.pdf_tools /
+# cap.doc_extract and cap.image_convert. Both libraries currently also ship
+# in the core dependency set; these extras name the contract so a slim build
+# that trims them from core keeps a one-flag way to opt back in. The
+# capabilities lazy-import and raise clear errors when the library is absent.
+doc = ["pypdf>=4.0"]
+img = ["pillow>=10.0"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["aakaar"]
@@ -104,3 +115,20 @@ ignore = ["E501"]
 python_version = "3.11"
 strict = true
 plugins = ["pydantic.mypy"]
+
+# Third-party libraries that ship no type stubs (and the sibling
+# `aakaar_caps`, which has no py.typed marker). Their public surfaces are
+# narrow and exercised at runtime by the test suite; suppressing the
+# missing-stub noise here keeps strict checking focused on our own code.
+[[tool.mypy.overrides]]
+module = [
+    "pandas",
+    "pandas.*",
+    "openpyxl",
+    "openpyxl.*",
+    "croniter",
+    "pytesseract",
+    "aakaar_caps",
+    "aakaar_caps.*",
+]
+ignore_missing_imports = true

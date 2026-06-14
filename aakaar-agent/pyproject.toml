@@ -21,6 +21,9 @@ dependencies = [
 # GUI/desktop automation — only needed on agents that run desktop_* capabilities
 # in an interactive session. Imported lazily so a headless agent never needs them.
 gui = ["pyautogui>=0.9", "pyperclip>=1.8", "pygetwindow>=0.0.9"]
+# Activity recording — global input listeners for cap.activity_recording.
+# Imported lazily; an agent without this extra refuses the capability cleanly.
+record = ["pynput>=1.7"]
 dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.5"]
 
 [project.scripts]

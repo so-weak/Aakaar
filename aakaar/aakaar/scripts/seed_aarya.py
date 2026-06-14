@@ -24,8 +24,10 @@ from __future__ import annotations
 import sys
 import uuid
 from pathlib import Path
+from typing import TypedDict
 
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from aakaar.api.repositories import grants as grants_repo
 from aakaar.api.repositories import tenants as tenants_repo
@@ -37,6 +39,15 @@ from aakaar.vault import LocalVault, Vault
 
 # ---------- desired state ---------------------------------------------------
 
+
+class _SiteSpec(TypedDict):
+    capability_ref: str
+    alias: str
+    login_url: str
+    display_name: str
+    secrets: dict[str, str]
+
+
 _TENANT_SLUG = "aarya"
 _TENANT_NAME = "AARYA"
 
@@ -47,7 +58,7 @@ _OPS_EMAIL = "ops@aarya.test"
 _OPS_PASSWORD = "aaryaOps1!"
 
 # (capability_ref, alias, login_url, display_name, secrets)
-_SITES = (
+_SITES: tuple[_SiteSpec, ...] = (
     {
         "capability_ref": "cap.web_login",
         "alias": "nbbl",
@@ -73,7 +84,7 @@ _SESSION_BOUND_CAPABILITIES = (
 # ---------- helpers --------------------------------------------------------
 
 
-def _ensure_tenant(session, slug: str, name: str) -> Tenant:
+def _ensure_tenant(session: Session, slug: str, name: str) -> Tenant:
     existing = session.scalars(select(Tenant).where(Tenant.slug == slug)).first()
     if existing is not None:
         print(f"  tenant already exists: {slug}")
@@ -84,7 +95,7 @@ def _ensure_tenant(session, slug: str, name: str) -> Tenant:
 
 
 def _ensure_user(
-    session, *, tenant_id: uuid.UUID, email: str, password: str, role: str
+    session: Session, *, tenant_id: uuid.UUID, email: str, password: str, role: str
 ) -> User:
     existing = session.scalars(
         select(User).where(User.tenant_id == tenant_id, User.email == email)
@@ -104,7 +115,7 @@ def _ensure_user(
 
 
 def _ensure_site(
-    session,
+    session: Session,
     vault: Vault,
     *,
     tenant_id: uuid.UUID,
@@ -155,7 +166,7 @@ def _ensure_site(
 
 
 def _ensure_capability_toggle(
-    session,
+    session: Session,
     vault: Vault,
     *,
     tenant_id: uuid.UUID,

@@ -13,7 +13,7 @@ import logging
 import uuid
 from contextvars import ContextVar
 
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import Response
 
@@ -40,7 +40,9 @@ class RequestIdFilter(logging.Filter):
 
 
 class RequestIdMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):  # type: ignore[override]
+    async def dispatch(
+        self, request: Request, call_next: RequestResponseEndpoint
+    ) -> Response:
         incoming = request.headers.get(HEADER)
         rid = incoming if incoming else _new_id()
         token = _REQUEST_ID.set(rid)

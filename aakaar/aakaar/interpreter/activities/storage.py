@@ -40,13 +40,12 @@ async def storage_get(ctx: ActivityContext, inputs: dict[str, Any]) -> dict[str,
     if tenant_id != str(ctx.tenant_id):
         raise PermissionError("URI tenant does not match run tenant")
     data = ctx.object_store.get(uri)
-    # Stage the bytes to a temp file and return its file:// URI.
-    fd = tempfile.NamedTemporaryFile(delete=False)
-    try:
+    # Stage the bytes to a temp file and return its file:// URI. delete=False
+    # so the path outlives this handler; the caller owns its lifecycle.
+    with tempfile.NamedTemporaryFile(delete=False) as fd:
         fd.write(data)
-    finally:
-        fd.close()
-    return {"file_uri": f"{_FILE_SCHEME}{fd.name}"}
+        tmp_name = fd.name
+    return {"file_uri": f"{_FILE_SCHEME}{tmp_name}"}
 
 
 # Helper used when wiring downloads (PR 5) — kept here so the URI

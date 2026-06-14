@@ -25,6 +25,13 @@ Three operations, selected by `op`:
            outside the extraction root (path traversal, absolute paths,
            symlinks) are refused. Returns `{extracted_uris}` and `{entries}`.
 
+Decompression-bomb defense: list/extract refuse archives larger than
+`_MAX_ARCHIVE_BYTES` on ingest (which bounds the transient allocation a
+zip central directory forces), refuse archives with more than `_MAX_MEMBERS`
+members — counted *during* lazy enumeration so a million-member tar is never
+fully materialized — and extract enforces `_MAX_TOTAL_UNCOMPRESSED` against
+the actual decompressed stream (claimed member sizes are not trusted).
+
 `format` is `zip`, `tar` (uncompressed) or `tar.gz`. For `create` it is
 required and picks the container/compression. For `list`/`extract` it is
 optional: when omitted the format is sniffed from the archive bytes, with
@@ -37,10 +44,10 @@ leave the machine and no remote dispatch occurs.
 from __future__ import annotations
 
 import logging
-import os
 import posixpath
 import tempfile
 import uuid
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Literal
 
@@ -56,6 +63,22 @@ CAP_REF = "cap.archive_manage"
 _FORMATS = ("zip", "tar", "tar.gz")
 # tarfile write modes keyed by our `format` value.
 _TAR_WRITE_MODE = {"tar": "w", "tar.gz": "w:gz"}
+
+# Decompression-bomb limits for list/extract. A crafted archive can claim a
+# tiny compressed size but expand without bound (or carry millions of
+# members), so both axes are capped. Sizes are enforced on the *actual*
+# decompressed byte stream, not the member's self-declared size, which a
+# malicious zip can falsify.
+_MAX_MEMBERS = 1_000
+_MAX_TOTAL_UNCOMPRESSED = 256 * 1024 * 1024  # 256 MiB across all members
+# Upper bound on the archive's own compressed bytes accepted for list/extract.
+# A zip's central directory is parsed in full by zipfile.ZipFile() before any
+# of our code runs (one ZipInfo per member, several hundred bytes each), so a
+# hostile ~17 MB zip can carry hundreds of thousands of members and spike
+# worker memory regardless of _MAX_MEMBERS. Capping the input byte size bounds
+# that transient allocation deterministically; the cap is generous relative to
+# _MAX_MEMBERS legitimate members but well below what a member-count bomb needs.
+_MAX_ARCHIVE_BYTES = 64 * 1024 * 1024  # 64 MiB on the wire
 
 
 class _Inputs(BaseModel):
@@ -114,7 +137,9 @@ definition = CapabilityDefinition(
         "Create, extract, or list zip / tar / tar.gz archives entirely on the "
         "worker using the Python standard library. Reads and writes files "
         "through object storage; rejects unsafe (path-traversal/absolute/"
-        "symlink) archive members on extract. No third-party dependencies."
+        "symlink) archive members on extract and enforces member-count and "
+        "total-uncompressed-size limits against decompression bombs. No "
+        "third-party dependencies."
     ),
     input_schema=_Inputs,
     output_schema=_Outputs,
@@ -199,6 +224,48 @@ def _is_unsafe_member(name: str) -> bool:
     return any(p == ".." for p in parts)
 
 
+def _assert_archive_bytes(raw: bytes) -> None:
+    if len(raw) > _MAX_ARCHIVE_BYTES:
+        raise RuntimeError(
+            f"cap.archive_manage: archive is {len(raw)} bytes, exceeding the "
+            f"ingest limit of {_MAX_ARCHIVE_BYTES}"
+        )
+
+
+def _bounded_members(members: Any) -> Iterator[Any]:
+    """Yield archive members, raising once the running count crosses the cap.
+
+    Counting during enumeration (rather than `len(infolist()/getmembers())`)
+    keeps the failure mode bounded: a tar is iterated one header at a time and
+    we bail before the whole member list is materialized. For zip the central
+    directory is already parsed by ZipFile() (stdlib offers no lazy reader), so
+    `_assert_archive_bytes` is the primary guard there and this loop simply
+    avoids building a second list copy.
+    """
+    for count, member in enumerate(members, start=1):
+        if count > _MAX_MEMBERS:
+            raise RuntimeError(
+                f"cap.archive_manage: archive has more than {_MAX_MEMBERS} "
+                f"members, exceeding the limit of {_MAX_MEMBERS}"
+            )
+        yield member
+
+
+def _read_limited(fh: Any, budget: int, member_name: str) -> bytes:
+    """Read one member's decompressed stream against the remaining budget.
+
+    Reads budget+1 bytes so an over-budget member is detected without ever
+    materializing the full bomb in memory.
+    """
+    data: bytes = fh.read(budget + 1)
+    if len(data) > budget:
+        raise RuntimeError(
+            f"cap.archive_manage: archive member {member_name!r} pushes the "
+            f"total uncompressed size past {_MAX_TOTAL_UNCOMPRESSED} bytes"
+        )
+    return data
+
+
 # ---------------------------------------------------------------------------
 # Handler
 # ---------------------------------------------------------------------------
@@ -241,9 +308,17 @@ async def handler(ctx: ActivityContext, inputs: dict[str, Any]) -> dict[str, Any
     with tempfile.TemporaryDirectory(prefix="aakaar-archive-") as tmp:
         tmp_path = Path(tmp)
         if op == "create":
+            # Narrowed by the op=='create' guards above (sources truthy, fmt set).
+            assert sources is not None
             return _do_create(ctx, sources, str(fmt), tmp_path, zipfile, tarfile)
 
+        # Narrowed by the extract/list guard above (archive is required).
+        assert archive is not None
         raw = ctx.object_store.get(archive)
+        # Cap the input size before zipfile/tarfile parse the directory: a zip
+        # central directory is materialized in full at open time, so a hostile
+        # member-count bomb must be stopped by byte size, not member count.
+        _assert_archive_bytes(raw)
         resolved_fmt = fmt or _sniff_format(raw, archive)
         if op == "list":
             entries = _read_entries(raw, resolved_fmt, tmp_path, zipfile, tarfile)
@@ -318,7 +393,7 @@ def _read_entries(
     entries: list[dict[str, Any]] = []
     if fmt == "zip":
         with zipfile.ZipFile(archive_path, "r") as zf:
-            for info in zf.infolist():
+            for info in _bounded_members(zf.infolist()):
                 entries.append(
                     {
                         "name": info.filename,
@@ -329,7 +404,10 @@ def _read_entries(
     else:
         mode = "r:gz" if fmt == "tar.gz" else "r:*"
         with tarfile.open(archive_path, mode) as tf:
-            for member in tf.getmembers():
+            # Iterate the TarFile directly: it reads one header at a time via
+            # next() rather than getmembers(), so a member-count bomb is bailed
+            # before the whole member list is built.
+            for member in _bounded_members(tf):
                 entries.append(
                     {
                         "name": member.name,
@@ -355,9 +433,10 @@ def _do_extract(
     entries: list[dict[str, Any]] = []
     extracted_uris: list[str] = []
 
+    budget = _MAX_TOTAL_UNCOMPRESSED
     if fmt == "zip":
         with zipfile.ZipFile(archive_path, "r") as zf:
-            for info in zf.infolist():
+            for info in _bounded_members(zf.infolist()):
                 is_dir = info.is_dir()
                 entries.append(
                     {
@@ -373,13 +452,18 @@ def _do_extract(
                         f"cap.archive_manage: refusing unsafe archive member "
                         f"{info.filename!r}"
                     )
-                data = zf.read(info)
+                with zf.open(info) as fh:
+                    data = _read_limited(fh, budget, info.filename)
+                budget -= len(data)
                 uri = _store_member(ctx, run_prefix, info.filename, data)
                 extracted_uris.append(uri)
     else:
         mode = "r:gz" if fmt == "tar.gz" else "r:*"
         with tarfile.open(archive_path, mode) as tf:
-            for member in tf.getmembers():
+            # Lazy iteration (next() per header) bails a member-count bomb before
+            # the full member list is materialized; extractfile() still seeks to
+            # each member's data on demand.
+            for member in _bounded_members(tf):
                 entries.append(
                     {
                         "name": member.name,
@@ -401,7 +485,8 @@ def _do_extract(
                         f"{member.name!r}"
                     )
                 fh = tf.extractfile(member)
-                data = fh.read() if fh is not None else b""
+                data = _read_limited(fh, budget, member.name) if fh is not None else b""
+                budget -= len(data)
                 uri = _store_member(ctx, run_prefix, member.name, data)
                 extracted_uris.append(uri)
 
@@ -437,7 +522,3 @@ def _store_member(
     key = f"{run_prefix}/{rel}"
     obj = ctx.object_store.put(str(ctx.tenant_id), key, data)
     return obj.uri
-
-
-# Keep `os` referenced for any future host-side stat needs without a lint warning.
-_ = os
