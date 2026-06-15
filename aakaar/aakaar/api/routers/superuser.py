@@ -37,7 +37,15 @@ from aakaar.api.schemas import (
     WorkflowResponse,
     WorkflowVersionResponse,
 )
-from aakaar.db.models import Run, RunEvent, User, UserRole, Workflow, WorkflowVersion
+from aakaar.db.models import (
+    Run,
+    RunEvent,
+    RunMode,
+    User,
+    UserRole,
+    Workflow,
+    WorkflowVersion,
+)
 from aakaar.interpreter import RunOrchestrator
 from aakaar.planner import CapabilityIndex
 from aakaar.shared.dag.types import Dag
@@ -184,6 +192,7 @@ def get_any_run(
             workflow_version=run.workflow_version,
             started_by=run.started_by,
             status=run.status,
+            mode=run.mode or RunMode.LIVE,
             started_at=run.started_at,
             ended_at=run.ended_at,
             outputs=run.outputs or {},
@@ -262,6 +271,7 @@ def list_all_runs(
             workflow_version=r.workflow_version,
             started_by=r.started_by,
             status=r.status,
+            mode=r.mode or RunMode.LIVE,
             started_at=r.started_at,
             ended_at=r.ended_at,
             outputs=r.outputs or {},

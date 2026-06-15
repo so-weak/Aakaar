@@ -20,7 +20,7 @@ import logging
 import tempfile
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from aakaar.interpreter.activities.registry import ActivityRegistry
 from aakaar.interpreter.activities.types import ActivityContext
@@ -35,7 +35,9 @@ def _stash_key(session_id: str) -> str:
 
 
 def _get_session(ctx: ActivityContext, session_id: str) -> BrowserSession:
-    holder = ctx.session_state.get(_stash_key(session_id))
+    holder = cast(
+        "_SessionHolder | None", ctx.session_state.get(_stash_key(session_id))
+    )
     if holder is None:
         raise RuntimeError(
             f"no live browser session for id {session_id!r}; was browser.open_session called?"
@@ -252,7 +254,9 @@ class _SessionHolder:
     by activities (`.session`) and the underlying checkout context manager
     closeable by the orchestrator's run-end cleanup (`.close()`)."""
 
-    def __init__(self, cm, session: BrowserSession) -> None:
+    def __init__(
+        self, cm: contextlib.AbstractAsyncContextManager[BrowserSession], session: BrowserSession
+    ) -> None:
         self._cm = cm
         self.session = session
         self._closed = False

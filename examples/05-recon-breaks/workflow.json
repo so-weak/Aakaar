@@ -1,0 +1,95 @@
+{
+  "name": "Reconciliation breaks — internal ledger vs bank statement",
+  "description": "Fetch the internal ledger over SFTP and the bank's reconciliation export over the web, isolate the unmatched (break) rows with a pandas transform, and notify the operations webhook with the breaks file and the evidence ledger.",
+  "rationale": "Banking template: two-source reconciliation. Two statements are fetched (SFTP + authenticated web download), cap.data_transform isolates breaks deterministically, and the result is pushed to ops through the SSRF-guarded webhook. Credentials stay on grants; the DAG carries only aliases and paths.",
+  "dag": {
+    "id": "",
+    "version": 0,
+    "nodes": [
+      {
+        "id": "stamp",
+        "kind": "action",
+        "ref": "time.now",
+        "inputs": {}
+      },
+      {
+        "id": "ledger_login",
+        "kind": "capability",
+        "ref": "cap.sftp_login",
+        "inputs": {
+          "account_alias": "primary"
+        },
+        "outputs_as": "ledger"
+      },
+      {
+        "id": "fetch_internal",
+        "kind": "capability",
+        "ref": "cap.sftp_read",
+        "inputs": {
+          "session": "${ledger.session}",
+          "remote_path": "/recon/outbound/internal-ledger.csv"
+        },
+        "retry": { "max_attempts": 3, "backoff_ms": 2000 }
+      },
+      {
+        "id": "bank_login",
+        "kind": "capability",
+        "ref": "cap.web_login",
+        "inputs": {
+          "account_alias": "primary"
+        },
+        "outputs_as": "bank"
+      },
+      {
+        "id": "fetch_bank",
+        "kind": "capability",
+        "ref": "cap.file_download",
+        "inputs": {
+          "session": "${bank.session}",
+          "target_hint": "Reconciliation export — CSV"
+        },
+        "retry": { "max_attempts": 3, "backoff_ms": 2000 }
+      },
+      {
+        "id": "breaks",
+        "kind": "capability",
+        "ref": "cap.data_transform",
+        "inputs": {
+          "source": "${fetch_bank.uri}",
+          "ops": [
+            { "op": "filter", "column": "match_status", "operator": "!=", "value": "MATCHED" },
+            { "op": "sort", "by": "amount", "ascending": false }
+          ],
+          "source_format": "csv",
+          "output_format": "csv"
+        }
+      },
+      {
+        "id": "notify",
+        "kind": "capability",
+        "ref": "cap.webhook_send",
+        "inputs": {
+          "url": "https://ops.example.com/REPLACE-WITH-YOUR-RECON-ENDPOINT",
+          "payload": {
+            "event": "recon_breaks_detected",
+            "run_date": "${stamp.ist_date}",
+            "break_count": "${breaks.rows}",
+            "break_columns": "${breaks.columns}",
+            "breaks_file": "${breaks.result_uri}",
+            "internal_ledger_file": "${fetch_internal.uri}",
+            "bank_statement_file": "${fetch_bank.uri}"
+          },
+          "timeout_s": 30
+        }
+      }
+    ],
+    "edges": [
+      { "from": "stamp", "to": "notify" },
+      { "from": "ledger_login", "to": "fetch_internal" },
+      { "from": "fetch_internal", "to": "notify" },
+      { "from": "bank_login", "to": "fetch_bank" },
+      { "from": "fetch_bank", "to": "breaks" },
+      { "from": "breaks", "to": "notify" }
+    ]
+  }
+}

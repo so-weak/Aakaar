@@ -29,7 +29,7 @@ import logging
 import uuid
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from aakaar.api.deps import (
@@ -38,10 +38,12 @@ from aakaar.api.deps import (
     get_session,
     require_tenant_user,
 )
+from aakaar.api.repositories import approvals as approvals_repo
 from aakaar.api.repositories import grants as grants_repo
 from aakaar.api.repositories import runs as runs_repo
 from aakaar.api.repositories import workflows as workflows_repo
 from aakaar.api.schemas import (
+    ApprovalPendingResponse,
     PendingPromptResponse,
     RunDetailResponse,
     RunEventResponse,
@@ -49,15 +51,17 @@ from aakaar.api.schemas import (
     RunResponse,
     RunStartRequest,
 )
-from aakaar.db.models import Run, RunStatus, User, UserRole
+from aakaar.db.models import ApprovalSubjectType, Run, RunMode, RunStatus, User, UserRole
 from aakaar.interpreter import RunOrchestrator
 from aakaar.interpreter.controls import RunControlConflict, RunNotActive
 from aakaar.interpreter.signals import SignalNotPending
 from aakaar.services.audit import AuditRecorder
+from aakaar.services.governance import GatedAction, GovernanceService, workflow_is_gated
 from aakaar.shared.dag.types import Dag
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["runs"])
+_governance = GovernanceService()
 
 _TERMINAL_STATUSES = (RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.CANCELLED)
 
@@ -70,6 +74,7 @@ def _to_run_response(run: Run) -> RunResponse:
         workflow_version=run.workflow_version,
         started_by=run.started_by,
         status=run.status,
+        mode=run.mode or RunMode.LIVE,
         started_at=run.started_at,
         ended_at=run.ended_at,
         outputs=run.outputs or {},
@@ -124,9 +129,12 @@ def _create_and_schedule(
     started_by: uuid.UUID,
     inputs: dict[str, Any],
     target: str | None,
+    mode: str = RunMode.LIVE,
 ) -> Run:
     """Shared launch path for start_run and rerun_run: persist the run row,
-    then hand it to the orchestrator."""
+    then hand it to the orchestrator. ``mode`` ('live' | 'dry_run') is stamped
+    on the row; the orchestrator reads it back to pick the live or simulation
+    execution path."""
     granted_caps = _snapshot_grants(session, tenant_id)
     run = runs_repo.create_run(
         session,
@@ -135,6 +143,7 @@ def _create_and_schedule(
         workflow_version=version,
         started_by=started_by,
         inputs=inputs,
+        mode=mode,
     )
     session.commit()
     logger.info(
@@ -156,9 +165,46 @@ def _create_and_schedule(
     return run
 
 
+def perform_run_start(
+    session: Session,
+    *,
+    orchestrator: RunOrchestrator,
+    tenant_id: uuid.UUID,
+    started_by: uuid.UUID,
+    context: dict[str, Any],
+) -> Run:
+    """Launch a gate-approved run from its snapshotted ``context``.
+
+    Called by the approvals router once a checker approves a ``run_start``
+    request. The DAG is re-read from the pinned version (rather than trusting a
+    possibly-large snapshot) so a deleted version surfaces as an error to the
+    approver. ``started_by`` is the original maker, carried in the snapshot —
+    the run is attributed to who requested it, not the approver."""
+    workflow_id = uuid.UUID(str(context["workflow_id"]))
+    version = int(context["version"])
+    wfv = workflows_repo.get_version(session, tenant_id, workflow_id, version)
+    if wfv is None:
+        raise KeyError(f"workflow version {version} no longer exists")
+    dag = Dag.model_validate(wfv.dag)
+    target = context.get("run_target")
+    mode = str(context.get("mode") or RunMode.LIVE)
+    return _create_and_schedule(
+        session=session,
+        orchestrator=orchestrator,
+        tenant_id=tenant_id,
+        workflow_id=workflow_id,
+        version=version,
+        dag=dag,
+        started_by=started_by,
+        inputs=dict(context.get("inputs") or {}),
+        target=str(target) if target is not None else None,
+        mode=mode,
+    )
+
+
 @router.post(
     "/workflows/{workflow_id}/runs",
-    response_model=RunResponse,
+    response_model=RunResponse | ApprovalPendingResponse,
     status_code=201,
 )
 async def start_run(
@@ -168,7 +214,8 @@ async def start_run(
     session: Annotated[Session, Depends(get_session)],
     orchestrator: Annotated[RunOrchestrator, Depends(get_orchestrator)],
     audit: Annotated[AuditRecorder, Depends(get_audit)],
-) -> RunResponse:
+    response: Response,
+) -> RunResponse | ApprovalPendingResponse:
     assert user.tenant_id is not None
     logger.info(
         "start_run requested workflow_id=%s tenant_id=%s user_id=%s version=%s",
@@ -190,6 +237,46 @@ async def start_run(
         )
         raise HTTPException(status_code=404, detail=f"version {target_version} not found")
 
+    if workflow_is_gated(
+        requires_approval=workflow.requires_approval, sensitivity=workflow.sensitivity
+    ):
+        # Don't launch — snapshot what a launch needs and open a maker-checker
+        # gate. subject_ref is the workflow id (the gated resource); the run row
+        # is only created once a different user approves.
+        action = GatedAction(
+            subject_type=ApprovalSubjectType.RUN_START,
+            subject_ref=str(workflow_id),
+            context={
+                "workflow_id": str(workflow_id),
+                "workflow_name": workflow.name,
+                "version": target_version,
+                "sensitivity": workflow.sensitivity,
+                "inputs": dict(body.inputs),
+                "run_target": body.target,
+                "mode": body.mode,
+            },
+        )
+        req = _governance.open_gate(
+            session, tenant_id=user.tenant_id, action=action, requested_by=user.id
+        )
+        session.commit()
+        logger.info(
+            "run start gated: approval_id=%s workflow_id=%s requested_by=%s",
+            req.id,
+            workflow_id,
+            user.id,
+        )
+        audit.record(
+            action="run.start.gated",
+            tenant_id=user.tenant_id,
+            actor_id=user.id,
+            target_kind="approval_request",
+            target_id=str(req.id),
+            payload={"workflow_id": str(workflow_id), "version": target_version},
+        )
+        response.status_code = status.HTTP_202_ACCEPTED
+        return ApprovalPendingResponse(approval=approvals_repo.to_response(req))
+
     dag = Dag.model_validate(wfv.dag)
 
     run = _create_and_schedule(
@@ -202,6 +289,7 @@ async def start_run(
         started_by=user.id,
         inputs=body.inputs,
         target=body.target,
+        mode=body.mode,
     )
     audit.record(
         action="run.start",
@@ -213,6 +301,7 @@ async def start_run(
             "workflow_id": str(workflow_id),
             "version": target_version,
             "run_target": body.target,
+            "mode": body.mode,
         },
     )
     return _to_run_response(run)
@@ -412,6 +501,9 @@ async def rerun_run(
         started_by=user.id,
         inputs=dict(source.inputs or {}),
         target=None,
+        # Preserve the source run's mode: a dry-run reruns as a dry-run, so a
+        # rerun can never introduce side effects the original simulated away.
+        mode=source.mode or RunMode.LIVE,
     )
     audit.record(
         action="run.rerun",

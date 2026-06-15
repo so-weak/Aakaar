@@ -15,26 +15,35 @@ import logging
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from aakaar.api.deps import get_audit, get_registry, get_session, require_tenant_user
+from aakaar.api.repositories import approvals as approvals_repo
 from aakaar.api.repositories import grants as grants_repo
 from aakaar.api.repositories import workflows as workflows_repo
 from aakaar.api.schemas import (
+    ApprovalPendingResponse,
     WorkflowCreateRequest,
     WorkflowResponse,
     WorkflowUpdateRequest,
     WorkflowVersionResponse,
 )
-from aakaar.db.models import User, Workflow, WorkflowVersion
+from aakaar.db.models import (
+    ApprovalSubjectType,
+    User,
+    Workflow,
+    WorkflowVersion,
+)
 from aakaar.services.audit import AuditRecorder
+from aakaar.services.governance import GatedAction, GovernanceService, workflow_is_gated
 from aakaar.shared.dag import ValidationError, validate_dag
 from aakaar.shared.dag.types import Dag
 from aakaar.shared.registry import Registry
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/workflows", tags=["workflows"])
+_governance = GovernanceService()
 
 
 def _validate_dag_for_tenant(
@@ -58,6 +67,8 @@ def _to_response(workflow: Workflow) -> WorkflowResponse:
         name=workflow.name,
         description=workflow.description,
         latest_version=workflow.latest_version,
+        requires_approval=workflow.requires_approval,
+        sensitivity=workflow.sensitivity,
         created_at=workflow.created_at,
         updated_at=workflow.updated_at,
     )
@@ -95,14 +106,20 @@ def create_workflow(
         description=body.description,
         dag=body.dag,
         rationale=body.rationale,
+        requires_approval=body.requires_approval,
+        sensitivity=body.sensitivity,
     )
     session.commit()
     logger.info(
-        "workflow created id=%s tenant_id=%s name=%r nodes=%d",
+        "workflow created id=%s tenant_id=%s name=%r nodes=%d gated=%s",
         workflow.id,
         user.tenant_id,
         body.name,
         len(body.dag.nodes),
+        workflow_is_gated(
+            requires_approval=workflow.requires_approval,
+            sensitivity=workflow.sensitivity,
+        ),
     )
     audit.record(
         action="workflow.create",
@@ -169,14 +186,45 @@ def get_workflow_version(
     return _version_to_response(v)
 
 
-@router.patch("/{workflow_id}", response_model=WorkflowVersionResponse)
+def perform_publish(
+    session: Session,
+    *,
+    tenant_id: uuid.UUID,
+    created_by: uuid.UUID,
+    context: dict[str, object],
+) -> WorkflowVersion:
+    """Apply a gate-approved workflow publish from its snapshotted ``context``.
+
+    Called by the approvals router once a checker approves a ``workflow_publish``
+    request. The DAG was already validated when the gate was opened; we trust
+    the snapshot rather than re-running tenant grant checks, since the maker's
+    grants at open time are what was approved. ``created_by`` is the original
+    maker (carried in the snapshot), preserving authorship — the checker
+    authorizes, the maker still owns the version."""
+    dag = Dag.model_validate(context["dag"])
+    return workflows_repo.add_version(
+        session,
+        tenant_id=tenant_id,
+        workflow_id=uuid.UUID(str(context["workflow_id"])),
+        created_by=created_by,
+        dag=dag,
+        rationale=str(context.get("rationale", "")),
+    )
+
+
+@router.patch(
+    "/{workflow_id}",
+    response_model=WorkflowVersionResponse | ApprovalPendingResponse,
+)
 def update_workflow(
     workflow_id: uuid.UUID,
     body: WorkflowUpdateRequest,
     user: Annotated[User, Depends(require_tenant_user)],
     session: Annotated[Session, Depends(get_session)],
     registry: Annotated[Registry, Depends(get_registry)],
-) -> WorkflowVersionResponse:
+    audit: Annotated[AuditRecorder, Depends(get_audit)],
+    response: Response,
+) -> WorkflowVersionResponse | ApprovalPendingResponse:
     assert user.tenant_id is not None
     workflow = workflows_repo.get_workflow(session, user.tenant_id, workflow_id)
     if workflow is None:
@@ -188,6 +236,47 @@ def update_workflow(
 
     granted = grants_repo.list_granted_refs(session, user.tenant_id)
     _validate_dag_for_tenant(dag=body.dag, registry=registry, granted=granted)
+
+    if workflow_is_gated(
+        requires_approval=workflow.requires_approval, sensitivity=workflow.sensitivity
+    ):
+        # Don't publish — snapshot the validated DAG + rationale and open a gate
+        # for a different user to approve. The pending version number is the one
+        # this publish *would* take, shown to the checker; add_version recomputes
+        # it at approval time, so a racing publish can't reuse a stale number.
+        action = GatedAction(
+            subject_type=ApprovalSubjectType.WORKFLOW_PUBLISH,
+            subject_ref=str(workflow_id),
+            context={
+                "workflow_id": str(workflow_id),
+                "workflow_name": workflow.name,
+                "pending_version": workflow.latest_version + 1,
+                "sensitivity": workflow.sensitivity,
+                "rationale": body.rationale,
+                "node_count": len(body.dag.nodes),
+                "dag": body.dag.model_dump(by_alias=True),
+            },
+        )
+        req = _governance.open_gate(
+            session, tenant_id=user.tenant_id, action=action, requested_by=user.id
+        )
+        session.commit()
+        logger.info(
+            "workflow publish gated: approval_id=%s workflow_id=%s requested_by=%s",
+            req.id,
+            workflow_id,
+            user.id,
+        )
+        audit.record(
+            action="workflow.publish.gated",
+            tenant_id=user.tenant_id,
+            actor_id=user.id,
+            target_kind="approval_request",
+            target_id=str(req.id),
+            payload={"workflow_id": str(workflow_id)},
+        )
+        response.status_code = status.HTTP_202_ACCEPTED
+        return ApprovalPendingResponse(approval=approvals_repo.to_response(req))
 
     version = workflows_repo.add_version(
         session,

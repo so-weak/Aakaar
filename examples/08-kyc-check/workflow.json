@@ -1,0 +1,64 @@
+{
+  "name": "KYC sanctions/PEP screening and record",
+  "description": "Gather a customer's KYC profile from the customer system, screen the identity against a sanctions/PEP provider through the SSRF guard, and record the screening outcome to the compliance system of record.",
+  "rationale": "Banking template: KYC screening. Both outbound calls go through cap.webhook_send / cap.api_call, which resolve hosts and block private/loopback targets unless explicitly allow-listed; every node is written to the tamper-evident audit ledger (GET /audit/verify) so the screening is independently provable after the fact.",
+  "dag": {
+    "id": "",
+    "version": 0,
+    "nodes": [
+      {
+        "id": "stamp",
+        "kind": "action",
+        "ref": "time.now",
+        "inputs": {}
+      },
+      {
+        "id": "gather",
+        "kind": "capability",
+        "ref": "cap.api_call",
+        "inputs": {
+          "method": "GET",
+          "url": "https://cif.example.com/api/customers/REPLACE-WITH-CUSTOMER-ID",
+          "account_alias": "primary"
+        },
+        "retry": { "max_attempts": 3, "backoff_ms": 1500 }
+      },
+      {
+        "id": "screen",
+        "kind": "capability",
+        "ref": "cap.webhook_send",
+        "inputs": {
+          "url": "https://screening.example.com/REPLACE-WITH-SCREENING-ENDPOINT",
+          "payload": {
+            "event": "kyc_screen_request",
+            "requested_on": "${stamp.utc_datetime}",
+            "customer": "${gather.body}"
+          },
+          "timeout_s": 30
+        }
+      },
+      {
+        "id": "record",
+        "kind": "capability",
+        "ref": "cap.webhook_send",
+        "inputs": {
+          "url": "https://compliance.example.com/REPLACE-WITH-CASE-ENDPOINT",
+          "payload": {
+            "event": "kyc_screen_result",
+            "recorded_on": "${stamp.utc_datetime}",
+            "screening_status": "${screen.status}",
+            "screening_result": "${screen.body}",
+            "customer": "${gather.body}"
+          },
+          "timeout_s": 30
+        }
+      }
+    ],
+    "edges": [
+      { "from": "stamp", "to": "screen" },
+      { "from": "gather", "to": "screen" },
+      { "from": "screen", "to": "record" },
+      { "from": "gather", "to": "record" }
+    ]
+  }
+}

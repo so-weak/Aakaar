@@ -1,0 +1,80 @@
+{
+  "name": "Loan document extract, validate, and archive",
+  "description": "Fetch a loan application PDF over SFTP, extract its text and (when an LLM is configured) structured fields, post the fields to the loan-origination validation endpoint, and archive the source document at a stable object-store key.",
+  "rationale": "Banking template: document intake pipeline. cap.doc_extract reads the PDF natively (pypdf, with an optional LLM field pass); validation is delegated to the origination system through the SSRF-guarded webhook so its HTTP status gates the run; cap.file_manage copies the document to an immutable archival key.",
+  "dag": {
+    "id": "",
+    "version": 0,
+    "nodes": [
+      {
+        "id": "stamp",
+        "kind": "action",
+        "ref": "time.now",
+        "inputs": {}
+      },
+      {
+        "id": "login",
+        "kind": "capability",
+        "ref": "cap.sftp_login",
+        "inputs": {
+          "account_alias": "primary"
+        },
+        "outputs_as": "sftp"
+      },
+      {
+        "id": "fetch",
+        "kind": "capability",
+        "ref": "cap.sftp_read",
+        "inputs": {
+          "session": "${sftp.session}",
+          "remote_path": "/loans/inbound/application.pdf"
+        },
+        "retry": { "max_attempts": 3, "backoff_ms": 2000 }
+      },
+      {
+        "id": "extract",
+        "kind": "capability",
+        "ref": "cap.doc_extract",
+        "inputs": {
+          "uri": "${fetch.uri}",
+          "format": "pdf",
+          "extract": "the applicant full name, PAN, requested loan amount, and property value"
+        }
+      },
+      {
+        "id": "validate",
+        "kind": "capability",
+        "ref": "cap.webhook_send",
+        "inputs": {
+          "url": "https://los.example.com/REPLACE-WITH-VALIDATION-ENDPOINT",
+          "payload": {
+            "event": "loan_document_extracted",
+            "received_on": "${stamp.ist_date}",
+            "document_uri": "${fetch.uri}",
+            "document_name": "${fetch.filename}",
+            "extracted_fields": "${extract.extracted}",
+            "document_text": "${extract.text}"
+          },
+          "timeout_s": 30
+        }
+      },
+      {
+        "id": "archive",
+        "kind": "capability",
+        "ref": "cap.file_manage",
+        "inputs": {
+          "op": "copy",
+          "src": "${fetch.uri}",
+          "dst": "loans/archive/application.pdf"
+        }
+      }
+    ],
+    "edges": [
+      { "from": "stamp", "to": "validate" },
+      { "from": "login", "to": "fetch" },
+      { "from": "fetch", "to": "extract" },
+      { "from": "extract", "to": "validate" },
+      { "from": "validate", "to": "archive" }
+    ]
+  }
+}

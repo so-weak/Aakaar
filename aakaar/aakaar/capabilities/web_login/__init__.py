@@ -422,7 +422,7 @@ async def _llm_disambiguate(
         LLMMessage(role=Role.USER, content=prompt),
     ]
     try:
-        completion = await asyncio.to_thread(ctx.llm.complete_planner, messages)  # type: ignore[arg-type]
+        completion = await asyncio.to_thread(ctx.llm.complete_planner, messages)
     except Exception:  # noqa: BLE001
         return None
     # The planner LLM is constrained to PlannerCompletion shape, so we

@@ -100,7 +100,10 @@ python ../loadtest/ci/smoke.py
 - New capabilities: one package under `aakaar/aakaar/capabilities/<area>/<name>/`
   exposing `definition` (a `CapabilityDefinition` with strict pydantic
   schemas, `extra="forbid"`) and an async `handler`. The package walker
-  registers it automatically; add a `tests/test_cap_<name>.py` suite.
+  registers it automatically; add a `tests/test_cap_<name>.py` suite. The full
+  safe-authoring walkthrough (the `side_effecting` flag, SSRF/path guards, the
+  credential envelope) is in
+  [docs/capability-authoring-guide.md](docs/capability-authoring-guide.md).
 - Schema/DB changes go through Alembic (`aakaar/aakaar/db/migrations/`);
   never edit an applied migration.
 - Secrets discipline: never log secret values, never store them in DB

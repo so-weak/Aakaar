@@ -152,7 +152,7 @@ async def handler(ctx: ActivityContext, inputs: dict[str, Any]) -> dict[str, Any
         )
     return await _fill_existing_session(
         ctx,
-        session_id=session_id,
+        session_id=str(session_id),
         fields=fields,
         submit_selector=submit_selector,
         wait_each=wait_each,

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -220,6 +220,11 @@ class WorkflowCreateRequest(BaseModel):
     description: str = ""
     dag: Dag
     rationale: str = ""
+    requires_approval: bool = False
+    """Opt the workflow into the maker-checker gate: once true, publishing a new
+    version or starting a run opens an approval_request instead of acting."""
+    sensitivity: str = Field(default="normal", pattern=r"^(normal|elevated)$")
+    """'elevated' also gates the workflow (money-moving / high-risk)."""
 
 
 class WorkflowUpdateRequest(BaseModel):
@@ -237,6 +242,8 @@ class WorkflowResponse(BaseModel):
     name: str
     description: str
     latest_version: int
+    requires_approval: bool = False
+    sensitivity: str = "normal"
     created_at: datetime
     updated_at: datetime
 
@@ -362,6 +369,10 @@ class RunStartRequest(BaseModel):
     """Run-level placement chosen at launch: None = use each node's own target;
     "server" = run everything on the API host; an agent alias / pool = run the
     whole workflow there (control nodes always stay on the server)."""
+    mode: Literal["live", "dry_run"] = "live"
+    """Execution mode. ``dry_run`` walks the full DAG topology but simulates
+    side-effecting nodes instead of performing them (no money-moving / no
+    irreversible effects); the default ``live`` preserves today's behaviour."""
 
 
 class RunResponse(BaseModel):
@@ -371,6 +382,7 @@ class RunResponse(BaseModel):
     workflow_version: int
     started_by: uuid.UUID
     status: str
+    mode: str
     started_at: datetime
     ended_at: datetime | None
     outputs: dict[str, Any]
@@ -401,6 +413,41 @@ class RunRespondRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     node_id: str
     response: str
+
+
+# ---------- governance (maker-checker) ------------------------------------
+
+
+class ApprovalRequestResponse(BaseModel):
+    """A maker-checker approval gate as seen over HTTP."""
+
+    id: uuid.UUID
+    tenant_id: uuid.UUID
+    subject_type: str
+    subject_ref: str
+    status: str
+    requested_by: uuid.UUID
+    requested_at: datetime
+    decided_by: uuid.UUID | None
+    decided_at: datetime | None
+    reason: str
+    context: dict[str, Any]
+
+
+class ApprovalPendingResponse(BaseModel):
+    """Returned with HTTP 202 when a gated action is held for approval instead
+    of being performed. `approval` is the freshly opened pending request; the
+    checker decides it via /approvals/{id}/approve|reject."""
+
+    status: str = "pending_approval"
+    approval: ApprovalRequestResponse
+
+
+class ApprovalDecisionRequest(BaseModel):
+    """Body for approve/reject — `reason` is the checker's decision note."""
+
+    model_config = ConfigDict(extra="forbid")
+    reason: str = Field(default="", max_length=2000)
 
 
 # ---------- dashboard / stats ---------------------------------------------
@@ -525,6 +572,25 @@ class AuditListResponse(BaseModel):
 
     entries: list[AuditEntry]
     total: int
+
+
+class AuditVerifyResponse(BaseModel):
+    """Result of recomputing a tenant's audit hash chain.
+
+    ``ok`` is True iff every chained row's hash and link recompute cleanly.
+    ``entries_checked`` is the number of chained (sequenced) rows examined.
+    On a break, ``first_broken_seq`` is the ``seq`` of the first failing row
+    and ``reason`` is a human-readable description for the auditor.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    ok: bool
+    entries_checked: int
+    first_seq: int | None = None
+    last_seq: int | None = None
+    first_broken_seq: int | None = None
+    reason: str | None = None
 
 
 class ScheduleCreateRequest(BaseModel):

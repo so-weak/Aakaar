@@ -14,7 +14,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from aakaar.db.models import Run, RunEvent, RunStatus
+from aakaar.db.models import Run, RunEvent, RunMode, RunStatus
 
 
 def create_run(
@@ -25,6 +25,7 @@ def create_run(
     workflow_version: int,
     started_by: uuid.UUID,
     inputs: dict[str, Any] | None = None,
+    mode: str = RunMode.LIVE,
 ) -> Run:
     run = Run(
         tenant_id=tenant_id,
@@ -32,6 +33,7 @@ def create_run(
         workflow_version=workflow_version,
         started_by=started_by,
         status=RunStatus.QUEUED,
+        mode=mode,
         inputs=inputs or {},
         outputs={},
     )

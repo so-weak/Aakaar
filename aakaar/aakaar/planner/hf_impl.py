@@ -92,7 +92,12 @@ class BGEEmbeddingsClient(EmbeddingsClient):
         fn = getattr(self._model, "get_embedding_dimension", None)
         if fn is None:
             fn = self._model.get_sentence_embedding_dimension
-        return int(fn())
+        value = fn()
+        if value is None:
+            raise RuntimeError(
+                f"embedding model {self.model_name!r} reported no dimension"
+            )
+        return int(value)
 
     def embed(self, texts: Sequence[str]) -> list[list[float]]:
         if not texts:

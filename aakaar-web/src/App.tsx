@@ -9,6 +9,7 @@ import { Layout } from "@/components/Layout";
 import { AdminGrantsPage } from "@/pages/AdminGrants";
 import { AdminUsersPage } from "@/pages/AdminUsers";
 import { AgentsPage } from "@/pages/Agents";
+import { ApprovalsPage } from "@/pages/Approvals";
 import { AuditLogPage } from "@/pages/AuditLog";
 import { CapabilitiesPage } from "@/pages/Capabilities";
 import { ChatPage } from "@/pages/Chat";
@@ -18,6 +19,7 @@ import { LoginPage } from "@/pages/Login";
 import { MfaSettingsPage } from "@/pages/MfaSettings";
 import { OidcCallbackPage } from "@/pages/OidcCallback";
 import { RecordingsPage } from "@/pages/Recordings";
+import { RetentionPage } from "@/pages/Retention";
 import { RunDetailPage } from "@/pages/RunDetail";
 import { RunsPage } from "@/pages/Runs";
 import { SuperuserTenantDetailPage } from "@/pages/SuperuserTenantDetail";
@@ -51,6 +53,7 @@ export default function App() {
         <Route path="workflows/:id" element={<WorkflowDetailPage />} />
         <Route path="runs" element={<RunsPage />} />
         <Route path="runs/:id" element={<RunDetailPage />} />
+        <Route path="approvals" element={<ApprovalsPage />} />
         <Route path="capabilities" element={<CapabilitiesPage />} />
         <Route path="mfa-settings" element={<MfaSettingsPage />} />
 
@@ -100,6 +103,14 @@ export default function App() {
           element={
             <ProtectedRoute requireRole={["tenant_admin"]}>
               <AuditLogPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="retention"
+          element={
+            <ProtectedRoute requireRole={["tenant_admin"]}>
+              <RetentionPage />
             </ProtectedRoute>
           }
         />

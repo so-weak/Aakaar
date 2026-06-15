@@ -12,12 +12,17 @@ or be dispatched to an agent (target=<agent>) that runs the same code.
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from aakaar.interpreter.activities.registry import ActivityRegistry
 from aakaar.interpreter.activities.types import ActivityContext
 from aakaar.interpreter.credentials import fetch_credentials
 from aakaar.shared.registry import CapabilityDefinition, Registry, SecretSpec
+
+CapabilityHandler = Callable[
+    [ActivityContext, dict[str, Any]], Awaitable[dict[str, Any]]
+]
 
 logger = logging.getLogger(__name__)
 
@@ -67,10 +72,11 @@ def register_shared(registry: Registry, activities: ActivityRegistry) -> int:
             tags=tuple(spec.tags) + (("gui",) if spec.gui else ()),
         )
 
-        def make_handler(spec: Any = spec, run: Any = run):
+        def make_handler(spec: Any = spec, run: Any = run) -> CapabilityHandler:
             async def handler(actx: ActivityContext, inputs: dict[str, Any]) -> dict[str, Any]:
                 ctx = _server_context(actx, spec, inputs)
-                return await run(ctx, inputs)
+                result: dict[str, Any] = await run(ctx, inputs)
+                return result
 
             return handler
 

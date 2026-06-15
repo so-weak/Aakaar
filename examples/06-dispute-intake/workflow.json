@@ -1,0 +1,61 @@
+{
+  "name": "Dispute intake with maker-checker approval",
+  "description": "Pull a card-dispute case from the case-management API, ask an analyst to confirm the provisional credit in the run chat, and post the resolution to the core banking webhook. The workflow is marked requires_approval + elevated so starting any run opens a maker-checker gate.",
+  "rationale": "Banking template: human-in-the-loop dispute handling under maker-checker governance. requires_approval/elevated gates run-start (a second admin must approve before the run begins, 202 + approval_request); human.prompt adds in-flight analyst confirmation; the core action goes out through the SSRF-guarded webhook.",
+  "requires_approval": true,
+  "sensitivity": "elevated",
+  "dag": {
+    "id": "",
+    "version": 0,
+    "nodes": [
+      {
+        "id": "stamp",
+        "kind": "action",
+        "ref": "time.now",
+        "inputs": {}
+      },
+      {
+        "id": "fetch_case",
+        "kind": "capability",
+        "ref": "cap.api_call",
+        "inputs": {
+          "method": "GET",
+          "url": "https://cases.example.com/api/disputes/REPLACE-WITH-CASE-ID",
+          "account_alias": "primary"
+        },
+        "retry": { "max_attempts": 3, "backoff_ms": 1500 }
+      },
+      {
+        "id": "confirm_credit",
+        "kind": "control",
+        "ref": "human.prompt",
+        "inputs": {
+          "message": "Review the dispute case above. Approve the provisional credit and chargeback initiation?",
+          "expects": "confirm",
+          "timeout_seconds": 900
+        }
+      },
+      {
+        "id": "post_resolution",
+        "kind": "capability",
+        "ref": "cap.webhook_send",
+        "inputs": {
+          "url": "https://core.example.com/REPLACE-WITH-DISPUTE-RESOLUTION-ENDPOINT",
+          "payload": {
+            "event": "dispute_resolution",
+            "resolved_on": "${stamp.ist_date}",
+            "case": "${fetch_case.body}",
+            "analyst_decision": "${confirm_credit.response}",
+            "action": "provisional_credit_and_chargeback"
+          },
+          "timeout_s": 30
+        }
+      }
+    ],
+    "edges": [
+      { "from": "stamp", "to": "post_resolution" },
+      { "from": "fetch_case", "to": "confirm_credit" },
+      { "from": "confirm_credit", "to": "post_resolution" }
+    ]
+  }
+}

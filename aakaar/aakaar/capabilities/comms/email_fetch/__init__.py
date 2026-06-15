@@ -37,6 +37,7 @@ fails on a slim build.
 from __future__ import annotations
 
 import logging
+from email.message import Message
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -259,15 +260,15 @@ def _first_text_payload(msg: Any, want_type: str) -> str | None:
     return None
 
 
-def _decode_part_text(part: Any) -> str | None:
+def _decode_part_text(part: Message) -> str | None:
     payload = part.get_payload(decode=True)
-    if payload is None:
+    if not isinstance(payload, (bytes, bytearray)):
         return None
     charset = part.get_content_charset() or "utf-8"
     try:
-        return payload.decode(charset, errors="replace")
+        return str(payload.decode(charset, errors="replace"))
     except (LookupError, ValueError):
-        return payload.decode("utf-8", errors="replace")
+        return str(payload.decode("utf-8", errors="replace"))
 
 
 def _strip_html(html: str) -> str:
@@ -401,7 +402,9 @@ def _fetch_sync(
                 f"cap.email_fetch: could not select mailbox {mailbox!r} on {host}"
             )
 
-        typ, data = conn.uid("search", None, *criteria)
+        # No CHARSET argument (imaplib skips a None charset entirely, so
+        # omitting it yields the identical `UID SEARCH <criteria>` command).
+        typ, data = conn.uid("search", *criteria)
         if typ != "OK":
             raise RuntimeError(
                 f"cap.email_fetch: IMAP SEARCH failed on {host} mailbox {mailbox!r}"

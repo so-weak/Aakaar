@@ -1,6 +1,8 @@
 # Example workflows
 
-Four worked, importable workflows, each in its own directory:
+Worked, importable workflows, each in its own directory.
+
+**Primitives & composition:**
 
 | Example | Flow | Needs |
 |---------|------|-------|
@@ -9,11 +11,21 @@ Four worked, importable workflows, each in its own directory:
 | [03-archive-transform-store](03-archive-transform-store/) | seed a CSV → pandas transform → pack a zip → publish to a stable object-store key | nothing (fully offline) |
 | [04-remote-desktop](04-remote-desktop/) | focus a window → click → type, on a remote workstation | one enrolled, online agent |
 
+**Banking templates** (business context in each README):
+
+| Example | Flow | Stage-2 features shown |
+|---------|------|------------------------|
+| [05-recon-breaks](05-recon-breaks/) | fetch internal ledger (SFTP) + bank export (web) → data_transform isolates breaks → notify ops | dry-run, audit |
+| [06-dispute-intake](06-dispute-intake/) | fetch dispute case → analyst confirmation (human.prompt) → post resolution | **maker-checker** (`requires_approval`/`elevated`), HITL, audit |
+| [07-loan-document-extract](07-loan-document-extract/) | fetch PDF (SFTP) → doc_extract fields → validate via LOS → archive | dry-run, retention, audit |
+| [08-kyc-check](08-kyc-check/) | gather profile → screen via provider (SSRF guard) → record | SSRF guard, audit (record), dry-run, retention |
+
 Each `workflow.json` is a complete request body for `POST /workflows`
-(`{name, description, dag, rationale}`) and validates against the real DAG
-schema (`aakaar/aakaar/shared/dag/types.py`) and the registered capability
-schemas. `03` runs end-to-end on a bare dev install — it is also the basis of
-the CI smoke test (`loadtest/ci/smoke.py`).
+(`{name, description, dag, rationale}` plus, for a gated workflow,
+`requires_approval` / `sensitivity`) and validates against the real DAG schema
+(`aakaar/aakaar/shared/dag/types.py`), the registered capability schemas, and
+`WorkflowCreateRequest`. `03` runs end-to-end on a bare dev install — it is also
+the basis of the CI smoke test (`loadtest/ci/smoke.py`).
 
 ## Importing an example
 
@@ -60,6 +72,49 @@ curl -s $API/runs/$RUN_ID -H "Authorization: Bearer $TOKEN" | python3 -m json.to
 
 Or skip the curl entirely: the web UI's workflow editor accepts the same DAG
 JSON, and runs show live in the run console.
+
+## Dry-run (rehearse without side effects)
+
+Add `"mode": "dry_run"` to the run-start body. The executor walks the full DAG
+topology but **simulates** every side-effecting (or undeclared) node instead of
+performing it — no SMTP/SFTP/HTTP-POST/desktop/file-write — while read-only
+nodes (e.g. `time.now`) still run for real. The run row is stamped
+`mode=dry_run`, and each simulated node logs `{"simulated": true, "would_run":
+"<ref>"}`. A dry-run **reruns as a dry-run**.
+
+```bash
+curl -s -X POST $API/workflows/$WF_ID/runs -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d '{"inputs": {}, "mode": "dry_run"}'
+```
+
+Every capability in these templates is undeclared for `side_effecting`, so a
+dry-run simulates all of them — the safe way to validate wiring before pointing
+at a real bank/provider. Recommended for 05, 07, 08.
+
+## Maker-checker gate (06)
+
+A workflow created with `"requires_approval": true` and/or
+`"sensitivity": "elevated"` is **gated**: starting a run (and publishing a new
+version) does not act — it opens an `approval_request` and returns
+`202 Accepted` with an `approval` body. A **different** tenant admin then
+approves it, which records the decision *and* performs the gated action,
+attributed to the original maker. Self-approval is rejected with `409`
+(segregation of duties).
+
+```bash
+# Maker: starting the gated run returns 202 + an approval id (no run yet).
+APPROVAL_ID=$(curl -s -X POST $API/workflows/$WF_ID/runs -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d '{"inputs": {}}' \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["approval"]["id"])')
+
+# Checker (a DIFFERENT tenant admin): approve performs the run.
+curl -s -X POST $API/approvals/$APPROVAL_ID/approve -H "Authorization: Bearer $CHECKER_TOKEN" \
+  -H 'Content-Type: application/json' -d '{"reason": "reviewed dispute, credit approved"}'
+# (or .../reject to decline — records the decision, performs nothing)
+```
+
+`GET /approvals?status=pending` lists what's waiting; any tenant user can watch,
+only an admin can decide.
 
 ## Reading the DAG format
 

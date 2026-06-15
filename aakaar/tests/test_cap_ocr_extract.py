@@ -52,6 +52,11 @@ def test_definition_shape() -> None:
     assert set(definition.output_schema.model_fields) == {"text"}
 
 
+def test_definition_is_read_only() -> None:
+    # Read-only extractor: must run for real (not be simulated) in a dry-run.
+    assert definition.side_effecting is False
+
+
 def test_input_schema_defaults_lang_to_eng() -> None:
     parsed = definition.input_schema(source="aakaar://t/x/y.png")
     assert parsed.lang == "eng"
@@ -130,6 +135,28 @@ async def test_ocr_extract_happy_path(tmp_path: Path) -> None:
     assert recognised, "expected some text to be recognised"
     hits = sum(1 for ch in expected if ch in recognised)
     assert hits >= 3, f"expected to recognise most of {expected!r}, got {out['text']!r}"
+
+
+@pytest.mark.asyncio
+async def test_ocr_extract_rejects_oversized_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Safety property: an over-limit source is refused before OCR runs.
+
+    The dependency probes are stubbed so the size guard is exercised even on a
+    host without pytesseract / tesseract — the guard sits just after them.
+    """
+    import aakaar.capabilities.data.ocr_extract as mod
+
+    monkeypatch.setattr(mod, "_require_pytesseract", lambda: object())
+    monkeypatch.setattr(mod, "_assert_tesseract_binary", lambda _pt: None)
+
+    oversized = b"\x00" * (mod._MAX_SOURCE_BYTES + 1)
+    ctx = _ctx(tmp_path)
+    stored = ctx.object_store.put(str(ctx.tenant_id), "ocr/huge.png", oversized)
+
+    with pytest.raises(RuntimeError, match="exceeding the"):
+        await handler(ctx, {"source": stored.uri})
 
 
 @pytest.mark.asyncio

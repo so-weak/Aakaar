@@ -44,7 +44,9 @@ from aakaar.interpreter import (
     RunOrchestrator,
     build_default_activities,
 )
+from aakaar.interpreter.durability import CheckpointStore, EventOutbox
 from aakaar.interpreter.events import DbEventRecorder
+from aakaar.interpreter.human_tasks import HumanTaskEscalator, HumanTaskStore
 from aakaar.interpreter.signals import SignalHub
 from aakaar.planner import (
     CapabilityIndex,
@@ -53,7 +55,7 @@ from aakaar.planner import (
     PlannerService,
 )
 from aakaar.services.audit import AuditFileSink, AuditRecorder
-from aakaar.services.events import BroadcastingEventRecorder, EventBroker
+from aakaar.services.events import EventBroker, OutboxEventRecorder
 from aakaar.services.scheduler import Scheduler
 from aakaar.shared.registry import Registry
 from aakaar.storage.object_store import LocalFsObjectStore, ObjectStorage
@@ -99,6 +101,10 @@ class AppDependencies:
     the agentic loop needs a Playwright session and there's nothing to drive
     in headless-only deployments."""
     signals: SignalHub = field(init=False)
+    checkpoints: CheckpointStore = field(init=False)
+    event_outbox: EventOutbox = field(init=False)
+    human_tasks: HumanTaskStore = field(init=False)
+    human_task_escalator: HumanTaskEscalator = field(init=False)
     executor: Executor = field(init=False)
     orchestrator: RunOrchestrator = field(init=False)
     audit: AuditRecorder = field(init=False)
@@ -154,14 +160,29 @@ class AppDependencies:
             logger.debug("autoloading capabilities into registry/activities")
             load_capabilities(self.registry, self.activities)
         self.event_broker = EventBroker()
+        # At-least-once, restart-safe event fan-out: the recorder persists each
+        # row unpublished, the outbox dispatches to the broker then marks it
+        # published, and a startup sweep replays anything left unpublished.
+        self.event_outbox = EventOutbox(
+            session_factory=self.session_factory,
+            publish_fn=self.event_broker.publish,
+        )
         if self.event_recorder is None:
             # Wrap the canonical DB recorder so each event also fans out to any
-            # live WebSocket subscribers. Test-provided recorders are left as-is.
-            self.event_recorder = BroadcastingEventRecorder(
+            # live WebSocket subscribers via the durable outbox. Test-provided
+            # recorders are left as-is.
+            self.event_recorder = OutboxEventRecorder(
                 DbEventRecorder(session_factory=self.session_factory),
-                self.event_broker,
+                self.event_outbox,
             )
         self.signals = SignalHub()
+        self.checkpoints = CheckpointStore(session_factory=self.session_factory)
+        self.human_tasks = HumanTaskStore(
+            session_factory=self.session_factory,
+            recorder=self.event_recorder,
+            sla_seconds=self.settings.human_task_sla_seconds,
+            escalation_seconds=self.settings.human_task_escalation_seconds,
+        )
         self.agent_registry = AgentRegistry()
         if self.settings.remote_exec_enabled:
             self.remote_dispatcher = RemoteDispatcher(
@@ -178,6 +199,8 @@ class AppDependencies:
             llm=self.llm,
             live_screenshots=self.settings.live_screenshots,
             remote_dispatcher=self.remote_dispatcher,
+            checkpoints=self.checkpoints,
+            human_tasks=self.human_tasks,
         )
         self.orchestrator = RunOrchestrator(
             session_factory=self.session_factory,
@@ -189,11 +212,17 @@ class AppDependencies:
             vault=self.vault,
             browser_pool=self.browser_pool,
             download_mirror_dir=self.settings.download_mirror_dir,
+            checkpoints=self.checkpoints,
+            max_resumes=self.settings.max_run_resumes,
         )
         self.scheduler = Scheduler(
             session_factory=self.session_factory,
             orchestrator=self.orchestrator,
             tick_seconds=self.settings.scheduler_tick_seconds,
+        )
+        self.human_task_escalator = HumanTaskEscalator(
+            store=self.human_tasks,
+            tick_seconds=self.settings.human_task_escalation_tick_seconds,
         )
         logger.debug("AppDependencies: ready")
 

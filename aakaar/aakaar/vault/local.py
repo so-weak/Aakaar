@@ -14,6 +14,11 @@ encrypts every new write; the rest are old keys still accepted for decryption
 (MultiFernet semantics). Pre-encryption plaintext entries remain readable and
 are re-encrypted the next time they are written.
 
+Key SOURCE is pluggable via a :class:`~aakaar.vault.key_provider.KeyProvider`
+(default :class:`~aakaar.vault.key_provider.LocalKeyProvider`, which reads the
+same ``AAKAAR_VAULT_KEY`` settings). A bank can inject a provider backed by
+their own KMS without changing this file — see :mod:`aakaar.vault.key_provider`.
+
 `vault_ref` is allowed to contain forward slashes (e.g. `grants/<uuid>`);
 they are translated to subdirectories. Path traversal is rejected.
 """
@@ -29,6 +34,7 @@ from pathlib import Path
 
 from cryptography.fernet import Fernet, InvalidToken, MultiFernet
 
+from aakaar.vault.key_provider import KeyProvider, LocalKeyProvider
 from aakaar.vault.types import Secrets, VaultEntry, VaultError, VaultNotFound
 
 logger = logging.getLogger(__name__)
@@ -47,11 +53,23 @@ class LocalVault:
         root: Path | str,
         *,
         keys: Sequence[str] = (),
+        key_provider: KeyProvider | None = None,
         require_encryption: bool = False,
     ) -> None:
         self._root = Path(root).resolve()
         self._root.mkdir(parents=True, exist_ok=True)
-        self._fernet = self._build_fernet(keys, require_encryption=require_encryption)
+        # Key material now comes from a KeyProvider (the KMS seam). When a caller
+        # passes one we use it; otherwise we wrap the legacy `keys` argument in a
+        # LocalKeyProvider so existing call sites and vault files behave exactly
+        # as before. Passing both is a wiring bug — the explicit provider wins
+        # but we surface it.
+        if key_provider is not None and keys:
+            logger.warning(
+                "LocalVault: both key_provider and keys= were supplied; "
+                "using key_provider and ignoring keys="
+            )
+        provider = key_provider or LocalKeyProvider(keys)
+        self._fernet = self._build_fernet(provider, require_encryption=require_encryption)
 
     @property
     def root(self) -> Path:
@@ -115,19 +133,25 @@ class LocalVault:
 
     @staticmethod
     def _build_fernet(
-        keys: Sequence[str], *, require_encryption: bool
+        provider: KeyProvider, *, require_encryption: bool
     ) -> MultiFernet | None:
+        # decryption_keys() is active-first; the MultiFernet built from it
+        # therefore encrypts with the active key and still decrypts anything a
+        # retired key wrote. A provider with no key configured (local: empty
+        # AAKAAR_VAULT_KEY; envelope: KMS unreachable) returns no keys.
+        keys = list(provider.decryption_keys())
         if not keys:
             if require_encryption:
                 raise VaultError(
-                    "AAKAAR_VAULT_REQUIRE_ENCRYPTION is set but no AAKAAR_VAULT_KEY "
-                    "is configured; refusing to store secrets in plaintext. Generate "
-                    "a key with: python -c 'from cryptography.fernet import Fernet; "
+                    "AAKAAR_VAULT_REQUIRE_ENCRYPTION is set but the key provider "
+                    "returned no key; refusing to store secrets in plaintext. For the "
+                    "default LocalKeyProvider, set AAKAAR_VAULT_KEY. Generate a key "
+                    "with: python -c 'from cryptography.fernet import Fernet; "
                     "print(Fernet.generate_key().decode())'"
                 )
             logger.warning(
-                "vault: AAKAAR_VAULT_KEY is not set — secrets are stored in PLAINTEXT. "
-                "Set a Fernet key (or AAKAAR_VAULT_REQUIRE_ENCRYPTION=1 to fail closed)."
+                "vault: key provider returned no key — secrets are stored in PLAINTEXT. "
+                "Configure AAKAAR_VAULT_KEY (or AAKAAR_VAULT_REQUIRE_ENCRYPTION=1 to fail closed)."
             )
             return None
         fernets: list[Fernet] = []
@@ -136,7 +160,9 @@ class LocalVault:
                 fernets.append(Fernet(key.encode()))
             except (ValueError, TypeError) as e:
                 # Index only — never echo key material into logs/exceptions.
-                raise VaultError(f"AAKAAR_VAULT_KEY entry #{i + 1} is not a valid Fernet key") from e
+                raise VaultError(
+                    f"key provider key #{i + 1} is not a valid Fernet key"
+                ) from e
         return MultiFernet(fernets)
 
     def _encode(self, secrets: Secrets) -> dict[str, str]:

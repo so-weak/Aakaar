@@ -216,11 +216,13 @@ def _read_frame(data: bytes, fmt: str, *, sep_tsv: bool) -> Any:
 
 def _write_frame(df: Any, fmt: str) -> bytes:
     if fmt == "csv":
-        return df.to_csv(index=False).encode("utf-8")
+        csv_text: str = df.to_csv(index=False)
+        return csv_text.encode("utf-8")
     if fmt == "json":
         # records orientation -> list[ {col: val} ], the friendliest shape
         # for downstream nodes / cap.email_parse style consumers.
-        return df.to_json(orient="records").encode("utf-8")
+        json_text: str = df.to_json(orient="records")
+        return json_text.encode("utf-8")
     if fmt == "xlsx":
         buf = io.BytesIO()
         try:

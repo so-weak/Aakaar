@@ -9,6 +9,7 @@ import {
   Download,
   ExternalLink,
   FileText,
+  FlaskConical,
   GitBranch,
   ListOrdered,
   MessageCircleQuestion,
@@ -25,7 +26,11 @@ import { runs as runsApi, superuser as superuserApi, workflows as workflowsApi }
 import type { PendingPrompt, Run, RunDetail, RunEvent } from "@/api/types";
 import { useAuth } from "@/auth/AuthContext";
 import { ErrorBanner } from "@/components/ErrorBanner";
-import { LiveDagViewer, deriveNodeAgents } from "@/components/LiveDagViewer";
+import {
+  LiveDagViewer,
+  deriveNodeAgents,
+  deriveSimulatedNodes,
+} from "@/components/LiveDagViewer";
 import { LiveScreenPanel } from "@/components/LiveScreenPanel";
 import { PageHeader } from "@/components/PageHeader";
 import { useRunEvents } from "@/hooks/useRunEvents";
@@ -144,6 +149,7 @@ export function RunDetailPage() {
   // the same merged event stream so the timeline can badge it.
   const agentsByNode = useMemo(() => deriveNodeAgents(events), [events]);
   const operatorPaused = useMemo(() => deriveOperatorPaused(events), [events]);
+  const simulatedNodes = useMemo(() => deriveSimulatedNodes(events), [events]);
 
   // ---------- lifecycle controls ----------
   // Tenant-scoped endpoints — superusers read runs through /superuser and
@@ -222,6 +228,9 @@ export function RunDetailPage() {
 
   const { run, pending_prompts } = data;
   const terminal = isTerminal;
+  // A dry-run is reported on the run row itself; fall back to the event marker
+  // for older runs whose row predates the mode field being surfaced.
+  const isDryRun = run.mode === "dry_run" || simulatedNodes.size > 0;
   const canControl =
     !isSuper &&
     !!claims &&
@@ -328,11 +337,32 @@ export function RunDetailPage() {
                 {rerun.isPending ? "Starting…" : "Rerun"}
               </button>
             ) : null}
+            {isDryRun ? (
+              <span
+                className="badge ring-signal-cyan/40 text-signal-cyan"
+                title="Dry run — side-effecting steps were simulated, not performed"
+              >
+                <FlaskConical size={12} />
+                SIMULATED
+              </span>
+            ) : null}
             <ViewToggle view={view} onChange={setView} />
             <StatusPill status={run.status} />
           </div>
         }
       />
+
+      {isDryRun ? (
+        <div className="flex items-center gap-2 border-b border-signal-cyan/25 bg-signal-cyan/5 px-7 py-2.5 text-xs text-signal-cyan">
+          <FlaskConical size={13} className="shrink-0" />
+          <span className="min-w-0 flex-1 text-ink-200">
+            This is a <span className="font-semibold text-signal-cyan">dry run</span>.
+            The workflow topology runs end-to-end, but money-moving and
+            irreversible steps are simulated — no real side effects are
+            performed.
+          </span>
+        </div>
+      ) : null}
 
       {controlError ? (
         <div className="border-b border-ink-800 px-7 py-3">
@@ -383,6 +413,7 @@ export function RunDetailPage() {
                         key={e.sequence}
                         event={e}
                         agent={e.node_id ? agentsByNode[e.node_id] ?? null : null}
+                        simulated={e.payload.simulated === true}
                       />
                     ))}
                   </ol>
@@ -638,7 +669,15 @@ function pauseReasonLabel(event: RunEvent): string | null {
   return null;
 }
 
-function EventRow({ event, agent }: { event: RunEvent; agent: string | null }) {
+function EventRow({
+  event,
+  agent,
+  simulated,
+}: {
+  event: RunEvent;
+  agent: string | null;
+  simulated: boolean;
+}) {
   const Icon =
     event.kind === "node_completed"
       ? CheckCircle2
@@ -695,6 +734,15 @@ function EventRow({ event, agent }: { event: RunEvent; agent: string | null }) {
               >
                 <MonitorSmartphone size={10} className="shrink-0" />
                 ran on {agent}
+              </span>
+            ) : null}
+            {simulated ? (
+              <span
+                className="inline-flex items-center gap-1 rounded bg-signal-cyan/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-signal-cyan"
+                title="Side-effecting step simulated in dry-run — not performed"
+              >
+                <FlaskConical size={10} className="shrink-0" />
+                simulated
               </span>
             ) : null}
           </span>

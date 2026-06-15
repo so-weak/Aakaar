@@ -42,6 +42,19 @@ Per-service documentation: [backend](aakaar/README.md) · [web](aakaar-web/READM
 Contributing: [CONTRIBUTING.md](CONTRIBUTING.md) · Security policy & hardening checklist: [SECURITY.md](SECURITY.md).
 Deploying without external services (SQLite-only, API + web): [`docker-compose.airgap.yml`](docker-compose.airgap.yml); with Postgres + RLS: [`docker-compose.yml`](docker-compose.yml).
 
+### Platform & governance documentation ([`docs/`](docs/))
+
+The layered documentation a regulated deployment needs — written against the
+real code, every cited key/endpoint verified:
+
+| Doc | What it covers |
+|-----|----------------|
+| [Architecture Decision Records](docs/adr/) | Why SQLite (not Postgres/Temporal), in-process executor + durable resume, the KMS `KeyProvider` seam, app-level tenancy + optional RLS, airgap posture, maker-checker, tamper-evident audit, retention. |
+| [Security whitepaper](docs/security-whitepaper.md) | Trust model, tenant isolation, agent auth + the broker's trust boundary, recording-redaction privacy, secrets lifecycle, the RPA-agent attack surface + compromise response. |
+| [Operations manual](docs/operations-manual.md) | Backup/restore (WAL-aware), upgrade/rollback, the lifespan sweep tasks, health/metrics. |
+| [Compliance mapping](docs/compliance-mapping.md) | Control → endpoint/service/test evidence table (SoD, tamper-evident audit, retention/legal-hold/erasure, MFA/RBAC, residency). |
+| [Capability authoring guide](docs/capability-authoring-guide.md) | Writing a new capability safely: describe/declare, the `side_effecting` flag, SSRF/path guards, the credential envelope. |
+
 ---
 
 ## Quickstart (local dev)

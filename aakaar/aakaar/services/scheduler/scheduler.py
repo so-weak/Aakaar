@@ -136,7 +136,8 @@ class Scheduler:
             except (ValueError, KeyError):
                 logger.warning("invalid cron %r on schedule %s", sched.cron, sched.id)
                 return False
-            return _as_aware(nxt) <= now
+            nxt_aware = _as_aware(nxt)
+            return nxt_aware is not None and nxt_aware <= now
         return False
 
     async def _trigger(self, snap: _DueSchedule, now: datetime) -> bool:

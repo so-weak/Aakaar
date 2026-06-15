@@ -27,6 +27,7 @@ import sys
 from pathlib import Path
 
 from sqlalchemy import delete, select
+from sqlalchemy.orm import Session
 
 from aakaar.core.config import load_settings
 from aakaar.db.models import (
@@ -59,7 +60,7 @@ _DELETE_ORDER = (
 )
 
 
-def _summarize_users(session) -> tuple[int, int]:
+def _summarize_users(session: Session) -> tuple[int, int]:
     """Return (total_users, superuser_count)."""
     total = len(session.scalars(select(User.id)).all())
     supers = len(

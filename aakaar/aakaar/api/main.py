@@ -10,7 +10,12 @@ from openai import OpenAI
 from aakaar.api import AppDependencies, Settings, create_app, load_settings
 from aakaar.core.logging import setup_logging
 from aakaar.db.session import EngineConfig, SessionFactory, make_engine
-from aakaar.planner import FakeEmbeddingsClient, FakeLLMClient
+from aakaar.planner import (
+    EmbeddingsClient,
+    FakeEmbeddingsClient,
+    FakeLLMClient,
+    LLMClient,
+)
 from aakaar.planner.hf_impl import BGEEmbeddingsClient
 from aakaar.planner.openai_impl import OpenAILLMClient
 from aakaar.shared.registry import build_default_registry
@@ -61,6 +66,8 @@ def build_app() -> object:
 
     engine = make_engine(EngineConfig(url=settings.db_url, rls_strict=settings.rls_strict))
 
+    llm: LLMClient
+    embeddings: EmbeddingsClient
     if settings.openai_api_key:
         openai_client = build_openai_client(settings)
         logger.info(

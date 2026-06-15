@@ -4,12 +4,15 @@ Reads an image object (an `aakaar://` URI) from `ctx.object_store`, runs
 optical character recognition over it with Tesseract (via pytesseract),
 and returns the recognised plain text.
 
-This is a deterministic, read-only data capability: it takes no
-credentials and never touches the network. The heavy/optional bits —
-`pytesseract` (the Python binding) and the `tesseract` binary itself —
-are imported/located LAZILY inside the handler so importing this module
+This is a deterministic, read-only data capability (side_effecting=False):
+it takes no credentials and never touches the network. The heavy/optional
+bits — `pytesseract` (the Python binding) and the `tesseract` binary itself
+— are imported/located LAZILY inside the handler so importing this module
 never fails on a host that lacks them. If either is missing the handler
 raises a clear RuntimeError telling the operator what to install.
+
+The encoded size and decoded pixel area are bounded before OCR runs, so an
+oversized or decompression-bomb image is refused rather than OCR'd.
 
 Inputs:
   source: required. An `aakaar://` object URI pointing at an image
@@ -36,6 +39,13 @@ from aakaar.shared.registry import CapabilityDefinition
 
 logger = logging.getLogger(__name__)
 CAP_REF = "cap.ocr_extract"
+
+# Tesseract loads the whole raster into memory and its runtime scales with the
+# pixel count, so an unbounded source is a memory/CPU bomb (and a decompression
+# bomb if a tiny file expands to a huge canvas). Guard both the encoded size and
+# the decoded pixel area before handing the image to OCR.
+_MAX_SOURCE_BYTES = 32 * 1024 * 1024  # 32 MiB on the wire
+_MAX_PIXELS = 40_000_000  # ~40 MP — above this, refuse rather than OCR
 
 
 class _Inputs(BaseModel):
@@ -69,6 +79,9 @@ definition = CapabilityDefinition(
     ),
     input_schema=_Inputs,
     output_schema=_Outputs,
+    # Pure read-only extraction: no writes/sends/transfers escape the run. Runs
+    # for real even in a dry-run so a simulated plan still produces real text.
+    side_effecting=False,
     secrets=(),
     tags=("data", "ocr", "image", "text"),
 )
@@ -120,9 +133,24 @@ async def handler(ctx: ActivityContext, inputs: dict[str, Any]) -> dict[str, Any
     )
 
     data = ctx.object_store.get(source)
+    if len(data) > _MAX_SOURCE_BYTES:
+        raise RuntimeError(
+            f"cap.ocr_extract: source is {len(data)} bytes, exceeding the "
+            f"{_MAX_SOURCE_BYTES}-byte limit"
+        )
     try:
         with Image.open(io.BytesIO(data)) as img:
+            width, height = img.size
+            pixels = width * height
+            if pixels > _MAX_PIXELS:
+                raise RuntimeError(
+                    f"cap.ocr_extract: image is {width}x{height} ({pixels} px), "
+                    f"exceeding the {_MAX_PIXELS}-pixel limit"
+                )
             text = pytesseract.image_to_string(img, lang=lang)
+    except RuntimeError:
+        # Our own guard (size/pixel) — already actionable; don't re-wrap.
+        raise
     except Exception as e:
         # Bad/undecodable image, or a missing language pack -> surface clearly.
         raise RuntimeError(

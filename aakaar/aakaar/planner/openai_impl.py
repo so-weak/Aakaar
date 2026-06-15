@@ -18,15 +18,24 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from openai import OpenAI
+from openai.types.chat import (
+    ChatCompletionAssistantMessageParam,
+    ChatCompletionFunctionToolParam,
+    ChatCompletionMessageParam,
+    ChatCompletionSystemMessageParam,
+    ChatCompletionUserMessageParam,
+)
+from openai.types.shared_params import FunctionDefinition
 from pydantic import ValidationError as PydanticValidationError
 
 from aakaar.planner.llm import (
     LLMClient,
     LLMMessage,
     PlannerCompletion,
+    Role,
     ToolCall,
     ToolStep,
 )
@@ -34,6 +43,42 @@ from aakaar.shared.dag import ValidationError
 
 logger = logging.getLogger(__name__)
 _DEFAULT_LLM_MODEL = "gpt-5.4-mini"
+
+
+def _to_message_params(
+    messages: list[LLMMessage],
+) -> list[ChatCompletionMessageParam]:
+    """Map our role-tagged messages onto OpenAI's per-role TypedDict params
+    so the typed `create()` overloads accept them. `Role` only ever carries
+    system/user/assistant, matching the three concrete param types."""
+    out: list[ChatCompletionMessageParam] = []
+    for m in messages:
+        if m.role is Role.SYSTEM:
+            out.append(
+                ChatCompletionSystemMessageParam(role="system", content=m.content)
+            )
+        elif m.role is Role.ASSISTANT:
+            out.append(
+                ChatCompletionAssistantMessageParam(
+                    role="assistant", content=m.content
+                )
+            )
+        else:
+            out.append(
+                ChatCompletionUserMessageParam(role="user", content=m.content)
+            )
+    return out
+
+
+def _to_tool_params(
+    tools: list[dict[str, Any]],
+) -> list[ChatCompletionFunctionToolParam]:
+    return [
+        ChatCompletionFunctionToolParam(
+            type="function", function=cast(FunctionDefinition, t)
+        )
+        for t in tools
+    ]
 
 
 @dataclass
@@ -47,7 +92,7 @@ class OpenAILLMClient(LLMClient):
         response = self.client.chat.completions.create(
             model=self.model,
             temperature=self.temperature,
-            messages=[{"role": m.role.value, "content": m.content} for m in messages],
+            messages=_to_message_params(messages),
             response_format={"type": "json_object"},
         )
         usage = getattr(response, "usage", None)
@@ -92,10 +137,8 @@ class OpenAILLMClient(LLMClient):
         response = self.client.chat.completions.create(
             model=self.model,
             temperature=self.temperature,
-            messages=[
-                {"role": m.role.value, "content": m.content} for m in messages
-            ],
-            tools=[{"type": "function", "function": t} for t in tools],
+            messages=_to_message_params(messages),
+            tools=_to_tool_params(tools),
             # Letting the model choose: if it has nothing to do, we want a
             # final-content reply so we can break the loop cleanly.
             tool_choice="auto",
@@ -125,8 +168,8 @@ class OpenAILLMClient(LLMClient):
             model=self.model,
             temperature=self.temperature,
             messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
+                ChatCompletionSystemMessageParam(role="system", content=system),
+                ChatCompletionUserMessageParam(role="user", content=user),
             ],
         )
         return response.choices[0].message.content or ""

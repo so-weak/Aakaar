@@ -25,6 +25,9 @@ from aakaar.api.routers import (
     agents as agents_router,
 )
 from aakaar.api.routers import (
+    approvals as approvals_router,
+)
+from aakaar.api.routers import (
     audit as audit_router,
 )
 from aakaar.api.routers import (
@@ -53,6 +56,9 @@ from aakaar.api.routers import (
 )
 from aakaar.api.routers import (
     recordings as recordings_router,
+)
+from aakaar.api.routers import (
+    retention as retention_router,
 )
 from aakaar.api.routers import (
     runs as runs_router,
@@ -134,8 +140,18 @@ def create_app(deps: AppDependencies) -> FastAPI:
             deps.orchestrator.recover_interrupted_runs()
         except Exception:
             logger.exception("startup: interrupted-run recovery failed")
+        # Replay run events a previous process persisted but never fanned out
+        # (at-least-once outbox): subscribers that reconnect see the full
+        # timeline; the UI dedupes on (run_id, sequence).
+        try:
+            deps.event_outbox.sweep()
+        except Exception:
+            logger.exception("startup: event outbox sweep failed")
         if deps.settings.scheduler_enabled:
             await deps.scheduler.start()
+        # Escalate human tasks whose SLA deadline has passed even when no run
+        # activity would otherwise drive the sweep.
+        await deps.human_task_escalator.start()
         # Expires abandoned recording entries (and tells their agents to stop
         # capturing) even when no recordings request ever comes in again.
         await recordings.start()
@@ -152,6 +168,10 @@ def create_app(deps: AppDependencies) -> FastAPI:
                     await broker_link.stop()
                 except Exception:
                     logger.exception("broker link shutdown failed")
+            try:
+                await deps.human_task_escalator.stop()
+            except Exception:
+                logger.exception("human-task escalator shutdown failed")
             try:
                 await recordings.stop()
             except Exception:
@@ -222,6 +242,8 @@ def create_app(deps: AppDependencies) -> FastAPI:
     app.include_router(objects_router.router)
     app.include_router(stats_router.router)
     app.include_router(audit_router.router)
+    app.include_router(approvals_router.router)
+    app.include_router(retention_router.router)
     app.include_router(schedules_router.router)
     app.include_router(ws_router.router)
     app.include_router(agents_router.router)

@@ -71,6 +71,22 @@ class Settings:
     RemoteDispatcher). Inert when no agents are enrolled."""
     remote_task_timeout_seconds: float = 300.0
 
+    # ---- Durability / HITL SLA --------------------------------------------
+    max_run_resumes: int = 5
+    """How many times one run may be resumed from a checkpoint across restarts
+    before recovery fails it instead (bounds a poison run that always crashes
+    the same layer). Mirrors `runs.resume_count`."""
+    human_task_sla_seconds: int = 3600
+    """Default deadline for a governed human.prompt task: past it with no
+    response the escalation sweep marks the HumanTask 'expired'. Clamped down to
+    the prompt's own `timeout_seconds` so a task never outlives its waiter."""
+    human_task_escalation_seconds: int = 1800
+    """When to escalate a still-pending human.prompt task (notify/reassign).
+    Should be <= human_task_sla_seconds; clamped to it otherwise."""
+    human_task_escalation_tick_seconds: float = 60.0
+    """How often the lifespan escalation sweep runs. Inert if no human.prompt
+    tasks are outstanding."""
+
     # ---- JWT signing (HS256 default; RS256 for production) ----------------
     jwt_issuer: str | None = None
     """`iss` claim stamped on minted tokens. Optional under HS256; recommended
@@ -249,6 +265,16 @@ def load_settings() -> Settings:
         not in ("0", "false", "no"),
         remote_task_timeout_seconds=float(
             os.environ.get("AAKAAR_REMOTE_TASK_TIMEOUT_SECONDS", "300")
+        ),
+        max_run_resumes=int(os.environ.get("AAKAAR_MAX_RUN_RESUMES", "5")),
+        human_task_sla_seconds=int(
+            os.environ.get("AAKAAR_HUMAN_TASK_SLA_SECONDS", "3600")
+        ),
+        human_task_escalation_seconds=int(
+            os.environ.get("AAKAAR_HUMAN_TASK_ESCALATION_SECONDS", "1800")
+        ),
+        human_task_escalation_tick_seconds=float(
+            os.environ.get("AAKAAR_HUMAN_TASK_ESCALATION_TICK_SECONDS", "60")
         ),
         jwt_issuer=os.environ.get("AAKAAR_JWT_ISSUER") or None,
         jwt_audience=os.environ.get("AAKAAR_JWT_AUDIENCE", "aakaar-api"),

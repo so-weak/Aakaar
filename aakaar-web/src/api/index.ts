@@ -3,12 +3,16 @@
 import { request } from "./client";
 import type {
   AgentEnrollResponse,
+  ApprovalRequest,
+  ApprovalStatus,
   AuditListResponse,
+  AuditVerifyResponse,
   CapabilityDefinitionResponse,
   ChatSession,
   ChatSessionSummary,
   Dag,
   DashboardStats,
+  EraseResponse,
   Grant,
   LoginResponse,
   MfaConfirmResponse,
@@ -21,8 +25,11 @@ import type {
   RecordingStatus,
   RecordingStopResponse,
   RemoteAgent,
+  RetentionPolicy,
   Run,
   RunDetail,
+  RunMode,
+  RunStartResult,
   Tenant,
   User,
   Workflow,
@@ -209,6 +216,63 @@ export const audit = {
         action_prefix: params.action_prefix || undefined,
       },
     }),
+  // Recompute the calling tenant's audit hash chain end-to-end (tamper check).
+  verify: () => request<AuditVerifyResponse>("/audit/verify"),
+  // Stream the chain as JSONL for offline re-verification. We fetch it as a
+  // blob with the bearer token (a plain <a download> can't send Authorization),
+  // mirroring useObjectBlob; the caller triggers the browser download.
+  exportBlob: async (): Promise<Blob> => {
+    const base = (import.meta.env.VITE_API_BASE as string | undefined) ?? "/api";
+    const token = sessionStorage.getItem("aakaar.token") ?? "";
+    const res = await fetch(`${base}/audit/export`, {
+      headers: { Authorization: `Bearer ${token}`, Accept: "application/x-ndjson" },
+    });
+    if (!res.ok) {
+      throw new Error(`audit export failed: HTTP ${res.status}`);
+    }
+    return res.blob();
+  },
+};
+
+// ---------- approvals (maker-checker) ------------------------------------
+
+export const approvals = {
+  list: (params: { status?: ApprovalStatus; limit?: number } = {}) =>
+    request<ApprovalRequest[]>("/approvals", {
+      query: { status: params.status, limit: params.limit },
+    }),
+  get: (id: string) => request<ApprovalRequest>(`/approvals/${id}`),
+  // approve PERFORMS the gated action (publish / run-start) under the checker's
+  // authorization; reject only records the decision. Both are tenant-admin only
+  // and the approver may not be the maker (409 SelfApprovalError otherwise).
+  approve: (id: string, reason = "") =>
+    request<ApprovalRequest>(`/approvals/${id}/approve`, {
+      method: "POST",
+      body: { reason },
+    }),
+  reject: (id: string, reason = "") =>
+    request<ApprovalRequest>(`/approvals/${id}/reject`, {
+      method: "POST",
+      body: { reason },
+    }),
+};
+
+// ---------- retention / legal-hold / erasure -----------------------------
+
+export const retention = {
+  listPolicies: () => request<RetentionPolicy[]>("/retention/policies"),
+  // ttl_days: null = retain indefinitely; >= 1 otherwise.
+  putPolicy: (resourceType: string, ttlDays: number | null) =>
+    request<RetentionPolicy>(`/retention/policies/${resourceType}`, {
+      method: "PUT",
+      body: { ttl_days: ttlDays },
+    }),
+  // Set or clear a legal hold (204). 404 if the resource is absent/cross-tenant.
+  setLegalHold: (input: { resource_type: string; resource_id: string; hold: boolean }) =>
+    request<void>("/retention/legal-hold", { method: "POST", body: input }),
+  // Right-to-erasure for one resource. 409 if under legal hold; 404 if absent.
+  erase: (input: { resource_type: string; resource_id: string; reason?: string }) =>
+    request<EraseResponse>("/retention/erase", { method: "POST", body: input }),
 };
 
 // ---------- runs ---------------------------------------------------------
@@ -219,15 +283,21 @@ export const runs = {
   //   "server"         -> run the entire workflow on the API host
   //   "<alias>"/"<pool>" -> run the entire workflow on that agent/pool
   // `version` pins the run to a specific workflow version (default: latest).
+  // `mode` chooses live (default) or dry_run execution.
+  //
+  // Returns a Run on a normal launch (201) OR an ApprovalPendingResponse when
+  // the workflow is gated and a maker-checker approval was opened (202) —
+  // narrow with `isApprovalPending` at the call site.
   start: (
     workflowId: string,
     inputs: Record<string, unknown> = {},
     target?: string | null,
     version?: number | null,
+    mode: RunMode = "live",
   ) =>
-    request<Run>(`/workflows/${workflowId}/runs`, {
+    request<RunStartResult>(`/workflows/${workflowId}/runs`, {
       method: "POST",
-      body: { inputs, target: target ?? null, version: version ?? null },
+      body: { inputs, target: target ?? null, version: version ?? null, mode },
     }),
   list: (opts: { active?: boolean } = {}) =>
     request<Run[]>(`/runs${opts.active ? "?active=true" : ""}`),

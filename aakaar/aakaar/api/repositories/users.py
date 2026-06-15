@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import uuid
+from typing import Any, cast
 
-from sqlalchemy import select
+from sqlalchemy import CursorResult, select
 from sqlalchemy.orm import Session
 
 from aakaar.api.auth import hash_password
@@ -122,4 +123,4 @@ def disable_users_for_tenant(session: Session, tenant_id: uuid.UUID) -> int:
         .values(status=UserStatus.DISABLED)
     )
     session.flush()
-    return int(result.rowcount or 0)
+    return int(cast(CursorResult[Any], result).rowcount or 0)

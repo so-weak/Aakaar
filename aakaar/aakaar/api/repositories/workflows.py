@@ -16,7 +16,7 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from aakaar.db.models import Workflow, WorkflowVersion
+from aakaar.db.models import Workflow, WorkflowSensitivity, WorkflowVersion
 from aakaar.shared.dag.types import Dag
 
 
@@ -33,6 +33,8 @@ def create_workflow(
     description: str,
     dag: Dag,
     rationale: str = "",
+    requires_approval: bool = False,
+    sensitivity: str = WorkflowSensitivity.NORMAL,
 ) -> tuple[Workflow, WorkflowVersion]:
     workflow = Workflow(
         tenant_id=tenant_id,
@@ -40,6 +42,8 @@ def create_workflow(
         name=name,
         description=description,
         latest_version=1,
+        requires_approval=requires_approval,
+        sensitivity=sensitivity,
     )
     session.add(workflow)
     session.flush()
@@ -51,6 +55,8 @@ def create_workflow(
         dag=dag.model_dump(by_alias=True),
         rationale=rationale,
         created_by=created_by,
+        requires_approval=requires_approval,
+        sensitivity=sensitivity,
     )
     session.add(version)
     session.flush()
@@ -70,6 +76,8 @@ def add_version(
     if workflow is None or workflow.tenant_id != tenant_id:
         raise WorkflowNotFound(str(workflow_id))
     next_version = workflow.latest_version + 1
+    # Freeze the workflow's current gate flags onto the version so a later
+    # change to the workflow can't retroactively un-gate an approved version.
     version = WorkflowVersion(
         tenant_id=tenant_id,
         workflow_id=workflow_id,
@@ -77,6 +85,8 @@ def add_version(
         dag=dag.model_dump(by_alias=True),
         rationale=rationale,
         created_by=created_by,
+        requires_approval=workflow.requires_approval,
+        sensitivity=workflow.sensitivity,
     )
     session.add(version)
     workflow.latest_version = next_version

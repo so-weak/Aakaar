@@ -26,13 +26,15 @@ import dataclasses
 import logging
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
-from aakaar.db.models import RunEventKind
+from aakaar.db.models import RunEventKind, RunMode
 from aakaar.interpreter.activities.registry import ActivityRegistry
 from aakaar.interpreter.activities.types import ActivityContext
 from aakaar.interpreter.controls import RunCancelled, RunControlHandle
+from aakaar.interpreter.durability import CheckpointStore, ResumeState
 from aakaar.interpreter.events import EventRecorder, node_span
+from aakaar.interpreter.human_tasks import HumanTaskStore
 from aakaar.interpreter.refs import resolve_inputs
 from aakaar.interpreter.signals import PendingPrompt, SignalHub
 from aakaar.interpreter.topology import topological_layers
@@ -58,6 +60,16 @@ class RunContext:
     """Operator pause/cancel handle, consulted at every layer boundary. None
     for direct executor use (unit tests); the orchestrator always supplies
     one."""
+    mode: str = RunMode.LIVE
+    """'live' | 'dry_run'. In dry_run the executor walks the full DAG topology
+    but short-circuits side-effecting capabilities to a simulated marker instead
+    of performing the real effect. Read-only entries still run. Set from
+    `runs.mode` by the orchestrator."""
+    resume: ResumeState | None = None
+    """When set, the run is being re-driven after a restart from a checkpoint:
+    the executor skips every layer before `resume.next_layer_index`, seeds env
+    from `resume.env`, and never re-dispatches or re-emits events for the nodes
+    in `resume.completed_ids` (the financial-integrity rule). None = fresh run."""
 
 
 @dataclass
@@ -104,35 +116,83 @@ class LocalExecutor:
     remote agent is executed there instead of by a local handler. Control flow,
     retries, and events stay here on the server; only the node's execution is
     remote. None means single-host execution (the historical behavior)."""
+    checkpoints: CheckpointStore | None = None
+    """Optional `CheckpointStore`. When set, the executor persists a per-layer
+    checkpoint (completed node ids + redacted env snapshot) after each DAG layer
+    settles, so a restart can resume mid-DAG. None = no durability (unit tests
+    that construct LocalExecutor directly); the run simply re-runs from scratch
+    on a restart, the historical behavior."""
+    human_tasks: HumanTaskStore | None = None
+    """Optional `HumanTaskStore`. When set, a `human.prompt` node also persists a
+    durable, SLA-bounded `HumanTask` row alongside the in-process SignalHub, and
+    resolves/cancels it as the prompt settles. None = SignalHub-only (unit tests
+    and headless flows); the in-memory prompt behavior is unchanged."""
 
     async def execute(self, dag: Dag, ctx: RunContext) -> RunOutcome:
         env: dict[str, dict[str, Any]] = {}
+        resume = ctx.resume
+        resume_from = 0
+        completed_ids: frozenset[str] = frozenset()
+        if resume is not None:
+            # Re-driving after a restart: seed the env captured at the last
+            # settled layer and skip everything up to the resume boundary. The
+            # completed ids are skipped INSIDE the boundary layer too, so a
+            # partially-settled layer is finished without re-running its done
+            # nodes or re-emitting their events.
+            env = {k: dict(v) for k, v in resume.env.items()}
+            resume_from = resume.next_layer_index
+            completed_ids = resume.completed_ids
         alias_to_id = self._alias_index(dag)
         layers = list(topological_layers(dag))
         logger.info(
-            "execute run_id=%s nodes=%d layers=%d",
+            "execute run_id=%s nodes=%d layers=%d mode=%s resume_from=%d",
             ctx.run_id,
             len(dag.nodes),
             len(layers),
+            ctx.mode,
+            resume_from,
         )
+        if ctx.mode == RunMode.DRY_RUN:
+            self.recorder.record(
+                run_id=ctx.run_id,
+                tenant_id=ctx.tenant_id,
+                node_id=None,
+                kind=RunEventKind.LOG,
+                payload={"dry_run": True, "message": "executing in dry-run mode; side-effecting nodes are simulated"},
+            )
         try:
             for layer_idx, layer in enumerate(layers):
+                if layer_idx < resume_from:
+                    # Already settled before the restart; its outputs are in the
+                    # seeded env. Don't touch it (no events, no dispatch).
+                    continue
                 if ctx.controls is not None:
                     # Layer-boundary control point: blocks while operator-
                     # paused, raises RunCancelled once a cancel is requested.
                     await ctx.controls.checkpoint()
+                # Within the boundary layer, drop nodes already completed before
+                # the restart — their outputs are seeded, re-running them would
+                # double an irreversible side effect and re-emit their events.
+                pending_nodes = [n for n in layer if n.id not in completed_ids]
                 logger.debug(
-                    "run_id=%s layer %d/%d nodes=%s",
+                    "run_id=%s layer %d/%d nodes=%s (skipped_completed=%d)",
                     ctx.run_id,
                     layer_idx + 1,
                     len(layers),
-                    [n.id for n in layer],
+                    [n.id for n in pending_nodes],
+                    len(layer) - len(pending_nodes),
                 )
-                results = await self._run_layer(
-                    layer, env=env, alias_to_id=alias_to_id, ctx=ctx
-                )
-                for node, outputs in zip(layer, results, strict=True):
-                    env[node.id] = outputs
+                if pending_nodes:
+                    results = await self._run_layer(
+                        pending_nodes, env=env, alias_to_id=alias_to_id, ctx=ctx
+                    )
+                    for node, outputs in zip(pending_nodes, results, strict=True):
+                        env[node.id] = outputs
+                # Checkpoint the boundary: completed = every node in this layer
+                # whose output is now in env (seeded + just-run). After the first
+                # resumed layer settles, completed_ids no longer applies.
+                self._save_checkpoint(ctx, layer_idx, layer, env)
+                completed_ids = frozenset()
             logger.info("execute run_id=%s succeeded", ctx.run_id)
             return RunOutcome(run_id=ctx.run_id, status="succeeded", outputs=env)
         except RunCancelled:
@@ -159,6 +219,47 @@ class LocalExecutor:
             if n.outputs_as is not None:
                 idx[n.outputs_as] = n.id
         return idx
+
+    def _save_checkpoint(
+        self,
+        ctx: RunContext,
+        layer_index: int,
+        layer: list[Node],
+        env: dict[str, dict[str, Any]],
+    ) -> None:
+        """Persist the layer-boundary checkpoint, never breaking the run.
+
+        `completed_node_ids` is every node in this layer whose output is now in
+        env (the just-run nodes plus, on a resumed boundary, the seeded ones).
+        A checkpoint failure is logged and swallowed: durability is best-effort
+        and must not turn a healthy run into a failure. The store itself redacts
+        the env before it lands.
+        """
+        if self.checkpoints is None:
+            return
+        completed = [n.id for n in layer if n.id in env]
+        try:
+            self.checkpoints.save_layer(
+                run_id=ctx.run_id,
+                tenant_id=ctx.tenant_id,
+                layer_index=layer_index,
+                completed_node_ids=completed,
+                env=env,
+            )
+        except Exception:
+            logger.warning(
+                "checkpoint save failed run_id=%s layer=%d; continuing without it",
+                ctx.run_id,
+                layer_index,
+                exc_info=True,
+            )
+
+    def _cancel_human_task(self, ctx: RunContext, node_id: str) -> None:
+        """Mark the durable HumanTask CANCELLED when its prompt unwinds (cancel
+        or timeout). The store swallows its own errors; this is a thin guard so
+        callers don't repeat the None check."""
+        if self.human_tasks is not None:
+            self.human_tasks.cancel(run_id=ctx.run_id, node_id=node_id)
 
     async def _run_layer(
         self,
@@ -274,6 +375,25 @@ class LocalExecutor:
                 list(outputs.keys()) if isinstance(outputs, dict) else type(outputs).__name__,
             )
             return outputs
+
+    @staticmethod
+    def _is_side_effecting(node: Node, ctx: RunContext) -> bool:
+        """Whether this node performs an external, irreversible side effect.
+
+        Reads the `side_effecting` flag off the node's registry definition.
+        Tri-state -> bool for the dry-run gate: True and None (UNDECLARED) both
+        count as side-effecting so the simulation never performs a real effect
+        for a capability that forgot to declare; only an explicit False is
+        treated as read-only. A ref with no registry definition (shouldn't
+        happen post-validation) is treated conservatively as side-effecting.
+        """
+        registry = getattr(ctx.activity_ctx, "registry", None)
+        if registry is None:
+            return True
+        defn = registry.get(node.ref)
+        if defn is None:
+            return True
+        return defn.side_effecting is not False
 
     @staticmethod
     def _merge_grant_defaults(
@@ -406,6 +526,26 @@ class LocalExecutor:
     ) -> dict[str, Any]:
         if node.kind is NodeKind.CONTROL:
             return await self._run_control(node, inputs, ctx)
+        # Dry-run short-circuit: in a simulation, a side-effecting entry must not
+        # perform its real effect (no SMTP/SFTP/HTTP-POST/desktop/file write).
+        # Undeclared (`side_effecting is None`) is treated as side-effecting so a
+        # capability that forgot to declare can never move money in a dry-run.
+        # Read-only entries (`side_effecting is False`) run for real even here.
+        if ctx.mode == RunMode.DRY_RUN and self._is_side_effecting(node, ctx):
+            logger.info(
+                "dry-run: simulating side-effecting node run_id=%s node_id=%s ref=%s",
+                ctx.run_id,
+                node.id,
+                node.ref,
+            )
+            self.recorder.record(
+                run_id=ctx.run_id,
+                tenant_id=ctx.tenant_id,
+                node_id=node.id,
+                kind=RunEventKind.LOG,
+                payload={"dry_run": True, "simulated": True, "would_run": node.ref},
+            )
+            return {"simulated": True, "would_run": node.ref}
         # Effective placement: a run-level target (chosen at launch) overrides
         # each node's own target for the whole run; otherwise the node's own
         # target applies. Control nodes (handled above) always stay on the server.
@@ -416,8 +556,11 @@ class LocalExecutor:
             per_call_ctx = dataclasses.replace(
                 ctx.activity_ctx, signals=self.signals, node_id=node.id, llm=self.llm
             )
-            return await self.remote_dispatcher.run(
-                node, inputs, per_call_ctx, target=effective_target
+            return cast(
+                "dict[str, Any]",
+                await self.remote_dispatcher.run(
+                    node, inputs, per_call_ctx, target=effective_target
+                ),
             )
         handler = self.activities.get(node.ref)
         if handler is None:
@@ -470,17 +613,30 @@ class LocalExecutor:
             prompt = await self.signals.open(
                 run_id=ctx.run_id, node_id=node.id, message=message, expects=expects,
             )
+            # Durable, SLA-bounded shadow of the in-memory prompt. Best-effort:
+            # the SignalHub remains the thing the coroutine actually awaits.
+            if self.human_tasks is not None:
+                self.human_tasks.open(
+                    run_id=ctx.run_id,
+                    tenant_id=ctx.tenant_id,
+                    node_id=node.id,
+                    message=message,
+                    expects=expects,
+                    timeout_seconds=timeout_seconds,
+                )
             try:
                 response = await self._await_prompt(prompt, timeout_seconds, ctx, node.id)
             except RunCancelled:
                 # cancel_all_for (orchestrator) or _await_prompt's own race
                 # already removed/cancelled the prompt; surface cooperatively.
+                self._cancel_human_task(ctx, node.id)
                 raise
             except asyncio.CancelledError:
                 if ctx.controls is not None and ctx.controls.cancel_requested:
                     # The orchestrator cancelled the prompt future as part
                     # of an operator cancel — unwind cooperatively rather
                     # than letting CancelledError kill the drive task.
+                    self._cancel_human_task(ctx, node.id)
                     raise RunCancelled(
                         f"run cancelled while waiting on human.prompt node {node.id}"
                     ) from None
@@ -492,6 +648,7 @@ class LocalExecutor:
                     node.id,
                     timeout_seconds,
                 )
+                self._cancel_human_task(ctx, node.id)
                 raise RuntimeError(
                     f"human.prompt timed out after {timeout_seconds}s on node {node.id}"
                 ) from e
@@ -501,6 +658,13 @@ class LocalExecutor:
                 node.id,
                 len(response),
             )
+            if self.human_tasks is not None:
+                # The responder identity isn't threaded through the SignalHub
+                # response; the task records the answer (redacted for OTPs)
+                # without it. None = answered via the in-process resolve path.
+                self.human_tasks.resolve(
+                    run_id=ctx.run_id, node_id=node.id, response=response
+                )
             self.recorder.record(
                 run_id=ctx.run_id,
                 tenant_id=ctx.tenant_id,

@@ -16,8 +16,7 @@ Per saved decisions: per-run isolation, no profile reuse across runs.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -103,9 +102,10 @@ class BrowserSession(Protocol):
 class BrowserPool(Protocol):
     """Source of fresh sessions, one per checkout."""
 
-    @asynccontextmanager
-    def checkout(self, *, profile: str | None = None) -> AsyncIterator[BrowserSession]:
-        # Protocol classes can't actually define context managers, so this
-        # is a marker. Implementations decorate with @asynccontextmanager.
-        raise NotImplementedError  # pragma: no cover
-        yield  # type: ignore[unreachable]
+    def checkout(
+        self, *, profile: str | None = None
+    ) -> AbstractAsyncContextManager[BrowserSession]:
+        # Implementations decorate a coroutine with @asynccontextmanager, whose
+        # result satisfies AbstractAsyncContextManager. Declared as a plain stub
+        # here so the Protocol isn't itself a generator.
+        ...

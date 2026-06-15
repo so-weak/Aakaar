@@ -74,6 +74,12 @@ postgres = ["psycopg[binary]>=3.1"]
 # capabilities lazy-import and raise clear errors when the library is absent.
 doc = ["pypdf>=4.0"]
 img = ["pillow>=10.0"]
+# Spreadsheet (xlsx/xlsm) reading for cap.spreadsheet_read, which streams a
+# workbook with openpyxl in read-only mode. openpyxl also ships in core today;
+# this extra names the contract so a slim build that trims it keeps a one-flag
+# way to opt back in. The capability lazy-imports openpyxl and raises a clear
+# error naming this extra when it is absent.
+office = ["openpyxl>=3.1"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["aakaar"]

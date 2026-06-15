@@ -36,11 +36,12 @@ async def parse_csv(ctx: ActivityContext, inputs: dict[str, Any]) -> dict[str, A
     data = ctx.object_store.get(file_uri)
     text = data.decode("utf-8")
     if has_header:
-        reader = csv.DictReader(io.StringIO(text), delimiter=delimiter)
-        rows = [dict(r) for r in reader]
+        rows = [dict(r) for r in csv.DictReader(io.StringIO(text), delimiter=delimiter)]
     else:
-        reader = csv.reader(io.StringIO(text), delimiter=delimiter)
-        rows = [{f"c{i}": v for i, v in enumerate(row)} for row in reader]
+        rows = [
+            {f"c{i}": v for i, v in enumerate(row)}
+            for row in csv.reader(io.StringIO(text), delimiter=delimiter)
+        ]
     logger.debug(
         "file.parse_csv uri=%s rows=%d delimiter=%r has_header=%s",
         file_uri,

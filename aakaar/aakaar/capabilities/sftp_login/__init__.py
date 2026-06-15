@@ -218,6 +218,13 @@ async def handler(ctx: ActivityContext, inputs: dict[str, Any]) -> dict[str, Any
     if expected_fp:
         try:
             server_key = conn.get_server_host_key()
+            if server_key is None:
+                # Caller asked us to pin a fingerprint but the server
+                # offered no host key to verify — fail closed.
+                raise PermissionError(
+                    f"cap.sftp_login: host key verification requested for "
+                    f"{host}:{port} but the server presented no host key"
+                )
             got = server_key.get_fingerprint("sha256")
             if normalize_fingerprint(got) != normalize_fingerprint(str(expected_fp)):
                 logger.warning(

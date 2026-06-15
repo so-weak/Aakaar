@@ -233,7 +233,7 @@ def _run_postgres(
     max_rows: int,
 ) -> tuple[list[str], list[tuple[Any, ...]], int]:
     try:
-        import psycopg  # type: ignore
+        import psycopg
     except ImportError as e:
         raise RuntimeError(
             "cap.db_query: engine 'postgres' requires the 'psycopg' package, "

@@ -28,7 +28,7 @@ from __future__ import annotations
 import logging
 import uuid
 from pathlib import PurePosixPath
-from typing import Any
+from typing import Any, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -112,7 +112,9 @@ async def handler(ctx: ActivityContext, inputs: dict[str, Any]) -> dict[str, Any
     buf = bytearray()
     async with holder.sftp.open(remote, "rb") as fh:
         while True:
-            chunk = await fh.read(_READ_CHUNK)
+            # "rb" mode yields bytes at runtime, but asyncssh erases the
+            # SFTPClientFile[AnyStr] generic on open(), so mypy infers str.
+            chunk = cast(bytes, await fh.read(_READ_CHUNK))
             if not chunk:
                 break
             if len(buf) + len(chunk) > max_bytes:

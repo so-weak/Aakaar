@@ -172,6 +172,18 @@ export interface AuditListResponse {
   total: number;
 }
 
+// Result of recomputing a tenant's audit hash chain. `ok` is true iff every
+// chained row's hash and prev-link recompute cleanly; on a break,
+// `first_broken_seq` points at the first failing row and `reason` explains it.
+export interface AuditVerifyResponse {
+  ok: boolean;
+  entries_checked: number;
+  first_seq: number | null;
+  last_seq: number | null;
+  first_broken_seq: number | null;
+  reason: string | null;
+}
+
 // ---------- chat ---------------------------------------------------------
 
 export type ChatResponse =
@@ -235,6 +247,11 @@ export type RunStatus =
   | "failed"
   | "cancelled";
 
+// 'live' executes for real; 'dry_run' walks the DAG but simulates
+// side-effecting (money-moving / irreversible) nodes instead of performing
+// them. Chosen at launch; the run row carries it back.
+export type RunMode = "live" | "dry_run";
+
 export interface Run {
   id: string;
   tenant_id: string;
@@ -242,6 +259,7 @@ export interface Run {
   workflow_version: number;
   started_by: string;
   status: RunStatus;
+  mode: RunMode;
   started_at: string;
   ended_at: string | null;
   outputs: Record<string, Record<string, unknown>>;
@@ -266,6 +284,48 @@ export interface RunDetail {
   run: Run;
   events: RunEvent[];
   pending_prompts: PendingPrompt[];
+}
+
+// ---------- governance / maker-checker -----------------------------------
+
+export type ApprovalStatus = "pending" | "approved" | "rejected" | "cancelled";
+
+// What kind of action a request gates. The backend uses these string values
+// (ApprovalSubjectType) verbatim; subject_ref is the gated resource (the
+// workflow id for both publish and run-start gates).
+export type ApprovalSubjectType = "workflow_publish" | "run_start";
+
+export interface ApprovalRequest {
+  id: string;
+  tenant_id: string;
+  subject_type: ApprovalSubjectType | string;
+  subject_ref: string;
+  status: ApprovalStatus;
+  requested_by: string;
+  requested_at: string;
+  decided_by: string | null;
+  decided_at: string | null;
+  reason: string;
+  // Frozen snapshot the checker needs to decide (workflow_name, version,
+  // inputs, run_target/mode for run-start; workflow_id/version for publish).
+  context: Record<string, unknown>;
+}
+
+// Returned with HTTP 202 when a gated run-start / publish is held for approval
+// instead of being performed. Narrow a run-start result on the `status` field.
+export interface ApprovalPendingResponse {
+  status: "pending_approval";
+  approval: ApprovalRequest;
+}
+
+// A run-start either launches (201 -> Run) or opens a maker-checker gate
+// (202 -> ApprovalPendingResponse). The caller branches on the discriminator.
+export type RunStartResult = Run | ApprovalPendingResponse;
+
+export function isApprovalPending(
+  r: RunStartResult,
+): r is ApprovalPendingResponse {
+  return (r as ApprovalPendingResponse).status === "pending_approval";
 }
 
 // ---------- activity recordings -------------------------------------------
@@ -423,4 +483,26 @@ export interface DashboardStats {
   active_count: number;
   recent_failures: FailureSummary[];
   per_tenant: TenantVolume[] | null;
+}
+
+// ---------- retention / legal-hold / erasure ------------------------------
+// Tenant-admin only. The resource types the backend can age out / hold / erase
+// (ERASABLE_RESOURCE_TYPES). Kept as a string union for the policy + hold forms.
+
+export type RetentionResourceType = "run" | "stored_object";
+
+export interface RetentionPolicy {
+  resource_type: string;
+  // Days to retain; null = keep indefinitely.
+  ttl_days: number | null;
+  updated_at: string;
+  updated_by: string | null;
+}
+
+export interface EraseResponse {
+  resource_type: string;
+  resource_id: string;
+  erased_at: string;
+  // True when the resource was already erased (idempotent re-request).
+  already_erased: boolean;
 }

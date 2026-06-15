@@ -34,6 +34,7 @@ from aakaar.capabilities.file_download.discovery import (
 from aakaar.interpreter.activities.browser import _get_session
 from aakaar.interpreter.activities.types import ActivityContext
 from aakaar.shared.registry import CapabilityDefinition
+from aakaar.workers.browser.session import BrowserSession, DownloadedFile
 
 logger = logging.getLogger(__name__)
 CAP_REF = "cap.file_download"
@@ -203,8 +204,8 @@ def _mirror_to_disk(
 
 
 async def _download_with_nav_recovery(
-    ctx: ActivityContext, sess: Any, *, target_hint: str, max_steps: int
-):
+    ctx: ActivityContext, sess: BrowserSession, *, target_hint: str, max_steps: int
+) -> DownloadedFile:
     """Pick a candidate matching `target_hint`, click it, and either
     capture the download or — if the click was a navigation — re-scan
     the new page and try again.

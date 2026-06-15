@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -76,8 +77,8 @@ class FakeAgentConnection:
     async def dispatch(self, task: RemoteTask) -> RemoteResult:
         self.dispatched.append(task)
         res = self._handler(task)
-        if asyncio.iscoroutine(res):
-            res = await res
+        if inspect.isawaitable(res):
+            return await res
         return res
 
     async def close(self) -> None:  # pragma: no cover - trivial

@@ -72,7 +72,7 @@ def load_into(registry: Registry, activities: ActivityRegistry, *, package: str 
             continue
         module = importlib.import_module(name)
         definition = getattr(module, "definition", None)
-        handler = getattr(module, "handler", None)
+        handler: CapabilityHandler | None = getattr(module, "handler", None)
         remote_only = bool(getattr(module, "remote_only", False))
         if definition is None or (handler is None and not remote_only):
             # Either a grouping sub-package or a capability's private helper
@@ -92,6 +92,10 @@ def load_into(registry: Registry, activities: ActivityRegistry, *, package: str 
             # local activity handler is registered.
             logger.debug("remote capability registered (no local handler) ref=%s module=%s", definition.ref, name)
         else:
+            # The guard above (`handler is None and not remote_only`) already
+            # `continue`d if a non-remote capability had no handler; assert it
+            # so mypy narrows the Optional for the registry call.
+            assert handler is not None
             activities.register(definition.ref, handler)
             logger.debug("capability registered ref=%s module=%s", definition.ref, name)
         n += 1

@@ -19,7 +19,7 @@ import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 from aakaar.workers.browser.session import (
     BrowserSession,
@@ -317,10 +317,10 @@ class PlaywrightBrowserSession(BrowserSession):
         return ExtractedValue(value=value)
 
     async def screenshot(self) -> bytes:
-        return await self.page.screenshot(full_page=True)
+        return cast("bytes", await self.page.screenshot(full_page=True))
 
     async def screenshot_element(self, selector: str) -> bytes:
-        return await self.page.locator(selector).screenshot()
+        return cast("bytes", await self.page.locator(selector).screenshot())
 
     async def evaluate(self, js: str) -> object:
         return await self.page.evaluate(js)

@@ -5,6 +5,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import {
   AlertTriangle,
   CalendarClock,
+  FlaskConical,
   History,
   MessageSquarePlus,
   MonitorSmartphone,
@@ -28,7 +29,14 @@ import {
   workflows as workflowsApi,
 } from "@/api";
 import { ApiError } from "@/api/client";
-import type { Dag, PlacementIssue, RemoteAgent, WorkflowSchedule } from "@/api/types";
+import { isApprovalPending } from "@/api/types";
+import type {
+  Dag,
+  PlacementIssue,
+  RemoteAgent,
+  RunMode,
+  WorkflowSchedule,
+} from "@/api/types";
 import { useAuth } from "@/auth/AuthContext";
 import { DagEditor } from "@/components/DagEditor";
 import type { AvailableRef } from "@/components/DagEditor";
@@ -125,16 +133,25 @@ export function WorkflowDetailPage() {
   // node's own placement (today's default). "server" = whole run on the API
   // host. Any other value = whole run on that agent alias / pool.
   const [launchTarget, setLaunchTarget] = useState<string | null>(null);
+  // Execution mode chosen in the launch modal (live | dry_run).
+  const [launchMode, setLaunchMode] = useState<RunMode>("live");
   const [launchOpen, setLaunchOpen] = useState(false);
 
   const start = useMutation({
     // Pin the run to the version on screen — what you see is what runs, even
     // if someone publishes a newer version mid-launch.
-    mutationFn: (target: string | null) =>
-      runsApi.start(id, {}, target, viewedVersion ?? null),
-    onSuccess: (run) => {
+    mutationFn: ({ target, mode }: { target: string | null; mode: RunMode }) =>
+      runsApi.start(id, {}, target, viewedVersion ?? null, mode),
+    onSuccess: (result) => {
+      // A gated workflow returns a pending approval (202) instead of a run —
+      // route the maker to the approvals queue to watch their request.
+      if (isApprovalPending(result)) {
+        queryClient.invalidateQueries({ queryKey: ["approvals"] });
+        navigate(`/approvals?highlight=${result.approval.id}`);
+        return;
+      }
       queryClient.invalidateQueries({ queryKey: ["runs"] });
-      navigate(`/runs/${run.id}`);
+      navigate(`/runs/${result.id}`);
     },
   });
 
@@ -150,22 +167,22 @@ export function WorkflowDetailPage() {
   // to the normal launch so remote-execution outages don't block ordinary,
   // server-only workflows.
   const launch = useMutation({
-    mutationFn: ({ dag, target }: { dag: Dag; target: string | null }) =>
+    mutationFn: ({ dag, target }: { dag: Dag; target: string | null; mode: RunMode }) =>
       placementApi.check(target === null ? dag : dagWithTargetOverride(dag, target)),
     onSuccess: (res, vars) => {
       setPlacementIssues(res.issues);
-      if (res.issues.length === 0) start.mutate(vars.target);
+      if (res.issues.length === 0) start.mutate({ target: vars.target, mode: vars.mode });
     },
     onError: (_err, vars) => {
       setPlacementIssues([]);
-      start.mutate(vars.target);
+      start.mutate({ target: vars.target, mode: vars.mode });
     },
   });
 
-  const onLaunch = (dag: Dag, target: string | null) => {
+  const onLaunch = (dag: Dag, target: string | null, mode: RunMode) => {
     start.reset();
     setPlacementIssues([]);
-    launch.mutate({ dag, target });
+    launch.mutate({ dag, target, mode });
   };
   const launching = launch.isPending || start.isPending;
 
@@ -319,6 +336,7 @@ export function WorkflowDetailPage() {
                 launch.reset();
                 setPlacementIssues([]);
                 setLaunchTarget(null);
+                setLaunchMode("live");
                 setLaunchOpen(true);
               }}
               disabled={launching || !version}
@@ -397,15 +415,22 @@ export function WorkflowDetailPage() {
             launch.reset();
             start.reset();
           }}
+          mode={launchMode}
+          onModeChange={(m) => {
+            setLaunchMode(m);
+            setPlacementIssues([]);
+            launch.reset();
+            start.reset();
+          }}
           agents={agentsQ.data}
           issues={placementIssues}
           checking={launch.isPending}
           starting={start.isPending}
           error={launch.error ?? (start.error ? describeStartError(start.error) : null)}
-          onRun={() => onLaunch(version.dag, launchTarget)}
+          onRun={() => onLaunch(version.dag, launchTarget, launchMode)}
           onRunAnyway={() => {
             setPlacementIssues([]);
-            start.mutate(launchTarget);
+            start.mutate({ target: launchTarget, mode: launchMode });
           }}
           onClose={() => {
             if (!launching) setLaunchOpen(false);
@@ -569,6 +594,8 @@ function LaunchModal({
   pinnedVersion,
   target,
   onTargetChange,
+  mode,
+  onModeChange,
   agents,
   issues,
   checking,
@@ -581,6 +608,8 @@ function LaunchModal({
   pinnedVersion: number;
   target: string | null;
   onTargetChange: (target: string | null) => void;
+  mode: RunMode;
+  onModeChange: (mode: RunMode) => void;
   agents: RemoteAgent[] | undefined;
   issues: PlacementIssue[];
   checking: boolean;
@@ -591,6 +620,7 @@ function LaunchModal({
   onClose: () => void;
 }) {
   const busy = checking || starting;
+  const dryRun = mode === "dry_run";
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-ink-950/80 backdrop-blur">
       <div className="card w-full max-w-lg p-5">
@@ -599,6 +629,12 @@ function LaunchModal({
             <Play size={16} className="text-accent-300" />
             Launch run
             <span className="badge ring-ink-700 text-ink-300">v{pinnedVersion}</span>
+            {dryRun ? (
+              <span className="badge ring-signal-cyan/40 text-signal-cyan">
+                <FlaskConical size={11} />
+                dry run
+              </span>
+            ) : null}
           </h3>
           <button
             type="button"
@@ -624,6 +660,28 @@ function LaunchModal({
           agents={agents}
           disabled={busy}
         />
+
+        {/* Dry-run toggle: simulate side-effecting steps instead of performing
+            them. Off (live) is the default and preserves today's behaviour. */}
+        <label className="mt-4 flex cursor-pointer items-start gap-2.5 rounded-control border border-ink-700 bg-ink-950/40 px-3 py-2.5">
+          <input
+            type="checkbox"
+            className="mt-0.5 h-4 w-4 shrink-0 accent-signal-cyan"
+            checked={dryRun}
+            disabled={busy}
+            onChange={(e) => onModeChange(e.target.checked ? "dry_run" : "live")}
+          />
+          <span className="min-w-0">
+            <span className="flex items-center gap-1.5 text-sm font-medium text-ink-100">
+              <FlaskConical size={13} className="text-signal-cyan" />
+              Dry run (simulate)
+            </span>
+            <span className="mt-0.5 block text-[11px] leading-4 text-ink-500">
+              Walks the whole workflow but simulates money-moving / irreversible
+              steps instead of performing them. Use it to preview a run safely.
+            </span>
+          </span>
+        </label>
 
         {target === SERVER_TARGET ? (
           <p className="mt-1 flex items-center gap-1 text-[11px] text-ink-500">
@@ -669,8 +727,14 @@ function LaunchModal({
             onClick={onRun}
             disabled={busy}
           >
-            <Play size={15} />
-            {checking ? "Checking…" : starting ? "Starting…" : "Run"}
+            {dryRun ? <FlaskConical size={15} /> : <Play size={15} />}
+            {checking
+              ? "Checking…"
+              : starting
+              ? "Starting…"
+              : dryRun
+              ? "Dry run"
+              : "Run"}
           </button>
         </div>
       </div>

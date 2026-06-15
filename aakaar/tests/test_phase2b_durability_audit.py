@@ -132,6 +132,11 @@ def test_audit_recorder_redacts_and_persists(tmp_path: Path) -> None:
 
 
 def test_recover_interrupted_runs_marks_failed(tmp_path: Path) -> None:
+    """A RUNNING run with NO checkpoint (and no CheckpointStore wired) is failed
+    on recovery — nothing to resume from. The resume-when-checkpointed path is
+    covered in test_durability_resume_dryrun_hitl.py
+    (test_recover_resumes_run_with_checkpoint), where a checkpoint + a wired
+    CheckpointStore re-drive the run instead of failing it."""
     sf = _sf(tmp_path)
     with sf.session() as s:
         t = Tenant(slug="t1", name="T1")
@@ -175,7 +180,9 @@ def test_recover_interrupted_runs_marks_failed(tmp_path: Path) -> None:
         registry=None,  # type: ignore[arg-type]
         object_store=None,  # type: ignore[arg-type]
         vault=None,  # type: ignore[arg-type]
+        # No CheckpointStore => no run is resumable; every interrupted run fails.
     )
+    assert orch.checkpoints is None
     n = orch.recover_interrupted_runs()
     assert n == 1
     with sf.session() as s:

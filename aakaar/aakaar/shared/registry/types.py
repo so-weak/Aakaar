@@ -40,6 +40,25 @@ class _BaseDefinition:
     description: str
     input_schema: type[BaseModel]
     output_schema: type[BaseModel]
+    side_effecting: bool | None = None
+    """Whether this entry performs an external, irreversible side effect
+    (writes/sends/uploads/transfers that escape the run sandbox). Drives the
+    dry-run simulation path: in a dry_run, side-effecting entries are
+    short-circuited to a simulated success while read-only ones execute for
+    real.
+
+    Tri-state on purpose:
+      - True  — declared side-effecting (email_send, sftp_write, webhook_send,
+                desktop_* actions, …): always simulated in dry-run.
+      - False — declared read-only (web_scrape, file.parse_csv, http GET-style
+                reads, time.now, …): runs for real even in dry-run.
+      - None  — UNDECLARED. Treated conservatively as side-effecting in dry-run
+                so a new capability that forgets to declare can never move money
+                during a simulation. Authors should set this explicitly; None is
+                the safe fallback, not a recommendation.
+
+    Kept out of the planner/validator surface — it only governs execution mode,
+    not what the LLM may compose."""
 
 
 @dataclass(frozen=True, slots=True)

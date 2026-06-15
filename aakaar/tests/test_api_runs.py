@@ -12,6 +12,7 @@ from aakaar.shared.dag.types import Dag, Node, NodeKind
 from tests._api_helpers import (
     auth_headers,
     login,
+    seed_superuser,
     seed_tenant_admin,
     seed_tenant_user,
 )
@@ -184,6 +185,118 @@ def test_only_starter_can_respond(deps: AppDependencies, client: TestClient) -> 
         json={"node_id": "ask", "response": "x"},
     )
     _wait_for_status(client, starter_token, run_id, {"succeeded"})
+
+
+def test_run_start_mode_defaults_to_live(deps: AppDependencies, client: TestClient) -> None:
+    tenant, _ = seed_tenant_admin(
+        deps, slug="acme", name="Acme", admin_email="a@a.test", admin_password="adminpass1"
+    )
+    seed_tenant_user(deps, tenant_id=tenant.id, email="u@a.test", password="userpass1")
+    token = login(client, email="u@a.test", password="userpass1")
+
+    dag = Dag(
+        nodes=[Node(id="w", kind=NodeKind.CONTROL, ref="control.wait", inputs={"seconds": 0.01})]
+    )
+    wf_id = _save_workflow(client, token, dag)
+
+    r = client.post(f"/workflows/{wf_id}/runs", headers=auth_headers(token), json={})
+    assert r.status_code == 201, r.text
+    # Omitting mode yields a live run — preserves pre-dry-run behaviour.
+    assert r.json()["mode"] == "live"
+
+
+def test_run_start_dry_run_mode_is_persisted_and_simulated(
+    deps: AppDependencies, client: TestClient
+) -> None:
+    """A dry-run started over the API stamps mode=dry_run on the row and the
+    executor simulates side-effecting nodes (emitting a simulated marker)."""
+    tenant, _ = seed_tenant_admin(
+        deps, slug="acme", name="Acme", admin_email="a@a.test", admin_password="adminpass1"
+    )
+    seed_tenant_user(deps, tenant_id=tenant.id, email="u@a.test", password="userpass1")
+    token = login(client, email="u@a.test", password="userpass1")
+
+    # http.request is side-effecting; in a dry-run it must be simulated (never
+    # dialled), so even an unreachable URL completes rather than failing.
+    dag = Dag(
+        nodes=[
+            Node(
+                id="call",
+                kind=NodeKind.ACTION,
+                ref="http.request",
+                inputs={"method": "GET", "url": "http://127.0.0.1:1/never", "timeout_ms": 200},
+            )
+        ]
+    )
+    wf_id = _save_workflow(client, token, dag)
+
+    r = client.post(
+        f"/workflows/{wf_id}/runs",
+        headers=auth_headers(token),
+        json={"mode": "dry_run"},
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["mode"] == "dry_run"
+    run_id = r.json()["id"]
+
+    body = _wait_for_status(client, token, run_id, {"succeeded"})
+    assert body["run"]["mode"] == "dry_run"
+    # The run-level dry-run marker and the per-node simulated marker are present.
+    assert any(e["payload"].get("dry_run") is True for e in body["events"])
+    assert any(e["payload"].get("simulated") is True for e in body["events"])
+
+    # The mode also surfaces on the run list row.
+    listed = client.get("/runs", headers=auth_headers(token)).json()
+    assert any(row["id"] == run_id and row["mode"] == "dry_run" for row in listed)
+
+
+def test_run_start_rejects_unknown_mode(deps: AppDependencies, client: TestClient) -> None:
+    tenant, _ = seed_tenant_admin(
+        deps, slug="acme", name="Acme", admin_email="a@a.test", admin_password="adminpass1"
+    )
+    seed_tenant_user(deps, tenant_id=tenant.id, email="u@a.test", password="userpass1")
+    token = login(client, email="u@a.test", password="userpass1")
+    dag = Dag(
+        nodes=[Node(id="w", kind=NodeKind.CONTROL, ref="control.wait", inputs={"seconds": 0.01})]
+    )
+    wf_id = _save_workflow(client, token, dag)
+    r = client.post(
+        f"/workflows/{wf_id}/runs",
+        headers=auth_headers(token),
+        json={"mode": "bogus"},
+    )
+    assert r.status_code == 422, r.text
+
+
+def test_superuser_run_views_include_mode(
+    deps: AppDependencies, client: TestClient
+) -> None:
+    """The shared RunResponse carries `mode`, so the cross-tenant superuser
+    run-detail and run-list endpoints must serialize it too (guards against a
+    RunResponse construction that forgets the field -> 500)."""
+    tenant, _ = seed_tenant_admin(
+        deps, slug="acme", name="Acme", admin_email="a@a.test", admin_password="adminpass1"
+    )
+    seed_tenant_user(deps, tenant_id=tenant.id, email="u@a.test", password="userpass1")
+    seed_superuser(deps, email="root@aakaar.test", password="rootpass1")
+    user_token = login(client, email="u@a.test", password="userpass1")
+    su_token = login(client, email="root@aakaar.test", password="rootpass1")
+
+    dag = Dag(
+        nodes=[Node(id="w", kind=NodeKind.CONTROL, ref="control.wait", inputs={"seconds": 0.01})]
+    )
+    wf_id = _save_workflow(client, user_token, dag)
+    run_id = client.post(
+        f"/workflows/{wf_id}/runs", headers=auth_headers(user_token), json={}
+    ).json()["id"]
+
+    detail = client.get(f"/superuser/runs/{run_id}", headers=auth_headers(su_token))
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["run"]["mode"] == "live"
+
+    listing = client.get("/superuser/runs", headers=auth_headers(su_token))
+    assert listing.status_code == 200, listing.text
+    assert any(row["id"] == run_id and "mode" in row for row in listing.json())
 
 
 # Quiet a lint about asyncio import — used in conftest, kept here for clarity.

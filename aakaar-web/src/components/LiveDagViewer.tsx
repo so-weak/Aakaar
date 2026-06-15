@@ -11,7 +11,7 @@ import {
 } from "@xyflow/react";
 import type { Edge, Node, NodeProps } from "@xyflow/react";
 import dagre from "dagre";
-import { MonitorSmartphone } from "lucide-react";
+import { FlaskConical, MonitorSmartphone } from "lucide-react";
 
 import type { Dag, NodeKind, RunEvent, RunStatus } from "@/api/types";
 import { useTheme } from "@/theme/ThemeProvider";
@@ -47,6 +47,9 @@ interface LiveDagNodeData extends Record<string, unknown> {
   status: NodeStatus;
   // The remote agent this node ran on, if a provenance log event named one.
   agent: string | null;
+  // True when a dry-run simulated this (side-effecting) node instead of
+  // performing it — the executor stamps payload.simulated on its completion.
+  simulated: boolean;
 }
 
 const STATUS_STYLES: Record<NodeStatus, { ring: string; chip: string; glow: string }> = {
@@ -116,6 +119,15 @@ function LiveDagNode({ data }: NodeProps<Node<LiveDagNodeData>>) {
         >
           <MonitorSmartphone size={9} className="shrink-0" />
           <span className="truncate">{data.agent}</span>
+        </div>
+      ) : null}
+      {data.simulated ? (
+        <div
+          className="mt-1 inline-flex items-center gap-1 rounded bg-signal-cyan/15 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-signal-cyan"
+          title="Simulated in dry-run — not performed"
+        >
+          <FlaskConical size={9} className="shrink-0" />
+          simulated
         </div>
       ) : null}
       <Handle
@@ -194,6 +206,19 @@ export function deriveNodeAgents(events: RunEvent[]): Record<string, string> {
   return out;
 }
 
+/**
+ * Node ids the dry-run executor simulated instead of performing. In a dry-run
+ * the executor stamps `payload.simulated === true` on the completion event of
+ * each side-effecting node (with `would_run` = the skipped ref).
+ */
+export function deriveSimulatedNodes(events: RunEvent[]): Set<string> {
+  const out = new Set<string>();
+  for (const e of events) {
+    if (e.payload?.simulated === true && e.node_id) out.add(e.node_id);
+  }
+  return out;
+}
+
 // ---------- layout -------------------------------------------------------
 
 function layout(
@@ -265,6 +290,7 @@ function LiveDagViewerInner({
     [dag, events, runStatus],
   );
   const agentsByNode = useMemo(() => deriveNodeAgents(events), [events]);
+  const simulatedNodes = useMemo(() => deriveSimulatedNodes(events), [events]);
 
   const initial = useMemo(() => {
     const nodes: Node<LiveDagNodeData>[] = dag.nodes.map((n) => ({
@@ -277,6 +303,7 @@ function LiveDagViewerInner({
         kind: n.kind,
         status: statuses[n.id] ?? "pending",
         agent: agentsByNode[n.id] ?? null,
+        simulated: simulatedNodes.has(n.id),
       },
     }));
     const edges: Edge[] = dag.edges.map((e, i) => {
@@ -294,7 +321,16 @@ function LiveDagViewerInner({
       };
     });
     return layout(nodes, edges, compact);
-  }, [dag, statuses, agentsByNode, runStatus, compact, activeEdge, inactiveEdge]);
+  }, [
+    dag,
+    statuses,
+    agentsByNode,
+    simulatedNodes,
+    runStatus,
+    compact,
+    activeEdge,
+    inactiveEdge,
+  ]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState<Node<LiveDagNodeData>>(
     initial.nodes,

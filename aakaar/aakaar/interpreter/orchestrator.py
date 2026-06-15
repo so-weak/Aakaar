@@ -28,11 +28,16 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from aakaar.db.models import Run, RunEventKind, RunStatus
+from aakaar.db.models import Run, RunEventKind, RunMode, RunStatus
 from aakaar.db.session import SessionFactory
 from aakaar.db.tenancy import system_scope, tenant_scope
 from aakaar.interpreter.activities.types import ActivityContext
 from aakaar.interpreter.controls import ControlHub, RunControlConflict
+from aakaar.interpreter.durability import (
+    EVENT_RUN_RESUMED_FROM_CHECKPOINT,
+    CheckpointStore,
+    ResumeState,
+)
 from aakaar.interpreter.events import EventRecorder
 from aakaar.interpreter.executor import Executor, RunContext, RunOutcome
 from aakaar.interpreter.signals import SignalHub
@@ -56,6 +61,14 @@ class RunOrchestrator:
     browser_pool: Any = None
     download_mirror_dir: Path | None = None
     controls: ControlHub = field(default_factory=ControlHub)
+    checkpoints: CheckpointStore | None = None
+    """Resume-state loader for crash recovery. When set, `recover_interrupted_runs`
+    re-drives a RUNNING run that has a checkpoint instead of failing it. None
+    (legacy / minimal tests) keeps the old fail-everything behavior."""
+    max_resumes: int = 5
+    """Cap on how many times one run may be resumed from a checkpoint across
+    restarts, so a poison run that always crashes the same layer eventually
+    fails instead of resuming forever (bounded by `runs.resume_count`)."""
     _tasks: dict[uuid.UUID, asyncio.Task[RunOutcome]] = field(default_factory=dict)
 
     def schedule(
@@ -66,14 +79,16 @@ class RunOrchestrator:
         dag: Dag,
         granted_caps: dict[str, dict[str, Any]],
         run_target: str | None = None,
+        resume: ResumeState | None = None,
     ) -> asyncio.Task[RunOutcome]:
         logger.info(
-            "schedule run_id=%s tenant_id=%s nodes=%d granted_caps=%d run_target=%s",
+            "schedule run_id=%s tenant_id=%s nodes=%d granted_caps=%d run_target=%s resume=%s",
             run_id,
             tenant_id,
             len(dag.nodes),
             len(granted_caps),
             run_target,
+            resume.next_layer_index if resume is not None else None,
         )
         self.controls.register(run_id, tenant_id)
         task = asyncio.create_task(
@@ -83,6 +98,7 @@ class RunOrchestrator:
                 dag=dag,
                 granted_caps=granted_caps,
                 run_target=run_target,
+                resume=resume,
             )
         )
         self._tasks[run_id] = task
@@ -92,18 +108,31 @@ class RunOrchestrator:
         """Reconcile runs left mid-flight by a crashed/restarted process.
 
         The in-process LocalExecutor holds run state in memory, so a restart
-        loses any QUEUED/RUNNING run. Rather than leave them as permanent
-        zombies, mark them FAILED with a clear reason on startup — the UI then
-        shows a definitive terminal status and the user can re-run. (A durable
-        re-attach would require a Temporal-style executor, which is out of
-        scope.) Called once from the app lifespan startup hook.
+        loses the in-flight state of any QUEUED/RUNNING/PAUSED run. Two outcomes:
+
+          - A RUNNING run that HAS a checkpoint (and a `CheckpointStore` is
+            wired, and it hasn't already exhausted `max_resumes`) is RESUMED:
+            re-scheduled from the next un-settled layer, seeding the checkpoint's
+            env and skipping the nodes already completed. Their events are NOT
+            re-emitted — re-running an already-done node could double an
+            irreversible side effect (the financial-integrity rule).
+
+          - Everything else (no checkpoint, QUEUED before any layer settled,
+            PAUSED — whose in-process gate is gone — or a run that has hit the
+            resume cap) is marked FAILED with a clear reason, so the UI shows a
+            definitive terminal status instead of a perpetual zombie.
+
+        Returns the count of runs reconciled (resumed + failed). Called once
+        from the app lifespan startup hook, inside the running event loop, so
+        the resume path's `schedule()` (which spawns a task) has a loop.
         """
         from sqlalchemy import select
 
-        recovered = 0
+        resumable: list[uuid.UUID] = []
+        reconciled = 0
         # Startup scan spans every tenant's runs — trusted cross-tenant work.
         # PAUSED is included: an operator pause is held by an in-process gate
-        # that does not survive a restart, so the run can never resume.
+        # that does not survive a restart, so it can't be resumed as paused.
         with system_scope(), self.session_factory.session() as s:
             rows = (
                 s.execute(
@@ -117,13 +146,19 @@ class RunOrchestrator:
                 .all()
             )
             for run in rows:
+                if self._can_resume(run):
+                    # Defer the actual reschedule until after this read txn
+                    # commits — schedule() must not run inside the session.
+                    resumable.append(run.id)
+                    reconciled += 1
+                    continue
                 run.status = RunStatus.FAILED
                 run.error = {
                     "type": "Interrupted",
                     "message": "Run interrupted by a server restart and could not be resumed.",
                 }
                 run.ended_at = datetime.now(UTC)
-                recovered += 1
+                reconciled += 1
                 try:
                     self.recorder.record(
                         run_id=run.id,
@@ -134,11 +169,131 @@ class RunOrchestrator:
                     )
                 except Exception:
                     logger.debug("recovery: event record failed for run %s", run.id, exc_info=True)
-            if recovered:
+            s.commit()
+        failed = reconciled - len(resumable)
+        if failed:
+            logger.warning("recovered %d interrupted run(s) -> FAILED on startup", failed)
+        for run_id in resumable:
+            self._resume_run(run_id)
+        return reconciled
+
+    def _can_resume(self, run: Run) -> bool:
+        """Whether a non-terminal run should be re-driven from a checkpoint
+        rather than failed. Requires a wired CheckpointStore, a RUNNING status
+        (a QUEUED run never settled a layer; a PAUSED run's gate is gone), a
+        persisted checkpoint, and resume headroom under `max_resumes`."""
+        if self.checkpoints is None:
+            return False
+        if run.status != RunStatus.RUNNING:
+            return False
+        if (run.resume_count or 0) >= self.max_resumes:
+            logger.warning(
+                "run %s hit resume cap (%d); failing instead of resuming",
+                run.id,
+                self.max_resumes,
+            )
+            return False
+        return run.checkpoint is not None or self.checkpoints.load_resume_state(run.id) is not None
+
+    def _resume_run(self, run_id: uuid.UUID) -> None:
+        """Reload a checkpointed run's DAG + grants and re-schedule it from the
+        resume boundary. Failures here downgrade the run to FAILED so a run can
+        never get stuck un-resumed and un-failed."""
+        assert self.checkpoints is not None  # guarded by _can_resume
+        try:
+            resume = self.checkpoints.load_resume_state(run_id)
+            if resume is None:
+                raise RuntimeError("resume state vanished between scan and reschedule")
+            with system_scope(), self.session_factory.session() as s:
+                run = s.get(Run, run_id)
+                if run is None:
+                    return
+                tenant_id = run.tenant_id
+                dag = self._load_dag(s, run)
+                granted_caps = self._snapshot_grants(s, tenant_id)
+                run.resume_count = (run.resume_count or 0) + 1
                 s.commit()
-        if recovered:
-            logger.warning("recovered %d interrupted run(s) -> FAILED on startup", recovered)
-        return recovered
+            self.recorder.record(
+                run_id=run_id,
+                tenant_id=tenant_id,
+                node_id=None,
+                kind=EVENT_RUN_RESUMED_FROM_CHECKPOINT,
+                payload={
+                    "from_layer": resume.next_layer_index,
+                    "skipped_nodes": len(resume.completed_ids),
+                },
+            )
+            logger.warning(
+                "resuming run %s from layer %d (skipping %d completed nodes)",
+                run_id,
+                resume.next_layer_index,
+                len(resume.completed_ids),
+            )
+            # run_target intentionally None on resume: per-node targets still
+            # apply; the original run-level placement isn't persisted.
+            self.schedule(
+                run_id=run_id,
+                tenant_id=tenant_id,
+                dag=dag,
+                granted_caps=granted_caps,
+                resume=resume,
+            )
+        except Exception:
+            logger.exception("resume failed for run %s; marking FAILED", run_id)
+            self._update_status(
+                run_id=run_id,
+                status=RunStatus.FAILED,
+                error={
+                    "type": "ResumeFailed",
+                    "message": "Run could not be resumed after restart.",
+                },
+                end=True,
+            )
+
+    @staticmethod
+    def _load_dag(s: Any, run: Run) -> Dag:
+        """Load the run's pinned WorkflowVersion DAG. Reads db.models directly to
+        keep the interpreter package free of `aakaar.api` imports."""
+        from sqlalchemy import select
+
+        from aakaar.db.models import WorkflowVersion
+
+        wfv = s.scalar(
+            select(WorkflowVersion).where(
+                WorkflowVersion.workflow_id == run.workflow_id,
+                WorkflowVersion.version == run.workflow_version,
+            )
+        )
+        if wfv is None:
+            raise RuntimeError(
+                f"workflow version {run.workflow_id}/{run.workflow_version} missing"
+            )
+        return Dag.model_validate(wfv.dag)
+
+    @staticmethod
+    def _snapshot_grants(
+        s: Any, tenant_id: uuid.UUID
+    ) -> dict[str, dict[str, Any]]:
+        """Re-snapshot enabled capability grants for the tenant on resume.
+
+        Mirrors the router's `_snapshot_grants` but reads the model directly
+        (no `aakaar.api` import from the interpreter layer). A grant disabled
+        while the run was down is correctly excluded from the resumed run."""
+        from sqlalchemy import select
+
+        from aakaar.db.models import CapabilityGrant
+
+        granted: dict[str, dict[str, Any]] = {}
+        rows = s.scalars(
+            select(CapabilityGrant).where(CapabilityGrant.tenant_id == tenant_id)
+        )
+        for g in rows:
+            if g.enabled:
+                granted.setdefault(g.capability_ref, {})[g.account_alias] = {
+                    "vault_ref": g.vault_ref,
+                    "input_defaults": dict(g.input_defaults or {}),
+                }
+        return granted
 
     async def respond(self, *, run_id: uuid.UUID, node_id: str, response: str) -> None:
         logger.info("respond run_id=%s node_id=%s", run_id, node_id)
@@ -233,6 +388,7 @@ class RunOrchestrator:
         dag: Dag,
         granted_caps: dict[str, dict[str, Any]],
         run_target: str | None = None,
+        resume: ResumeState | None = None,
     ) -> RunOutcome:
         # Pin every app-DB write this run performs (status, events) to its
         # tenant, so RLS — when enforcing — keeps a run from touching another
@@ -246,6 +402,7 @@ class RunOrchestrator:
                     dag=dag,
                     granted_caps=granted_caps,
                     run_target=run_target,
+                    resume=resume,
                 )
         finally:
             # The control handle is only meaningful while the run is live.
@@ -259,6 +416,7 @@ class RunOrchestrator:
         dag: Dag,
         granted_caps: dict[str, dict[str, Any]],
         run_target: str | None = None,
+        resume: ResumeState | None = None,
     ) -> RunOutcome:
         handle = self.controls.peek(run_id)
         if handle is None or not handle.paused:
@@ -268,6 +426,7 @@ class RunOrchestrator:
             logger.debug("_drive: marking run %s as RUNNING", run_id)
             self._update_status(run_id=run_id, status=RunStatus.RUNNING)
 
+        mode = self._load_mode(run_id)
         activity_ctx = ActivityContext(
             tenant_id=tenant_id,
             run_id=run_id,
@@ -284,6 +443,8 @@ class RunOrchestrator:
             activity_ctx=activity_ctx,
             run_target=run_target,
             controls=handle,
+            mode=mode,
+            resume=resume,
         )
         try:
             outcome = await self.executor.execute(dag, ctx)
@@ -334,6 +495,20 @@ class RunOrchestrator:
             end=True,
         )
         return outcome
+
+    def _load_mode(self, run_id: uuid.UUID) -> str:
+        """Read the run's execution mode ('live' | 'dry_run') from the DB.
+
+        Set once at run creation and immutable, so a single read at drive start
+        is authoritative for the whole run. Defaults to LIVE if the row or column
+        is somehow absent — fail safe toward really executing, since a dry-run
+        that silently ran for real would be the dangerous direction only if the
+        opposite; here defaulting to LIVE matches the column default."""
+        with self.session_factory.session() as s:
+            run = s.get(Run, run_id)
+            if run is None:
+                return RunMode.LIVE
+            return run.mode or RunMode.LIVE
 
     def _update_status(
         self,

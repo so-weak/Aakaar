@@ -176,5 +176,5 @@ def _safe_error(e: BaseException) -> dict[str, str]:
     return {"type": type(e).__name__, "message": str(e)[:500]}
 
 
-def _attach_session(_=None) -> Session:  # pragma: no cover — convenience for tests
+def _attach_session(_: object = None) -> Session:  # pragma: no cover — convenience for tests
     raise NotImplementedError

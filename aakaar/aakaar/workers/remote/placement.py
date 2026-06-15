@@ -26,7 +26,7 @@ def check_placement(
     issues: list[dict[str, str]] = []
     for node in dag.nodes:
         target = node.target
-        if target in (None, "server"):
+        if target is None or target == "server":
             continue
         if node.kind is NodeKind.CONTROL:
             issues.append(

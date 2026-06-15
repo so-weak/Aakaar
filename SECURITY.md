@@ -68,6 +68,33 @@ amplification, and anything in the sample tenant apps (`admin-app/`,
   registry schemas and the tenant's grants before a DAG can be saved or run;
   a model cannot invent capabilities or reach credentials directly.
 
+## Governance & compliance controls
+
+These are the regulated-bank controls and where to exercise them. Full
+control→evidence mapping (with the endpoint, service module, and test that backs
+each claim) is in [docs/compliance-mapping.md](docs/compliance-mapping.md).
+
+- **Maker-checker (segregation of duties).** A gated publish or run-start opens a
+  pending approval (HTTP 202) instead of acting; a *different* tenant admin
+  decides it at `POST /approvals/{id}/approve|reject`. The approver may not be the
+  requester (409). Gating is per-workflow (`requires_approval` /
+  `sensitivity='elevated'`). See [ADR 0006](docs/adr/0006-maker-checker-governance.md).
+- **Tamper-evident audit.** Tenant-scoped audit rows form a per-tenant sha256 hash
+  chain. Verify with `GET /audit/verify` (tenant admin) or
+  `GET /audit/tenants/{id}/verify` (superuser); export for offline re-verification
+  with `GET /audit/export`. It is tamper-*evident*, not tamper-*proof* — pin the
+  chain head off-box via periodic export. See [ADR 0007](docs/adr/0007-tamper-evident-audit.md).
+- **Retention, legal hold, right-to-erasure.** Manage at `/retention`
+  (`GET/PUT /retention/policies`, `POST /retention/legal-hold`,
+  `POST /retention/erase`). A legal hold outranks an erasure request (409). **The
+  TTL sweep is not auto-wired into the lifespan** — automatic expiry requires
+  scheduling `sweep_all_tenants()` externally; on-demand erasure and legal hold
+  work today. See [ADR 0008](docs/adr/0008-retention-legal-hold-erasure.md).
+- **Durable execution.** A restart never re-fires a completed side-effecting node
+  (per-layer checkpoints); a dry-run simulates side-effecting capabilities. See
+  [ADR 0002](docs/adr/0002-in-process-executor-durable-resume.md) and the
+  [capability-authoring guide](docs/capability-authoring-guide.md).
+
 ## Deployment hardening checklist
 
 Work through this before exposing an instance beyond localhost. All keys are
@@ -142,6 +169,12 @@ process instead of dialing the API directly:
 
 ## Operational security docs
 
+- **Security whitepaper** (trust model, isolation, agent auth, secrets lifecycle,
+  RPA attack surface + compromise response): [docs/security-whitepaper.md](docs/security-whitepaper.md)
+- **Compliance mapping** (control → endpoint/service/test): [docs/compliance-mapping.md](docs/compliance-mapping.md)
+- **Operations manual** (backup/restore, upgrade/rollback, sweeps, health): [docs/operations-manual.md](docs/operations-manual.md)
+- **Architecture Decision Records**: [docs/adr/](docs/adr/)
+- **Capability authoring guide** (writing a new capability safely): [docs/capability-authoring-guide.md](docs/capability-authoring-guide.md)
 - Incident runbooks: [runbooks/](runbooks/)
 - Backup/restore of the SQLite primary store:
   [runbooks/01-sqlite-backup-restore.md](runbooks/01-sqlite-backup-restore.md)
