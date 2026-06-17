@@ -1,0 +1,7 @@
+{
+  "name": "aakaar-docs-build",
+  "private": true,
+  "type": "module",
+  "version": "1.0.0",
+  "dependencies": { "marked": "^12", "mermaid": "^11", "puppeteer": "^24" }
+}
