@@ -457,6 +457,10 @@ class RunOrchestrator:
             )
 
         # Best-effort cleanup of any live handles (browser sessions etc.).
+        # For a SERVER-run browser session these live in session_state; for a
+        # REMOTE run session_state is empty and the live session lives on the
+        # agent, so we ALSO tell the pinned agent to tear down (run_end). Both
+        # run on every terminal status (succeeded/failed/cancelled).
         for cleanup in list(activity_ctx.session_state.values()):
             close = getattr(cleanup, "close", None)
             if callable(close):
@@ -466,6 +470,12 @@ class RunOrchestrator:
                         await res
                 except Exception:
                     logger.exception("session_state cleanup failed for run %s", run_id)
+        disp = getattr(self.executor, "remote_dispatcher", None)
+        if disp is not None and hasattr(disp, "end_run"):
+            try:
+                await disp.end_run(tenant_id, str(run_id))
+            except Exception:  # pragma: no cover - teardown must never break finalization
+                logger.debug("remote end_run failed for run %s", run_id, exc_info=True)
 
         if outcome.status == "succeeded":
             final_status = RunStatus.SUCCEEDED

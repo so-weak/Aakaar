@@ -137,7 +137,7 @@ async def test_web_login_pauses_for_captcha_then_submits(tmp_path: Path) -> None
 
 
 def test_inputs_reject_partial_captcha_pair() -> None:
-    from aakaar.capabilities.web_login import _Inputs
+    from aakaar_caps.caps.web_login import _Inputs
 
     with pytest.raises(ValueError):
         _Inputs(
@@ -150,15 +150,11 @@ def test_inputs_reject_partial_captcha_pair() -> None:
 
 @pytest.mark.asyncio
 async def test_captcha_handler_refuses_without_signals(tmp_path: Path) -> None:
-    """If the handler is somehow invoked without `ctx.signals`, it must
-    refuse rather than hang silently. The executor always populates
-    signals; this guards against test or CLI invocations that bypass it."""
-    from aakaar.capabilities.web_login import handler
-
-    tenant_id = uuid.uuid4()
-    vault = LocalVault(tmp_path / "vault")
-    vault_ref = f"grants/{uuid.uuid4()}"
-    vault.put(str(tenant_id), vault_ref, {"username": "u", "password": "p"})
+    """If the cap is invoked without a HITL channel (no signal_opener), it must
+    refuse rather than hang silently. The executor/agent always wire one; this
+    guards against test or CLI invocations that bypass it."""
+    from aakaar_caps.caps.web_login import run
+    from aakaar_caps.context import CapabilityContext, CapabilityError
 
     sess = FakeBrowserSession(
         element_screenshot_responses={"img.captcha": b"x"},
@@ -166,22 +162,22 @@ async def test_captcha_handler_refuses_without_signals(tmp_path: Path) -> None:
     )
     pool = FakeBrowserPool(next_sessions=[sess])
 
-    actx = ActivityContext(
-        tenant_id=tenant_id,
-        run_id=uuid.uuid4(),
-        registry=build_default_registry(),
-        object_store=LocalFsObjectStore(tmp_path / "objs"),
-        vault=vault,
+    async def _writer(_key: str, _data: bytes) -> str:
+        return "aakaar://t/x/captcha.png"
+
+    ctx = CapabilityContext(
+        secrets={"username": "u", "password": "p"},
+        run_id=str(uuid.uuid4()),
+        node_id="login",
+        tenant_id="t",
         browser_pool=pool,
-        granted_capabilities={
-            CAP_REF: {"primary": {"vault_ref": vault_ref, "input_defaults": {}}},
-        },
-        # signals deliberately left None
+        object_writer=_writer,
+        signal_opener=None,  # deliberately no HITL channel
     )
 
-    with pytest.raises(RuntimeError, match="captcha"):
-        await handler(
-            actx,
+    with pytest.raises(CapabilityError, match="human-in-the-loop"):
+        await run(
+            ctx,
             {
                 "account_alias": "primary",
                 "login_url": "https://example.test/login",

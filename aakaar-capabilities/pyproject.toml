@@ -7,12 +7,19 @@ name = "aakaar-capabilities"
 version = "0.1.0"
 description = "Shared Aakaar capabilities — write a capability once, run it on the server or a remote agent."
 requires-python = ">=3.11"
-dependencies = ["pydantic>=2.6,<3"]
+# PyNaCl powers the back-channel sealed-box transport (aakaar_caps.sealing) used
+# by both the server and the agent. Small, wheels on all platforms; sealing
+# degrades to a loud cleartext fallback if it's somehow absent.
+dependencies = ["pydantic>=2.6,<3", "pynacl>=1.5"]
 
 [project.optional-dependencies]
 # Heavy/optional libs used by some shared caps are imported lazily; install
 # them on whichever host (server or agent) needs that capability.
 sys = ["psutil>=5.9"]
+# Browser automation runtime (Playwright). Needed on whichever host runs the
+# browser.*/cap.web_* capabilities — the server, or a remote agent that drives
+# a local browser. Imported lazily, so `aakaar_caps` stays importable without it.
+browser = ["playwright>=1.47"]
 dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.5"]
 
 [tool.hatch.build.targets.wheel]

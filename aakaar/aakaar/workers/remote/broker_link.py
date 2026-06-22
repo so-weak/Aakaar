@@ -41,6 +41,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from aakaar.db.session import SessionFactory
+from aakaar.workers.remote.backchannel import demux_agent_frame
 from aakaar.workers.remote.connection import WebSocketAgentConnection
 from aakaar.workers.remote.protocol import parse_hello
 from aakaar.workers.remote.registry import AgentRegistry
@@ -164,6 +165,8 @@ class BrokerLink:
         session_factory: SessionFactory,
         agent_registry: AgentRegistry,
         recorder: Any = None,
+        request_handler: Any = None,
+        server_pubkey: str | None = None,
         reconnect_delay: float = 1.0,
         hello_timeout: float = _HELLO_TIMEOUT_S,
     ) -> None:
@@ -174,6 +177,12 @@ class BrokerLink:
         self._session_factory = session_factory
         self._registry = agent_registry
         self._recorder = recorder  # event recorder, same role as the direct path
+        # Back-channel handler for agent-initiated requests; the relayed read
+        # loop routes `req` frames here exactly like the direct /ws/agents path.
+        self._request_handler = request_handler
+        # Server sealed-box public key, advertised in welcome so the agent can
+        # seal obj_put bodies to us over the broker.
+        self._server_pubkey = server_pubkey
         self._delay = reconnect_delay  # backoff base
         self._hello_timeout = hello_timeout
         self._attempts = 0
@@ -368,8 +377,11 @@ class BrokerLink:
             info.os,
             sid,
         )
+        request_handler = getattr(self, "_request_handler", None)
         try:
-            await transport.send_json({"type": "welcome", "alias": identity.alias})
+            await transport.send_json(
+                {"type": "welcome", "alias": identity.alias, "pubkey": self._server_pubkey}
+            )
             while True:
                 frame = await sess.queue.get()
                 if frame is _EOF:
@@ -377,12 +389,12 @@ class BrokerLink:
                 msg = self._parse_json(frame)
                 if msg is None:
                     continue
-                kind = msg.get("type")
-                if kind == "result":
-                    conn.resolve_result(msg)
-                elif kind == "event":
-                    self._relay_event(identity.tenant_id, msg)
-                # anything else: ignore (keepalive is websocket-level on each hop)
+                await demux_agent_frame(
+                    conn,
+                    msg,
+                    on_event=lambda m: self._relay_event(identity.tenant_id, m),
+                    request_handler=request_handler,
+                )
         finally:
             conn.fail_pending("agent disconnected")
             # Only drop the registry entry if it is still OURS — a newer

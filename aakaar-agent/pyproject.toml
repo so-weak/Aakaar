@@ -24,6 +24,10 @@ gui = ["pyautogui>=0.9", "pyperclip>=1.8", "pygetwindow>=0.0.9"]
 # Activity recording — global input listeners for cap.activity_recording.
 # Imported lazily; an agent without this extra refuses the capability cleanly.
 record = ["pynput>=1.7"]
+# Browser automation — Playwright, so this agent can run the browser.*/cap.web_*
+# stack locally (the live Chromium lives on the agent). Imported lazily; the
+# Chromium binary is provisioned out-of-band (`playwright install chromium`).
+browser = ["playwright>=1.47"]
 dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.5"]
 
 [project.scripts]

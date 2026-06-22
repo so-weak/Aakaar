@@ -11,6 +11,7 @@ or be dispatched to an agent (target=<agent>) that runs the same code.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -26,10 +27,80 @@ CapabilityHandler = Callable[
 
 logger = logging.getLogger(__name__)
 
+# Captcha / OTP human prompts time out after this long (matches the historical
+# cap.web_login behavior).
+_HITL_PROMPT_TIMEOUT_S = 300.0
 
-def _server_context(actx: ActivityContext, spec: Any, inputs: dict[str, Any]) -> Any:
+
+def cap_context_from_activity(
+    actx: ActivityContext, *, secrets: dict[str, str] | None = None
+) -> Any:
+    """Build a portable ``CapabilityContext`` from the server's
+    ``ActivityContext``. This is the single server-side wiring point — both the
+    shared ``cap.*`` handlers (via ``register_shared``) and the ``browser.*``
+    adapter (``activities/browser.py``) use it, so the code that runs here is
+    the same code a remote agent runs against its own runtime + WS proxies.
+
+    ``session_state`` is passed by reference (NOT copied) so a session opened by
+    one node is visible to later nodes and to the orchestrator's run-end cleanup.
+    Object I/O wraps the (sync) object store in a thread; LLM seams call the
+    server's planner client — the agent supplies proxy equivalents instead.
+    """
     import aakaar_caps
 
+    store = getattr(actx, "object_store", None)
+    tenant = str(actx.tenant_id)
+
+    async def _reader(uri: str) -> bytes:
+        if store is None:
+            raise aakaar_caps.CapabilityError("object store unavailable")
+        return await asyncio.to_thread(store.get, uri)
+
+    async def _writer(key: str, data: bytes) -> str:
+        if store is None:
+            raise aakaar_caps.CapabilityError("object store unavailable")
+        obj = await asyncio.to_thread(store.put, tenant, key, data)
+        return obj.uri
+
+    llm = getattr(actx, "llm", None)
+
+    def _text(system: str, user: str) -> str:
+        return llm.complete_text(system, user) if llm is not None else ""
+
+    def _plan(messages: Any) -> str:
+        # web_login only needs the free-text rationale out of the planner.
+        return llm.complete_planner(messages).rationale if llm is not None else ""
+
+    hub = getattr(actx, "signals", None)
+    node_id = getattr(actx, "node_id", "") or ""
+
+    async def _signal(message: str, expects: str) -> str:
+        # Open a HITL prompt on the server's SignalHub and await the human reply.
+        # actx.run_id is a UUID here (the hub keys by it); the captcha timeout
+        # matches the historical web_login behavior.
+        prompt = await hub.open(
+            run_id=actx.run_id, node_id=node_id, message=message, expects=expects
+        )
+        return await asyncio.wait_for(prompt.future, timeout=_HITL_PROMPT_TIMEOUT_S)
+
+    return aakaar_caps.CapabilityContext(
+        secrets=dict(secrets or {}),
+        tenant_id=tenant,
+        run_id=str(actx.run_id),
+        node_id=(node_id or None),
+        object_reader=_reader if store is not None else None,
+        object_writer=_writer if store is not None else None,
+        text_completer=_text if llm is not None else None,
+        planner_completer=_plan if llm is not None else None,
+        browser_pool=getattr(actx, "browser_pool", None),
+        session_state=actx.session_state,
+        signals=hub,
+        signal_opener=(_signal if (hub is not None and node_id) else None),
+        download_mirror_dir=getattr(actx, "download_mirror_dir", None),
+    )
+
+
+def _server_context(actx: ActivityContext, spec: Any, inputs: dict[str, Any]) -> Any:
     secrets: dict[str, str] = {}
     if spec.secrets:
         alias = inputs.get("account_alias")
@@ -40,20 +111,33 @@ def _server_context(actx: ActivityContext, spec: Any, inputs: dict[str, Any]) ->
                 )
             except PermissionError:
                 secrets = {}
-    llm = getattr(actx, "llm", None)
+    return cap_context_from_activity(actx, secrets=secrets)
 
-    def completer(system: str, user: str) -> str:
-        return llm.complete_text(system, user) if llm is not None else ""
 
-    return aakaar_caps.CapabilityContext(
-        secrets=secrets,
-        tenant_id=str(actx.tenant_id),
-        run_id=str(actx.run_id),
-        text_completer=completer if llm is not None else None,
-        # object_reader/writer intentionally None for now: the migrated caps are
-        # pure compute. Object-backed shared caps would wire these to
-        # actx.object_store when added.
+def definition_from_spec(spec: Any) -> CapabilityDefinition:
+    """Build the server CapabilityDefinition from a shared CapabilitySpec —
+    single source for both register_shared and the back-compat module shims."""
+    return CapabilityDefinition(
+        ref=spec.ref,
+        description=spec.description,
+        input_schema=spec.input_schema,
+        output_schema=spec.output_schema,
+        side_effecting=spec.side_effecting,
+        secrets=tuple(SecretSpec(name=nm, description=ds) for nm, ds in spec.secrets),
+        tags=tuple(spec.tags) + (("gui",) if spec.gui else ()),
     )
+
+
+def server_handler_for(spec: Any, run: Any) -> CapabilityHandler:
+    """Wrap a shared cap's run(ctx, inputs) as a server activity handler that
+    builds the CapabilityContext from the ActivityContext."""
+
+    async def handler(actx: ActivityContext, inputs: dict[str, Any]) -> dict[str, Any]:
+        ctx = _server_context(actx, spec, inputs)
+        result: dict[str, Any] = await run(ctx, inputs)
+        return result
+
+    return handler
 
 
 def register_shared(registry: Registry, activities: ActivityRegistry) -> int:
@@ -63,25 +147,8 @@ def register_shared(registry: Registry, activities: ActivityRegistry) -> int:
     for spec, run in aakaar_caps.load_specs():
         if registry.get(spec.ref) is not None:
             continue  # idempotent + avoids a duplicate-ref conflict
-        defn = CapabilityDefinition(
-            ref=spec.ref,
-            description=spec.description,
-            input_schema=spec.input_schema,
-            output_schema=spec.output_schema,
-            secrets=tuple(SecretSpec(name=nm, description=ds) for nm, ds in spec.secrets),
-            tags=tuple(spec.tags) + (("gui",) if spec.gui else ()),
-        )
-
-        def make_handler(spec: Any = spec, run: Any = run) -> CapabilityHandler:
-            async def handler(actx: ActivityContext, inputs: dict[str, Any]) -> dict[str, Any]:
-                ctx = _server_context(actx, spec, inputs)
-                result: dict[str, Any] = await run(ctx, inputs)
-                return result
-
-            return handler
-
-        registry.add(defn)
-        activities.register(spec.ref, make_handler())
+        registry.add(definition_from_spec(spec))
+        activities.register(spec.ref, server_handler_for(spec, run))
         n += 1
     logger.info("shared capabilities registered into server: %d", n)
     return n

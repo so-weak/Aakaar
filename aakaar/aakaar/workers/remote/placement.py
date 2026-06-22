@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 from aakaar.shared.dag.types import Dag, NodeKind
+from aakaar.workers.remote.dispatcher import is_browser_ref
 from aakaar.workers.remote.registry import AgentRegistry, NoAgentAvailable
 
 
@@ -20,6 +21,7 @@ def check_placement(
     *,
     agents: AgentRegistry,
     registry: Any = None,
+    browser_enabled: bool = False,
 ) -> list[dict[str, str]]:
     """Return a list of unsatisfiable remote nodes: {node_id, ref, target, reason}.
     An empty list means every remote node can currently be placed."""
@@ -35,6 +37,16 @@ def check_placement(
                     "ref": node.ref,
                     "target": target,
                     "reason": "control nodes must run on the server",
+                }
+            )
+            continue
+        if is_browser_ref(node.ref) and not browser_enabled:
+            issues.append(
+                {
+                    "node_id": node.id,
+                    "ref": node.ref,
+                    "target": target,
+                    "reason": "remote browser execution is disabled (set AAKAAR_REMOTE_BROWSER_ENABLED=1)",
                 }
             )
             continue

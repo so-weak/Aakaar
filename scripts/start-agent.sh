@@ -44,17 +44,47 @@ case "$SERVER" in
 esac
 
 # --- venv (agent + shared capability library, both editable) -----------------
+# The agent runs the FULL browser stack locally, so it installs Playwright by
+# default (the `browser` extra on both the agent and the shared cap lib). Add
+# more with AAKAAR_AGENT_EXTRAS=gui,record (browser is always included).
 if [ ! -x "$AGENT_DIR/.venv/bin/python" ]; then
   require_cmd "$AAKAAR_PYTHON" "$AAKAAR_PYTHON not found on PATH. Install Python 3.11+ or set AAKAAR_PYTHON."
   log_info "bootstrapping agent venv (first run) ..."
-  extras=""
-  [ -n "${AAKAAR_AGENT_EXTRAS:-}" ] && extras="[${AAKAAR_AGENT_EXTRAS}]"
+  # Merge user extras with the always-on `browser` extra (dedup not needed; pip
+  # tolerates repeats).
+  _extras="browser"
+  [ -n "${AAKAAR_AGENT_EXTRAS:-}" ] && _extras="${_extras},${AAKAAR_AGENT_EXTRAS}"
   (
     cd "$AGENT_DIR"
     "$AAKAAR_PYTHON" -m venv .venv
     .venv/bin/python -m pip install --upgrade pip wheel >/dev/null
-    .venv/bin/python -m pip install -e ".${extras}" -e ../aakaar-capabilities
+    .venv/bin/python -m pip install -e ".[${_extras}]" -e "../aakaar-capabilities[browser]"
   )
+fi
+
+# --- Playwright Chromium (one-time; sentinel keeps reruns cheap) --------------
+# Downloads ~150 MB from Microsoft's CDN. Per the deployment decision, TLS
+# verification is RELAXED (NODE_TLS_REJECT_UNAUTHORIZED=0) so a TLS-intercepting
+# corporate network doesn't fail the download.
+#   ⚠ SUPPLY-CHAIN CAVEAT: relaxing TLS means the Chromium bytes could be
+#   tampered with in transit, and this browser drives live banking sessions.
+#   Playwright pins the Chromium revision to its own version (deterministic) and
+#   verifies the archive after download; keep the pinned playwright>=1.47 and,
+#   where possible, prefer an internal mirror (PLAYWRIGHT_DOWNLOAD_HOST) over
+#   relaxed TLS. Set AAKAAR_AGENT_STRICT_TLS=1 to keep verification on.
+if [ ! -f "$AGENT_DIR/.venv/.playwright-chromium-installed" ]; then
+  log_info "installing Playwright Chromium for the agent (first run, ~150 MB) ..."
+  _tls_env=""
+  if [ "${AAKAAR_AGENT_STRICT_TLS:-0}" != "1" ]; then
+    _tls_env="NODE_TLS_REJECT_UNAUTHORIZED=0"
+    log_warn "Chromium download TLS verification is RELAXED (set AAKAAR_AGENT_STRICT_TLS=1 to enforce)."
+  fi
+  if ( cd "$AGENT_DIR" && env $_tls_env .venv/bin/python -m playwright install chromium ); then
+    touch "$AGENT_DIR/.venv/.playwright-chromium-installed"
+  else
+    log_warn "Playwright Chromium install failed — browser caps will fail until it succeeds."
+    log_warn "Retry: (cd $AGENT_DIR && NODE_TLS_REJECT_UNAUTHORIZED=0 .venv/bin/python -m playwright install chromium)"
+  fi
 fi
 
 export AAKAAR_AGENT_SERVER="$SERVER"

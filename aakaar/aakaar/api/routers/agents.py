@@ -25,6 +25,7 @@ from aakaar.api.deps import (
     get_audit,
     get_registry,
     get_session,
+    get_settings,
     require_tenant_admin,
     require_tenant_user,
 )
@@ -45,6 +46,7 @@ from aakaar.workers.remote import (
     check_placement,
     parse_hello,
 )
+from aakaar.workers.remote.backchannel import demux_agent_frame
 from aakaar.workers.remote.broker_link import authenticate_agent_key
 from aakaar.workers.remote.protocol import RemoteResult
 
@@ -147,10 +149,15 @@ def placement_check(
     user: Annotated[User, Depends(require_tenant_user)],
     registry: Annotated[AgentRegistry, Depends(get_agent_registry)],
     capabilities: Annotated[Registry, Depends(get_registry)],
+    settings: Annotated[Any, Depends(get_settings)],
 ) -> PlacementCheckResponse:
     assert user.tenant_id is not None
     issues = check_placement(
-        dag, user.tenant_id, agents=registry, registry=capabilities
+        dag,
+        user.tenant_id,
+        agents=registry,
+        registry=capabilities,
+        browser_enabled=settings.remote_browser_enabled,
     )
     return PlacementCheckResponse(
         issues=issues, online_agents=len(registry.list_online(user.tenant_id))
@@ -206,16 +213,18 @@ async def agent_ws(websocket: WebSocket) -> None:
     conn = WebSocketAgentConnection(websocket, info)
     deps.agent_registry.register(conn)
     logger.info("agent connected alias=%s tenant=%s os=%s", alias, tenant_id, info.os)
-    await websocket.send_json({"type": "welcome", "alias": alias})
+    server_pub = deps.agent_sealer.public_key_hex() if deps.agent_sealer is not None else None
+    await websocket.send_json({"type": "welcome", "alias": alias, "pubkey": server_pub})
+    request_handler = getattr(deps, "agent_request_handler", None)
     try:
         while True:
             msg = await websocket.receive_json()
-            kind = msg.get("type")
-            if kind == "result":
-                conn.resolve_result(msg)
-            elif kind == "event":
-                _relay_event(deps, tenant_id, msg)
-            # ping/pong and anything else: ignore (WS keepalive handles liveness)
+            await demux_agent_frame(
+                conn,
+                msg,
+                on_event=lambda m: _relay_event(deps, tenant_id, m),
+                request_handler=request_handler,
+            )
     except WebSocketDisconnect:
         pass
     except Exception:
@@ -229,8 +238,11 @@ async def agent_ws(websocket: WebSocket) -> None:
 
 
 def _relay_event(deps: object, tenant_id: uuid.UUID, msg: dict[str, Any]) -> None:
+    raw = msg.get("run_id")
+    if not raw:  # the run-less invoke() path uses run_id="" — nothing to record against
+        return
     try:
-        run_id = uuid.UUID(str(msg["run_id"]))
+        run_id = uuid.UUID(str(raw))
         deps.event_recorder.record(  # type: ignore[attr-defined]
             run_id=run_id,
             tenant_id=tenant_id,

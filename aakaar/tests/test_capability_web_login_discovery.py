@@ -21,8 +21,10 @@ from typing import Any
 import pytest
 
 from aakaar.capabilities import load_into
-from aakaar.capabilities.web_login import CAP_REF, _llm_disambiguate
+from aakaar.capabilities.web_login import CAP_REF
 from aakaar.capabilities.web_login.discovery import LoginFormDescriptor
+from aakaar_caps.caps.web_login import _llm_disambiguate
+from aakaar_caps.context import CapabilityContext
 from aakaar.interpreter import LocalExecutor, RunContext, build_default_activities
 from aakaar.interpreter.activities.types import ActivityContext
 from aakaar.interpreter.events import InMemoryEventRecorder
@@ -472,24 +474,11 @@ def test_login_form_descriptor_serialization_roundtrip() -> None:
 
 @pytest.mark.asyncio
 async def test_llm_disambiguate_handles_garbage_response(tmp_path: Path) -> None:
-    """If the LLM replies with non-JSON in `rationale`, the helper returns
+    """If the LLM replies with non-JSON via the planner seam, the helper returns
     None — the handler then falls back to whatever heuristics produced."""
-    class _GarbageLLM:
-        def complete_planner(self, _messages):  # noqa: ANN001
-            return PlannerCompletion(
-                kind="clarify",
-                questions=["x"],
-                rationale="this is not json",
-            )
-
-    actx = ActivityContext(
-        tenant_id=uuid.uuid4(),
-        run_id=uuid.uuid4(),
-        registry=build_default_registry(),
-        object_store=LocalFsObjectStore(tmp_path / "objs"),
-        vault=LocalVault(tmp_path / "vault"),
-        llm=_GarbageLLM(),
-    )
+    # The portable seam returns free text (the planner's rationale); garbage in,
+    # None out.
+    ctx = CapabilityContext(planner_completer=lambda _messages: "this is not json")
     desc = LoginFormDescriptor(
         ok=True,
         ambiguity_reasons=["x"],
@@ -501,5 +490,5 @@ async def test_llm_disambiguate_handles_garbage_response(tmp_path: Path) -> None
         captcha_kind=None,
         form_outer_html_excerpt="<form>...</form>",
     )
-    refined = await _llm_disambiguate(actx, desc)
+    refined = await _llm_disambiguate(ctx, desc)
     assert refined is None

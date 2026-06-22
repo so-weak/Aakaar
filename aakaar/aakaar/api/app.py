@@ -121,6 +121,8 @@ def _build_broker_link(deps: AppDependencies) -> BrokerLink | None:
         session_factory=deps.session_factory,
         agent_registry=deps.agent_registry,
         recorder=deps.event_recorder,
+        request_handler=deps.agent_request_handler,
+        server_pubkey=(deps.agent_sealer.public_key_hex() if deps.agent_sealer is not None else None),
     )
 
 

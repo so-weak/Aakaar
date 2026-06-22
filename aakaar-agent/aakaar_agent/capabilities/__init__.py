@@ -68,6 +68,11 @@ class _SharedCap:
         ctx = aakaar_caps.CapabilityContext(secrets=secrets or {})
         return await self._run(ctx, inputs)
 
+    async def run_with_context(self, ctx: Any, inputs: dict[str, Any]) -> dict[str, Any]:
+        """Run against a context the agent runtime built (browser pool, per-run
+        session_state, WS-RPC proxies). Used for browser/object-backed caps."""
+        return await self._run(ctx, inputs)
+
 
 def advertised() -> list[dict[str, str]]:
     return [
@@ -76,10 +81,21 @@ def advertised() -> list[dict[str, str]]:
     ]
 
 
-async def dispatch(ref: str, inputs: dict[str, Any], secrets: dict[str, str]) -> dict[str, Any]:
+async def dispatch(
+    ref: str,
+    inputs: dict[str, Any],
+    secrets: dict[str, str],
+    *,
+    context: Any = None,
+) -> dict[str, Any]:
     module = _REGISTRY.get(ref)
     if module is None:
         raise KeyError(f"no handler for capability {ref!r}")
+    # Shared caps run against the rich CapabilityContext the agent runtime built
+    # (browser pool, per-run session_state, WS proxies) when one is provided;
+    # desktop caps keep the stateless (inputs, secrets) contract.
+    if context is not None and isinstance(module, _SharedCap):
+        return await module.run_with_context(context, inputs)
     result = module.run(inputs, secrets)
     if inspect.isawaitable(result):
         result = await result

@@ -195,7 +195,10 @@ async def test_relayed_agent_registers_dispatches_and_unregisters(
 
             out = await _recv(ws)
             assert (out["t"], out["sid"]) == ("data", "s1")
-            assert json.loads(out["frame"]) == {"type": "welcome", "alias": "lab-1"}
+            welcome = json.loads(out["frame"])
+            # welcome now also carries the server's sealed-box public key (None
+            # here — the test link is built without one).
+            assert welcome["type"] == "welcome" and welcome["alias"] == "lab-1"
 
             conn = deps.agent_registry.get(tenant_id, "lab-1")
             assert conn is not None

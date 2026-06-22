@@ -112,6 +112,12 @@ class AppDependencies:
     event_broker: EventBroker = field(init=False)
     agent_registry: AgentRegistry = field(init=False)
     remote_dispatcher: RemoteDispatcher | None = field(init=False, default=None)
+    agent_request_handler: Any = field(init=False, default=None)
+    """Handles agent-initiated back-channel requests (obj/llm/signal). Set when
+    remote execution is enabled; both agent read loops route `req` frames here."""
+    agent_sealer: Any = field(init=False, default=None)
+    """Process-wide sealed-box keypair. Seals the secrets envelope + obj replies
+    to the agent's public key so the broker only ever relays ciphertext."""
     key_store: KeyStore | None = field(init=False, default=None)
     """RSA signing keys; populated only when jwt_algorithm is asymmetric (RS*).
     None under HS256 (the symmetric default)."""
@@ -185,12 +191,29 @@ class AppDependencies:
         )
         self.agent_registry = AgentRegistry()
         if self.settings.remote_exec_enabled:
+            from aakaar_caps.sealing import Sealer
+
+            self.agent_sealer = Sealer.generate()
             self.remote_dispatcher = RemoteDispatcher(
                 agents=self.agent_registry,
                 registry=self.registry,
                 audit=self.audit,
                 recorder=self.event_recorder,
                 default_timeout_s=self.settings.remote_task_timeout_seconds,
+                browser_enabled=self.settings.remote_browser_enabled,
+                sealer=self.agent_sealer,
+                live_screenshots=self.settings.live_screenshots,
+            )
+            # Back-channel handler: lets an agent running the browser stack reach
+            # the server-owned object store / LLM / signal hub. Tenant is taken
+            # from the authenticated connection inside the handler.
+            from aakaar.workers.remote.backchannel import ServerBackchannelHandler
+
+            self.agent_request_handler = ServerBackchannelHandler(
+                object_store=self.object_store,
+                llm=self.llm,
+                signals=self.signals,
+                sealer=self.agent_sealer,
             )
         self.executor = LocalExecutor(
             activities=self.activities,

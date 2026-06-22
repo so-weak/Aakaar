@@ -69,6 +69,13 @@ class Settings:
     remote_exec_enabled: bool = True
     """Allow nodes to be placed on remote agents (the /ws/agents endpoint +
     RemoteDispatcher). Inert when no agents are enrolled."""
+    remote_browser_enabled: bool = True
+    """Allow the browser/credential capability stack (browser.*, cap.web_login,
+    cap.screenshot, ...) to run on a REMOTE agent. Independent of
+    `remote_exec_enabled` so it can be turned OFF on its own under incident
+    without disabling all remote execution. Credentials + object bytes are
+    sealed (encrypted to the agent's enrolled key) before they cross the broker
+    — see aakaar_caps.sealing."""
     remote_task_timeout_seconds: float = 300.0
 
     # ---- Durability / HITL SLA --------------------------------------------
@@ -262,6 +269,8 @@ def load_settings() -> Settings:
             os.environ.get("AAKAAR_SCHEDULER_TICK_SECONDS", "5")
         ),
         remote_exec_enabled=os.environ.get("AAKAAR_REMOTE_EXEC_ENABLED", "true").lower()
+        not in ("0", "false", "no"),
+        remote_browser_enabled=os.environ.get("AAKAAR_REMOTE_BROWSER_ENABLED", "true").lower()
         not in ("0", "false", "no"),
         remote_task_timeout_seconds=float(
             os.environ.get("AAKAAR_REMOTE_TASK_TIMEOUT_SECONDS", "300")

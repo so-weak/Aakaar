@@ -15,24 +15,27 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from enum import StrEnum
 from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from aakaar.shared.dag.types import Dag
 
+# Canonical, host-portable message types live in the shared capability lib so a
+# capability running on a remote agent builds the very same objects this
+# planner's `complete_planner` consumes. Re-exported here for back-compat — all
+# existing `from aakaar.planner.llm import LLMMessage, Role` imports still work.
+from aakaar_caps.llm_types import LLMMessage, Role
 
-class Role(StrEnum):
-    SYSTEM = "system"
-    USER = "user"
-    ASSISTANT = "assistant"
-
-
-@dataclass(frozen=True, slots=True)
-class LLMMessage:
-    role: Role
-    content: str
+__all__ = [  # noqa: RUF022 - grouped by concern
+    "Role",
+    "LLMMessage",
+    "PlannerCompletion",
+    "ToolCall",
+    "ToolStep",
+    "LLMClient",
+    "FakeLLMClient",
+]
 
 
 # ---------- planner completion envelope ------------------------------------

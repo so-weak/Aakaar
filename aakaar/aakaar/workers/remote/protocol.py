@@ -36,6 +36,9 @@ class AgentInfo:
     hostname: str | None = None
     pools: tuple[str, ...] = ()
     capabilities: tuple[AgentCapability, ...] = ()
+    public_key: str | None = None
+    """Agent's sealed-box public key (hex), from its hello. The server seals the
+    secrets envelope + obj_get replies to it so the broker relays ciphertext."""
 
     def supports(self, ref: str, version: str | None = None) -> bool:
         for c in self.capabilities:
@@ -56,6 +59,16 @@ class RemoteTask:
     inputs: dict[str, Any]
     secrets: dict[str, str] = field(default_factory=dict)
     timeout_s: float = 300.0
+    tenant_id: str = ""
+    """The run's tenant. The agent keys per-run session state by it and the
+    server stamps it from the authenticated identity on obj/llm back-channel
+    requests — never trusting an agent-supplied tenant."""
+    secrets_sealed: dict[str, Any] | None = None
+    """When set, the credential envelope sealed to the agent's public key; the
+    cleartext ``secrets`` field is then empty. The agent unseals it locally."""
+    live_screen: bool = False
+    """Ask the agent to emit a live-preview screenshot event after this node
+    (set for browser nodes when the server's live_screenshots setting is on)."""
 
     def to_wire(self) -> dict[str, Any]:
         return {
@@ -63,9 +76,12 @@ class RemoteTask:
             "task_id": self.task_id,
             "run_id": self.run_id,
             "node_id": self.node_id,
+            "tenant_id": self.tenant_id,
             "ref": self.ref,
             "inputs": self.inputs,
             "secrets": self.secrets,
+            "secrets_sealed": self.secrets_sealed,
+            "live_screen": self.live_screen,
             "timeout_s": self.timeout_s,
         }
 
@@ -91,6 +107,16 @@ def new_task_id() -> str:
     return uuid.uuid4().hex
 
 
+def new_request_id() -> str:
+    """Correlation id for a back-channel request/response exchange — distinct
+    from a task_id (which correlates a node dispatch + its result). Used by both
+    directions of the back-channel:
+      agent -> server  req  {type:"req",  request_id, op, ...}  -> reply {type:"reply", request_id, ok, result|error}
+      server -> agent  ctrl {type:"ctrl", request_id, op, ...}  <- ack   {type:"ack",   request_id, ok, error?}
+    """
+    return uuid.uuid4().hex
+
+
 def parse_hello(msg: dict[str, Any], *, alias: str, tenant_id: uuid.UUID) -> AgentInfo:
     caps = tuple(
         AgentCapability(ref=str(c.get("ref")), version=str(c.get("version", "1")))
@@ -98,6 +124,7 @@ def parse_hello(msg: dict[str, Any], *, alias: str, tenant_id: uuid.UUID) -> Age
         if c.get("ref")
     )
     pools = tuple(str(p) for p in (msg.get("pools") or []))
+    pubkey = msg.get("pubkey")
     return AgentInfo(
         alias=alias,
         tenant_id=tenant_id,
@@ -107,6 +134,7 @@ def parse_hello(msg: dict[str, Any], *, alias: str, tenant_id: uuid.UUID) -> Age
         hostname=msg.get("hostname"),
         pools=pools,
         capabilities=caps,
+        public_key=str(pubkey) if pubkey else None,
     )
 
 
