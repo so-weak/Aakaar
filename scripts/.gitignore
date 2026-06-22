@@ -1,0 +1,2 @@
+# Runtime state written by the start/stop scripts: pidfiles, logs, broker token.
+.run/
