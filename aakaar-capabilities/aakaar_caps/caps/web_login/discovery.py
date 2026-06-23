@@ -196,36 +196,67 @@ DISCOVERY_JS = r"""
   if (allPasswords.length > 1) reasons.push("multiple_password_inputs");
   const password = allPasswords[0];
 
-  // Search scope. A login form is usually wrapped in a <form>, but widget
+  // Search scopes. A login form is usually wrapped in a <form>, but widget
   // frameworks (ZK/ZKoss, and some SPA grids) render a form-LESS layout where
-  // the username, password and submit live in sibling grid cells with NO
-  // enclosing <form>. Anchoring the search on `password.parentElement` there
-  // collapses the scope to the single cell that holds only the password, so
-  // the username + submit (in sibling cells) are never found. Instead, when
-  // there's no <form>, walk up from the password to the smallest ancestor that
-  // also contains a visible non-password text input (the username) — that's
-  // the login panel. The walk is depth-capped so we never grab the whole page,
-  // and falls back to the password's own parent for password-only flows.
+  // the username, password and submit sit in separate, often non-adjacent
+  // containers with NO enclosing <form>. Anchoring the search on
+  // `password.parentElement` collapses the scope to the single cell holding
+  // only the password, so the username and submit are never found. We instead
+  // anchor on the password and derive two scopes:
+  //   * panelScope — smallest ancestor that ALSO holds the username input.
+  //     Tight, so the username heuristic can't grab an unrelated text box
+  //     elsewhere on the page.
+  //   * loginScope — smallest ancestor that ALSO holds a clickable button.
+  //     Wider, because ZK renders the Login button in a SEPARATE sibling
+  //     <table> outside the field grid. The submit + captcha search use this.
+  // Both walks are depth-capped so we never grab the whole document, and fall
+  // back sensibly (password's own parent / body) when no ancestor qualifies.
   const form = password.closest("form");
-  let scope = form;
-  if (!scope) {
+
+  let panelScope = form;
+  if (!panelScope) {
     let cur = password.parentElement;
-    for (let depth = 0; cur && depth < 10 && cur.tagName !== "BODY" && cur.tagName !== "HTML"; depth++) {
+    for (let depth = 0; cur && depth < 12 && cur.tagName !== "BODY" && cur.tagName !== "HTML"; depth++) {
       const hasOtherText = Array.from(
         cur.querySelectorAll(
           "input[type='text'], input[type='email'], input[type='tel'], input:not([type])"
         )
       ).filter(visible).some((el) => el !== password);
-      if (hasOtherText) { scope = cur; break; }
+      if (hasOtherText) { panelScope = cur; break; }
       cur = cur.parentElement;
     }
-    if (!scope) scope = password.parentElement || document.body;
+    if (!panelScope) panelScope = password.parentElement || document.body;
+  }
+
+  // Clickable controls we WOULD accept as the submit, and the filter that
+  // rejects decoys: invisible, aria-hidden, or ZK's offscreen focus-helper
+  // anchors (class "z-focus-a", tabindex -1, e.g. the modal mask button).
+  const BUTTON_SEL =
+    "button[type='submit'], input[type='submit'], button, input[type='button'], " +
+    "a.z-button, .z-button, [role='button']";
+  function isSubmitCandidate(el) {
+    if (!visible(el)) return false;
+    if (el.getAttribute("aria-hidden") === "true") return false;
+    if (el.getAttribute("tabindex") === "-1") return false;
+    if (el.classList && el.classList.contains("z-focus-a")) return false;
+    return true;
+  }
+
+  let loginScope = form;
+  if (!loginScope) {
+    let cur = panelScope;
+    for (let depth = 0; cur && depth < 12 && cur.tagName !== "BODY" && cur.tagName !== "HTML"; depth++) {
+      const hasButton = Array.from(cur.querySelectorAll(BUTTON_SEL)).some(isSubmitCandidate);
+      if (hasButton) { loginScope = cur; break; }
+      cur = cur.parentElement;
+    }
+    if (!loginScope) loginScope = document.body;
   }
 
   // 2. Username = the visible text/email/tel input that precedes the password
-  // in tab order. We approximate "tab order" with DOM order within the scope.
+  // in tab order. We approximate "tab order" with DOM order within panelScope.
   const candidates = Array.from(
-    scope.querySelectorAll(
+    panelScope.querySelectorAll(
       "input[type='text'], input[type='email'], input[type='tel'], input:not([type])"
     )
   ).filter(visible);
@@ -241,19 +272,20 @@ DISCOVERY_JS = r"""
     reasons.push("multiple_text_inputs_before_password");
   }
 
-  // 3. Submit control — within the scope, prefer a real submit; then a plain
-  // <button>; then widget-framework buttons. ZK/ZKoss renders the login button
-  // as <button class="z-button"> or <a class="z-button">, and other libraries
-  // use role="button" on non-button elements. Text is never matched —
-  // translatable labels change between locales.
+  // 3. Submit control. ZK/ZKoss renders the Login button as
+  // <button type="button" class="z-button"> (NOT type=submit) in a table that
+  // is a sibling of the field grid — so we search loginScope, accept any
+  // clickable button, and never match on translatable button text. Among the
+  // candidates: prefer a real type=submit, else the first button that follows
+  // the password in document order (login buttons sit below the fields).
+  const submitCandidates = Array.from(loginScope.querySelectorAll(BUTTON_SEL)).filter(isSubmitCandidate);
   let submit =
-    scope.querySelector("button[type='submit']") ||
-    scope.querySelector("input[type='submit']") ||
-    scope.querySelector("button:not([type])") ||
-    scope.querySelector("button") ||
-    scope.querySelector("a.z-button, .z-button, [role='button']");
-  if (!submit) {
-    submit = document.querySelector("button[type='submit'], input[type='submit']");
+    submitCandidates.find((el) => (el.getAttribute("type") || "").toLowerCase() === "submit") || null;
+  if (!submit && submitCandidates.length) {
+    const following = submitCandidates.filter(
+      (el) => password.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING
+    );
+    submit = following.length ? following[0] : submitCandidates[submitCandidates.length - 1];
   }
   if (!submit) reasons.push("no_submit_button_found");
 
@@ -262,14 +294,14 @@ DISCOVERY_JS = r"""
   let captchaInput = null;
   let captchaKind = null;
   // 4a. classic <img> captcha + a sibling input.
-  const captchaImgEl = scope.querySelector(
+  const captchaImgEl = loginScope.querySelector(
     "img[alt*='captcha' i], img[src*='captcha' i], img[name*='captcha' i], img.captcha, img#captcha"
   );
   if (captchaImgEl) {
     captchaImage = captchaImgEl;
     captchaKind = "image";
     const ci =
-      scope.querySelector(
+      loginScope.querySelector(
         "input[name*='captcha' i], input[id*='captcha' i], input[placeholder*='captcha' i]"
       ) || null;
     if (ci) captchaInput = ci;
@@ -295,17 +327,20 @@ DISCOVERY_JS = r"""
     }
   }
 
-  // 5. Snapshot of the scope's outerHTML for LLM fallback. For a form-less
-  //    page this is the login panel we walked up to, NOT just the password's
-  //    cell — so the username + submit are included for the LLM to see. Strip
-  //    <script> and trim long attributes; cap at 4 KB.
+  // 5. Snapshot for the LLM fallback: the username/password panel plus the
+  //    chosen submit control's own HTML (on ZK the submit lives OUTSIDE the
+  //    panel, so panelScope alone would omit it). Strip <script>/<style>;
+  //    cap at 4 KB.
   let snapshot = "";
-  if (scope && scope.cloneNode) {
-    const clone = scope.cloneNode(true);
+  if (panelScope && panelScope.cloneNode) {
+    const clone = panelScope.cloneNode(true);
     clone.querySelectorAll("script,style").forEach((n) => n.remove());
     snapshot = clone.outerHTML || "";
-    if (snapshot.length > 4096) snapshot = snapshot.slice(0, 4096) + "…";
   }
+  if (submit) {
+    snapshot += "\n<!-- submit -->\n" + (submit.outerHTML || "");
+  }
+  if (snapshot.length > 4096) snapshot = snapshot.slice(0, 4096) + "…";
 
   return {
     ok: !!(username && password && submit) || allPasswords.length === 1,

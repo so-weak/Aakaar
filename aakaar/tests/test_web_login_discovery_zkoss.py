@@ -32,39 +32,59 @@ from aakaar_caps.caps.web_login.discovery import (  # noqa: E402
 )
 from playwright.async_api import async_playwright  # noqa: E402
 
-# Two ways ZK renders the login button: a real <button> widget and an
-# anchor widget. Both carry the framework's `z-button` class and a generated
-# id; neither is a `type=submit` and neither sits inside a <form>.
-_ZK_BUTTON = '<button id="Login" class="z-button" onclick="return zkLogin()">Sign In</button>'
-_ZK_ANCHOR = '<a id="Login" class="z-button" href="javascript:;" onclick="return zkLogin()">Sign In</a>'
+# Two ways ZK renders the login button: a real <button type="button"> widget and
+# an anchor widget. Both carry the framework's `z-button` class and an id;
+# crucially NEITHER is `type=submit`, and both sit in a table that is a SIBLING
+# of the field grid — outside the username/password panel.
+_ZK_BUTTON = '<button type="button" id="loginBtn" class="z-button" onclick="return zkLogin()">Login</button>'
+_ZK_ANCHOR = '<a id="loginBtn" class="z-button" href="javascript:;" onclick="return zkLogin()">Login</a>'
 
 
 def _zk_login_html(submit_html: str) -> str:
-    """A form-less ZK/ZKoss login panel: grid rows of <div class="z-row-content">
-    cells, the username and password in separate cells, the submit in a third.
-    Mirrors the structure from the field failure (password cell was
-    ``<div id="zI5Bh-cell" class="z-row-content">`` with only ``#pwdtb`` inside).
+    """Faithful reproduction of the real CTS ZK login DOM.
+
+    Structure that matters:
+      * No <form> anywhere.
+      * Username (#usertb) and password (#pwdtb) live in a ``<tbody class=
+        "z-rows">`` grid, each inside its own ``<div class="z-row-content">``
+        cell (the password cell mirrors the field's ``id="zI5Bh-cell"``).
+      * The Login button is ``type="button"`` (NOT submit) and sits in a
+        SEPARATE ``<table>`` that is a sibling of the grid, not inside z-rows.
+      * Everything is wrapped in ``z-window-content`` / ``role="dialog"``.
+      * A ZK modal mask contributes an offscreen ``class="z-focus-a"`` /
+        ``aria-hidden`` / ``tabindex=-1`` button that must NOT be picked.
     """
     return f"""<!doctype html>
 <html><head><meta charset="utf-8"></head>
-<body>
-  <div class="z-window" id="loginWin">
-    <div class="z-window-header"><span class="z-label">CTS Outward — Sign In</span></div>
-    <div class="z-grid"><div class="z-rows">
-      <div class="z-row"><div class="z-row-inner">
-        <div class="z-row-content"><span class="z-label">User ID</span></div>
-        <div id="uid-cell" class="z-row-content">
-          <input type="text" id="usertb" class="z-textbox" autocomplete="off">
-        </div>
-      </div></div>
-      <div class="z-row"><div class="z-row-inner">
-        <div class="z-row-content"><span class="z-label">Password</span></div>
-        <div id="zI5Bh-cell" class="z-row-content">
-          <input type="password" id="pwdtb" class="z-textbox">
-        </div>
-      </div></div>
-      <div class="z-row"><div class="z-row-content z-row-actions">{submit_html}</div></div>
-    </div></div>
+<body class="webkit chrome">
+  <div id="win" role="dialog" aria-modal="true" class="expstyle1 z-window z-window-modal">
+    <div id="win-cap" class="z-window-header">ExpressClear CTS Outward - Web Access</div>
+    <div id="win-cave" class="z-window-content">
+      <div id="panel" class="z-div">
+        <div class="z-grid" role="grid"><div class="z-grid-body">
+          <table width="100%"><tbody class="z-rows" role="rowgroup">
+            <tr class="z-row" role="row">
+              <td class="z-row-inner" role="gridcell"><div class="z-row-content"><span class="z-label">Name :</span></div></td>
+              <td class="z-row-inner" role="gridcell"><div id="uin-cell" class="z-row-content"><input type="text" id="usertb" style="width:95%;border:1px solid #d8d0d0"></div></td>
+            </tr>
+            <tr class="z-row" role="row">
+              <td class="z-row-inner" role="gridcell"><div class="z-row-content"><span class="z-label">Password :</span></div></td>
+              <td class="z-row-inner" role="gridcell"><div id="zI5Bh-cell" class="z-row-content"><input type="password" id="pwdtb" style="width:95%;border:1px solid #d8d0d0"></div></td>
+            </tr>
+          </tbody></table>
+        </div></div>
+        <table class="z-hbox" width="100%"><tbody><tr valign="top"><td align="center">
+          <table height="100%"><tbody><tr valign="top"><td>{submit_html}</td></tr></tbody></table>
+        </td></tr></tbody></table>
+        <table class="z-hbox" width="100%"><tbody><tr valign="top"><td align="center">
+          <span class="z-label">Copyright © 2005-2015 Image InfoSystems Private Limited.</span>
+        </td></tr></tbody></table>
+      </div>
+    </div>
+  </div>
+  <div id="win-mask" class="z-modal-mask">
+    <button id="win-mask-a" style="top:0;left:0;width:0;height:0" onclick="return false;"
+            class="z-focus-a" aria-hidden="true" tabindex="-1"></button>
   </div>
   <script>
     window.__login = {{clicked: false, user: null, pass: null}};
@@ -108,10 +128,11 @@ async def test_discovery_resolves_formless_zkoss_login(submit_html: str) -> None
         result = await page.evaluate(DISCOVERY_JS)
         desc = LoginFormDescriptor.from_js_result(result)
 
-        # All three controls resolved to their stable ids.
+        # All three controls resolved — including the submit, which lives in a
+        # sibling table outside the field grid and is only type="button".
         assert desc.password_selector == "#pwdtb"
         assert desc.username_selector == "#usertb"
-        assert desc.submit_selector == "#Login"
+        assert desc.submit_selector == "#loginBtn"
 
         # The ambiguity flags that broke the field run are gone.
         assert "no_username_input_found" not in desc.ambiguity_reasons
@@ -123,10 +144,13 @@ async def test_discovery_resolves_formless_zkoss_login(submit_html: str) -> None
             count = await page.eval_on_selector_all(sel, "els => els.length")
             assert count == 1, f"{sel!r} matched {count} elements, expected 1"
 
-        # The LLM-fallback snapshot is now the whole login panel, not just the
-        # password cell — username + submit are present for the model to see.
+        # The submit is NOT the offscreen modal-mask focus button.
+        assert desc.submit_selector != "#win-mask-a"
+
+        # The LLM-fallback snapshot carries the field panel AND the submit
+        # element (which sits outside that panel) for the model to see.
         assert "usertb" in desc.form_outer_html_excerpt
-        assert "Login" in desc.form_outer_html_excerpt
+        assert "loginBtn" in desc.form_outer_html_excerpt
 
 
 @pytest.mark.parametrize("submit_html", [_ZK_BUTTON, _ZK_ANCHOR], ids=["zk-button", "zk-anchor"])
