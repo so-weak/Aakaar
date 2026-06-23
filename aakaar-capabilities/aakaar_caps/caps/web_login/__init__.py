@@ -8,8 +8,8 @@ touches only the portable CapabilityContext surface:
   - ``browser_pool`` / ``session_state`` — the live session (local on whichever host),
   - ``secrets`` — username/password (server: from the vault; agent: shipped in
     the dispatch envelope),
-  - ``complete_plan`` — optional LLM selector disambiguation (proxied to the
-    server's planner; the agent never holds the OpenAI key),
+  - ``complete_text`` — optional LLM selector disambiguation (proxied to the
+    server's LLM; the agent never holds the OpenAI key),
   - ``open_signal`` — captcha/MFA human-in-the-loop (proxied to the server's
     signal hub; the human answers in the same chat UI wherever the browser runs),
   - ``write_object`` — stores the captcha image (canonical store on the server).
@@ -180,7 +180,7 @@ async def run(ctx: CapabilityContext, inputs: dict[str, Any]) -> dict[str, Any]:
                     f"cap.web_login could not find a login form on {login_url!r}; "
                     f"discovery reasons: {descriptor.ambiguity_reasons}"
                 )
-            if descriptor.ambiguity_reasons and ctx.planner_completer is not None:
+            if descriptor.ambiguity_reasons and ctx.text_completer is not None:
                 resolved = await _llm_disambiguate(ctx, descriptor)
                 if resolved:
                     descriptor = resolved
@@ -288,15 +288,20 @@ Ambiguity reasons reported by heuristics: {reasons}
 async def _llm_disambiguate(
     ctx: CapabilityContext, descriptor: LoginFormDescriptor
 ) -> LoginFormDescriptor | None:
-    """Ask the LLM (via the portable planner seam) for selector tiebreaks. The
+    """Ask the LLM (via the portable free-text seam) for selector tiebreaks. The
     seam returns free text; we parse the JSON object out of it. Returns a refined
-    descriptor on success, or None — callers fall back to the heuristics."""
-    from aakaar_caps.llm_types import LLMMessage, Role
+    descriptor on success, or None — callers fall back to the heuristics.
 
+    Uses ``complete_text`` (not ``complete_plan``): the planner seam forces the
+    reply through the workflow ``PlannerCompletion`` envelope, which requires a
+    ``kind`` field and forbids the bare selector keys this prompt asks for, so
+    every reply was rejected and disambiguation silently never ran. The text
+    seam round-trips to the same server LLM with no envelope, on both the server
+    and a remote agent (see ``ctx.complete_text`` / back-channel ``llm_complete``)."""
     snapshot = descriptor.form_outer_html_excerpt or ""
     if not snapshot:
         return None
-    prompt = _DISAMBIGUATE_PROMPT.format(
+    user_prompt = _DISAMBIGUATE_PROMPT.format(
         form_html=snapshot,
         username=descriptor.username_selector,
         password=descriptor.password_selector,
@@ -305,20 +310,16 @@ async def _llm_disambiguate(
         captcha_input=descriptor.captcha_input_selector,
         reasons=", ".join(descriptor.ambiguity_reasons) or "(none)",
     )
-    messages = [
-        LLMMessage(
-            role=Role.SYSTEM,
-            content=(
-                "You are a CSS-selector assistant. Reply with one JSON object, "
-                "no markdown fences, no prose. Use the simplest stable selector "
-                "(prefer #id, then [name=...], then class). All five keys must "
-                "be present; use null for captcha keys when no captcha exists."
-            ),
-        ),
-        LLMMessage(role=Role.USER, content=prompt),
-    ]
+    system_prompt = (
+        "You are a CSS-selector assistant. Reply with one JSON object, "
+        "no markdown fences, no prose. Use the simplest stable selector "
+        "(prefer #id, then [name=...], then class). All five keys must "
+        "be present; use null for captcha keys when no captcha exists."
+    )
     try:
-        raw = (await asyncio.to_thread(ctx.complete_plan, messages) or "").strip()
+        raw = (
+            await asyncio.to_thread(ctx.complete_text, system_prompt, user_prompt) or ""
+        ).strip()
     except Exception:  # noqa: BLE001
         return None
     if not raw or not raw.startswith("{"):

@@ -5,6 +5,12 @@ descriptor of the login form's elements + any captcha widgets. It uses
 the password input as the anchor — every login page has one, and forms
 without one aren't login pages — and walks outward from there.
 
+The walk does not assume a ``<form>`` element. Widget frameworks such as
+ZK/ZKoss render form-less login screens where the username, password and
+submit live in sibling grid cells. For those, discovery climbs from the
+password to the smallest ancestor that also holds the username input (the
+login panel) and searches that, so the three controls are still resolved.
+
 Returned shape::
 
     {
@@ -189,12 +195,37 @@ DISCOVERY_JS = r"""
   }
   if (allPasswords.length > 1) reasons.push("multiple_password_inputs");
   const password = allPasswords[0];
-  const form = password.closest("form") || password.parentElement;
+
+  // Search scope. A login form is usually wrapped in a <form>, but widget
+  // frameworks (ZK/ZKoss, and some SPA grids) render a form-LESS layout where
+  // the username, password and submit live in sibling grid cells with NO
+  // enclosing <form>. Anchoring the search on `password.parentElement` there
+  // collapses the scope to the single cell that holds only the password, so
+  // the username + submit (in sibling cells) are never found. Instead, when
+  // there's no <form>, walk up from the password to the smallest ancestor that
+  // also contains a visible non-password text input (the username) — that's
+  // the login panel. The walk is depth-capped so we never grab the whole page,
+  // and falls back to the password's own parent for password-only flows.
+  const form = password.closest("form");
+  let scope = form;
+  if (!scope) {
+    let cur = password.parentElement;
+    for (let depth = 0; cur && depth < 10 && cur.tagName !== "BODY" && cur.tagName !== "HTML"; depth++) {
+      const hasOtherText = Array.from(
+        cur.querySelectorAll(
+          "input[type='text'], input[type='email'], input[type='tel'], input:not([type])"
+        )
+      ).filter(visible).some((el) => el !== password);
+      if (hasOtherText) { scope = cur; break; }
+      cur = cur.parentElement;
+    }
+    if (!scope) scope = password.parentElement || document.body;
+  }
 
   // 2. Username = the visible text/email/tel input that precedes the password
-  // in tab order. We approximate "tab order" with DOM order within the form.
+  // in tab order. We approximate "tab order" with DOM order within the scope.
   const candidates = Array.from(
-    (form || document).querySelectorAll(
+    scope.querySelectorAll(
       "input[type='text'], input[type='email'], input[type='tel'], input:not([type])"
     )
   ).filter(visible);
@@ -210,18 +241,19 @@ DISCOVERY_JS = r"""
     reasons.push("multiple_text_inputs_before_password");
   }
 
-  // 3. Submit button — within the form, prefer type=submit; fall back to the
-  // only button/link that looks submitty.
-  let submit = null;
-  if (form) {
-    submit =
-      form.querySelector("button[type='submit']") ||
-      form.querySelector("input[type='submit']") ||
-      form.querySelector("button:not([type])") ||
-      form.querySelector("button");
-  }
+  // 3. Submit control — within the scope, prefer a real submit; then a plain
+  // <button>; then widget-framework buttons. ZK/ZKoss renders the login button
+  // as <button class="z-button"> or <a class="z-button">, and other libraries
+  // use role="button" on non-button elements. Text is never matched —
+  // translatable labels change between locales.
+  let submit =
+    scope.querySelector("button[type='submit']") ||
+    scope.querySelector("input[type='submit']") ||
+    scope.querySelector("button:not([type])") ||
+    scope.querySelector("button") ||
+    scope.querySelector("a.z-button, .z-button, [role='button']");
   if (!submit) {
-    submit = document.querySelector("button[type='submit']");
+    submit = document.querySelector("button[type='submit'], input[type='submit']");
   }
   if (!submit) reasons.push("no_submit_button_found");
 
@@ -230,14 +262,14 @@ DISCOVERY_JS = r"""
   let captchaInput = null;
   let captchaKind = null;
   // 4a. classic <img> captcha + a sibling input.
-  const captchaImgEl = (form || document).querySelector(
+  const captchaImgEl = scope.querySelector(
     "img[alt*='captcha' i], img[src*='captcha' i], img[name*='captcha' i], img.captcha, img#captcha"
   );
   if (captchaImgEl) {
     captchaImage = captchaImgEl;
     captchaKind = "image";
     const ci =
-      (form || document).querySelector(
+      scope.querySelector(
         "input[name*='captcha' i], input[id*='captcha' i], input[placeholder*='captcha' i]"
       ) || null;
     if (ci) captchaInput = ci;
@@ -263,11 +295,13 @@ DISCOVERY_JS = r"""
     }
   }
 
-  // 5. Snapshot of the form's outerHTML for LLM fallback. Strip <script>
-  //    and trim long attributes; cap at 4 KB.
+  // 5. Snapshot of the scope's outerHTML for LLM fallback. For a form-less
+  //    page this is the login panel we walked up to, NOT just the password's
+  //    cell — so the username + submit are included for the LLM to see. Strip
+  //    <script> and trim long attributes; cap at 4 KB.
   let snapshot = "";
-  if (form) {
-    const clone = form.cloneNode(true);
+  if (scope && scope.cloneNode) {
+    const clone = scope.cloneNode(true);
     clone.querySelectorAll("script,style").forEach((n) => n.remove());
     snapshot = clone.outerHTML || "";
     if (snapshot.length > 4096) snapshot = snapshot.slice(0, 4096) + "…";

@@ -19,17 +19,16 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from aakaar_caps.caps.web_login import _llm_disambiguate
+from aakaar_caps.context import CapabilityContext
 
 from aakaar.capabilities import load_into
 from aakaar.capabilities.web_login import CAP_REF
 from aakaar.capabilities.web_login.discovery import LoginFormDescriptor
-from aakaar_caps.caps.web_login import _llm_disambiguate
-from aakaar_caps.context import CapabilityContext
 from aakaar.interpreter import LocalExecutor, RunContext, build_default_activities
 from aakaar.interpreter.activities.types import ActivityContext
 from aakaar.interpreter.events import InMemoryEventRecorder
 from aakaar.interpreter.signals import SignalHub
-from aakaar.planner.llm import PlannerCompletion
 from aakaar.shared.dag.types import Dag, Node, NodeKind
 from aakaar.shared.registry import build_default_registry
 from aakaar.storage import LocalFsObjectStore
@@ -299,20 +298,26 @@ async def test_llm_fallback_disambiguates(tmp_path: Path) -> None:
         def __init__(self) -> None:
             self.calls: list[Any] = []
 
+        def complete_text(self, system, user):  # noqa: D401, ANN001
+            # web_login disambiguation rides the free-text seam: the model
+            # replies with the bare selector JSON (no PlannerCompletion
+            # envelope). This is the reply the real proxy LLM produces.
+            self.calls.append((system, user))
+            return (
+                '{"username_selector":"#user-overridden",'
+                '"password_selector":"#pwd-overridden",'
+                '"submit_selector":"button.go-overridden",'
+                '"captcha_image_selector":null,'
+                '"captcha_input_selector":null}'
+            )
+
         def complete_planner(self, messages):  # noqa: D401, ANN001
-            self.calls.append(messages)
-            # The LLM must put the JSON in `rationale` per the
-            # prompt contract — that's where free-form replies live.
-            return PlannerCompletion(
-                kind="clarify",
-                questions=["resolved"],
-                rationale=(
-                    '{"username_selector":"#user-overridden",'
-                    '"password_selector":"#pwd-overridden",'
-                    '"submit_selector":"button.go-overridden",'
-                    '"captcha_image_selector":null,'
-                    '"captcha_input_selector":null}'
-                ),
+            # web_login must NOT use the planner seam — its PlannerCompletion
+            # envelope (requires `kind`, forbids bare selector keys) rejects
+            # the reply, which is the bug this fix removes.
+            raise AssertionError(
+                "web_login disambiguation must use the free-text seam, "
+                "not the planner envelope"
             )
 
     tenant_id = uuid.uuid4()
@@ -474,11 +479,10 @@ def test_login_form_descriptor_serialization_roundtrip() -> None:
 
 @pytest.mark.asyncio
 async def test_llm_disambiguate_handles_garbage_response(tmp_path: Path) -> None:
-    """If the LLM replies with non-JSON via the planner seam, the helper returns
-    None — the handler then falls back to whatever heuristics produced."""
-    # The portable seam returns free text (the planner's rationale); garbage in,
-    # None out.
-    ctx = CapabilityContext(planner_completer=lambda _messages: "this is not json")
+    """If the LLM replies with non-JSON via the free-text seam, the helper
+    returns None — the handler then falls back to whatever heuristics produced."""
+    # The portable text seam returns free text; garbage in, None out.
+    ctx = CapabilityContext(text_completer=lambda _system, _user: "this is not json")
     desc = LoginFormDescriptor(
         ok=True,
         ambiguity_reasons=["x"],
