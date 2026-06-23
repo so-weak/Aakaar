@@ -122,18 +122,27 @@ _RESOLVE_JS = r"""
 })()
 """
 
-# Find the popup item matching `value` (popup must be open/visible).
+# Find the popup item matching `value` (popup must be open/visible). The popup
+# selector is optional and may be empty: ZK creates the popup lazily (it does not
+# exist when the combobox is first resolved) and often renders it at document.body
+# rather than inside the combobox. So when no usable popup selector is given, scan
+# the whole document for *visible* combo items — only the open popup's items are
+# visible, so this stays unambiguous. (document.querySelector("") throws, hence the
+# empty-string guard.)
 _FIND_ITEM_JS = r"""
 (() => {
   __HELPERS__
   const want = norm(__VALUE__);
-  const popup = document.querySelector(__POPUP__);
-  const root = (popup && visible(popup)) ? popup : document;
+  const sel = __POPUP__;
+  let root = document;
+  if (sel) {
+    try { const p = document.querySelector(sel); if (p && visible(p)) root = p; } catch (e) {}
+  }
   const items = Array.from(root.querySelectorAll("li.z-comboitem, .z-comboitem")).filter(visible);
   if (!items.length) return { ok: false };
   const text = (el) => norm((el.querySelector(".z-comboitem-text") || el).textContent);
-  let hit = items.find((el) => text(el) === want) ||
-            items.find((el) => text(el).indexOf(want) >= 0);
+  const hit = items.find((el) => text(el) === want) ||
+              items.find((el) => text(el).indexOf(want) >= 0);
   if (!hit) return { ok: false };
   try { hit.scrollIntoView({ block: "center" }); } catch (e) {}
   return { ok: true, item_sel: bestSelector(hit) };

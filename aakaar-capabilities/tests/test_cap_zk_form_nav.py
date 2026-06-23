@@ -111,6 +111,19 @@ _PAGE = """<!doctype html>
         <select id="sel-cs"><option value="">--</option><option value="FLEX">FLEX</option><option value="UBS">UBS</option></select>
       </div></td>
     </tr>
+    <tr class="z-row">
+      <td class="z-row-inner"><div class="z-row-content"><span class="z-label">Cycle No</span></div></td>
+      <td class="z-row-inner"><div class="z-row-content">
+        <!-- Lazy combobox: the popup does NOT exist until the button is clicked,
+             and is then rendered at document.body — the real ZK behaviour that
+             made popup_sel empty in the field. -->
+        <span id="cb-cy" class="z-combobox z-combobox-readonly" role="combobox" aria-owns="cb-cy-pp">
+          <input id="cb-cy-real" class="z-combobox-input" readonly value="">
+          <a id="cb-cy-btn" class="z-combobox-button" role="button" onclick="openLazy()">
+            <i class="z-combobox-icon z-icon-caret-down"></i></a>
+        </span>
+      </div></td>
+    </tr>
   </tbody></table></div>
 
   <button type="button" id="fetchbtn" class="z-button" onclick="window.__fired.fetch = true">Fetch</button>
@@ -130,6 +143,21 @@ _PAGE = """<!doctype html>
     function pick(id, val) {
       document.getElementById(id + '-real').value = val;
       document.getElementById(id + '-pp').style.display = 'none';
+    }
+    function openLazy() {
+      if (document.getElementById('cb-cy-pp')) return;  // already open
+      var pp = document.createElement('div');
+      pp.id = 'cb-cy-pp'; pp.className = 'z-combobox-popup'; pp.style.display = 'block';
+      pp.innerHTML = '<ul class="z-combobox-content">' +
+        '<li class="z-comboitem"><span class="z-comboitem-text">05</span></li>' +
+        '<li class="z-comboitem"><span class="z-comboitem-text">06</span></li></ul>';
+      pp.querySelectorAll('.z-comboitem').forEach(function (li) {
+        li.onclick = function () {
+          document.getElementById('cb-cy-real').value = li.querySelector('.z-comboitem-text').textContent;
+          pp.parentNode.removeChild(pp);
+        };
+      });
+      document.body.appendChild(pp);  // rendered at body, like real ZK
     }
   </script>
 </body></html>"""
@@ -196,6 +224,20 @@ async def test_select_zk_combobox_processing_date_typo_label() -> None:
         ctx = _ctx(session)
         await web_select.run(ctx, {"session": session.id, "label": "Processsing Date", "value": "19-JUN-2026"})
         assert (await page.input_value("#cb-pd-real")) == "19-JUN-2026"
+
+
+async def test_select_zk_combobox_lazy_popup_rendered_at_body() -> None:
+    """Reproduces the field failure: the popup is created lazily (at document.body)
+    only when the combobox opens, so it doesn't exist at resolve time. web_select
+    must still find and pick the item without a 'selector is empty' crash."""
+    async with _page() as (page, context):
+        session = PlaywrightBrowserSession(_id="zk-lazy", page=page, context=context)
+        ctx = _ctx(session)
+        # Confirm the popup genuinely doesn't exist before opening.
+        assert await page.eval_on_selector_all("#cb-cy-pp", "els => els.length") == 0
+        out = await web_select.run(ctx, {"session": session.id, "label": "Cycle No", "value": "06"})
+        assert out["kind"] == "zk_combobox"
+        assert (await page.input_value("#cb-cy-real")) == "06"
 
 
 async def test_select_native_select_fallback() -> None:
