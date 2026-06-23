@@ -62,6 +62,16 @@ if [ ! -x "$AGENT_DIR/.venv/bin/python" ]; then
   )
 fi
 
+# --- ensure browser deps on a PRE-EXISTING venv -------------------------------
+# A venv created before browser support was added won't have Playwright. Install
+# it now (cheap when already present) so the launch probe + browser caps work.
+# Opt out on a desktop-only agent with AAKAAR_AGENT_NO_BROWSER=1.
+if [ "${AAKAAR_AGENT_NO_BROWSER:-0}" != "1" ] \
+   && ! "$AGENT_DIR/.venv/bin/python" -c "import playwright" >/dev/null 2>&1; then
+  log_info "installing browser deps into existing agent venv (Playwright) ..."
+  ( cd "$AGENT_DIR" && .venv/bin/python -m pip install -e ".[browser]" -e "../aakaar-capabilities[browser]" >/dev/null )
+fi
+
 # --- Playwright Chromium (one-time; sentinel keeps reruns cheap) --------------
 # Downloads ~150 MB from Microsoft's CDN. Per the deployment decision, TLS
 # verification is RELAXED (NODE_TLS_REJECT_UNAUTHORIZED=0) so a TLS-intercepting
