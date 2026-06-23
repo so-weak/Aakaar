@@ -341,6 +341,10 @@ class PlaywrightBrowserPool:
     """
 
     headless: bool = True
+    ignore_https_errors: bool = False
+    """Accept TLS certs that Chromium can't verify (self-signed / internal-CA
+    UAT portals, or a TLS-intercepting proxy). Off by default; turn on only for
+    a trusted environment where the target sites use untrusted certs."""
     _playwright: Any = field(default=None, init=False)
     _browser: Any = field(default=None, init=False)
 
@@ -369,7 +373,9 @@ class PlaywrightBrowserPool:
     ) -> AsyncIterator[PlaywrightBrowserSession]:
         _ = profile  # v1: profiles ignored
         await self._ensure_started()
-        context = await self._browser.new_context()
+        context = await self._browser.new_context(
+            ignore_https_errors=self.ignore_https_errors
+        )
         page = await context.new_page()
         session = PlaywrightBrowserSession(
             _id=f"pw-{uuid.uuid4().hex[:8]}", page=page, context=context

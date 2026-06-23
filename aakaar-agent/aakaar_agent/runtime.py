@@ -36,6 +36,16 @@ def _headless_default() -> bool:
     return os.environ.get("AAKAAR_AGENT_HEADLESS", "0") in ("1", "true", "TRUE", "yes")
 
 
+def _ignore_https_errors_default() -> bool:
+    # Accept untrusted TLS certs (self-signed / internal-CA UAT portals, or a
+    # TLS-intercepting proxy). Off unless explicitly enabled for a trusted env.
+    val = os.environ.get(
+        "AAKAAR_AGENT_BROWSER_IGNORE_HTTPS_ERRORS",
+        os.environ.get("AAKAAR_BROWSER_IGNORE_HTTPS_ERRORS", "0"),
+    )
+    return val.lower() in ("1", "true", "yes")
+
+
 # Refs whose results must NEVER be cached/re-delivered by the client: they either
 # carry sensitive bytes (screenshots/statements), hold a live session id that is
 # meaningless after teardown, or are side-effecting. Stateless utility caps and
@@ -57,6 +67,7 @@ class AgentRuntime:
     def __init__(self, client: Any, *, pool_factory: Any = None, headless: bool | None = None) -> None:
         self._client = client
         self._headless = _headless_default() if headless is None else headless
+        self._ignore_https_errors = _ignore_https_errors_default()
         self._pool_factory = pool_factory
         self._pool: Any = None
         # (tenant_id, run_id) -> session_state dict shared across that run's nodes.
@@ -74,8 +85,14 @@ class AgentRuntime:
             else:
                 from aakaar_caps.browser.playwright import PlaywrightBrowserPool
 
-                self._pool = PlaywrightBrowserPool(headless=self._headless)
-                logger.info("agent browser pool created (headless=%s)", self._headless)
+                self._pool = PlaywrightBrowserPool(
+                    headless=self._headless, ignore_https_errors=self._ignore_https_errors
+                )
+                logger.info(
+                    "agent browser pool created (headless=%s, ignore_https_errors=%s)",
+                    self._headless,
+                    self._ignore_https_errors,
+                )
         return self._pool
 
     async def launch_probe(self) -> bool:

@@ -107,8 +107,15 @@ def build_app() -> object:
     # checkout), so we always wire the pool unless explicitly disabled.
     # The lifespan hook tears it down on shutdown.
     if settings.browser_pool == "playwright":
-        browser_pool = PlaywrightBrowserPool(headless=settings.browser_headless)
-        logger.info("browser pool: playwright (headless=%s)", settings.browser_headless)
+        browser_pool = PlaywrightBrowserPool(
+            headless=settings.browser_headless,
+            ignore_https_errors=settings.browser_ignore_https_errors,
+        )
+        logger.info(
+            "browser pool: playwright (headless=%s, ignore_https_errors=%s)",
+            settings.browser_headless,
+            settings.browser_ignore_https_errors,
+        )
     else:
         browser_pool = None
         logger.info("browser pool: disabled (AAKAAR_BROWSER_POOL=%s)", settings.browser_pool)

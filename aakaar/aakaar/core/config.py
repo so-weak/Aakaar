@@ -41,6 +41,11 @@ class Settings:
     networked machine so the first run can populate the cache."""
     browser_pool: str = "playwright"  # "playwright" | "none"
     browser_headless: bool = True
+    browser_ignore_https_errors: bool = False
+    """Let the browser load HTTPS sites whose cert Chromium can't verify
+    (self-signed / internal-CA UAT portals, or a TLS-intercepting proxy). Set
+    AAKAAR_BROWSER_IGNORE_HTTPS_ERRORS=true only on a trusted network where the
+    target sites use untrusted certs (e.g. a bank UAT environment)."""
     live_screenshots: bool = True
     """Capture a per-node screenshot of the active browser session and
     emit a `live_screen` event the UI streams into the run view. Disable
@@ -249,6 +254,7 @@ def load_settings() -> Settings:
         embeddings_offline=os.environ.get("AAKAAR_HF_OFFLINE", "false").lower()
         in ("1", "true", "yes"),
         browser_pool=os.environ.get("AAKAAR_BROWSER_POOL", "playwright").lower(),
+        browser_ignore_https_errors=_bool("AAKAAR_BROWSER_IGNORE_HTTPS_ERRORS", "false"),
         browser_headless=os.environ.get("AAKAAR_BROWSER_HEADLESS", "true").lower()
         not in ("0", "false", "no"),
         live_screenshots=os.environ.get("AAKAAR_LIVE_SCREENSHOTS", "true").lower()
