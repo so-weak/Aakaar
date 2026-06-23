@@ -1,0 +1,87 @@
+{
+  "id": "",
+  "version": 0,
+  "nodes": [
+    {
+      "id": "login_ctsoutward",
+      "kind": "capability",
+      "ref": "cap.web_login",
+      "inputs": { "account_alias": "ctsoutward" },
+      "outputs_as": null,
+      "retry": null,
+      "target": null
+    },
+    {
+      "id": "wait_5s_1",
+      "kind": "control",
+      "ref": "control.wait",
+      "inputs": { "seconds": 5 },
+      "outputs_as": null,
+      "retry": null,
+      "target": null
+    },
+    {
+      "id": "screenshot_1",
+      "kind": "capability",
+      "ref": "cap.screenshot",
+      "inputs": { "session": "${login_ctsoutward.session}" },
+      "outputs_as": null,
+      "retry": null,
+      "target": null
+    },
+    {
+      "id": "click_okay",
+      "kind": "action",
+      "ref": "browser.click_by_text",
+      "inputs": { "session": "${login_ctsoutward.session}", "text": "ok" },
+      "outputs_as": null,
+      "retry": null,
+      "target": null
+    },
+    {
+      "id": "wait_5s_2",
+      "kind": "control",
+      "ref": "control.wait",
+      "inputs": { "seconds": 5 },
+      "outputs_as": null,
+      "retry": null,
+      "target": null
+    },
+    {
+      "id": "screenshot_2",
+      "kind": "capability",
+      "ref": "cap.screenshot",
+      "inputs": { "session": "${login_ctsoutward.session}" },
+      "outputs_as": null,
+      "retry": null,
+      "target": null
+    },
+    {
+      "id": "click_logout",
+      "kind": "capability",
+      "ref": "cap.web_click",
+      "inputs": { "session": "${login_ctsoutward.session}", "image": "logout" },
+      "outputs_as": null,
+      "retry": null,
+      "target": null
+    },
+    {
+      "id": "close_ctsoutward",
+      "kind": "action",
+      "ref": "browser.close_session",
+      "inputs": { "session": "${login_ctsoutward.session}" },
+      "outputs_as": null,
+      "retry": null,
+      "target": null
+    }
+  ],
+  "edges": [
+    { "from": "login_ctsoutward", "to": "wait_5s_1" },
+    { "from": "wait_5s_1", "to": "screenshot_1" },
+    { "from": "screenshot_1", "to": "click_okay" },
+    { "from": "click_okay", "to": "wait_5s_2" },
+    { "from": "wait_5s_2", "to": "screenshot_2" },
+    { "from": "screenshot_2", "to": "click_logout" },
+    { "from": "click_logout", "to": "close_ctsoutward" }
+  ]
+}
