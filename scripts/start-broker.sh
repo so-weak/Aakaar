@@ -19,7 +19,7 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 
 AAKAAR_PYTHON="${AAKAAR_PYTHON:-python3}"
 BROKER_DIR="$ROOT/aakaar-broker"
-HOST="${AAKAAR_BROKER_HOST:-127.0.0.1}"
+HOST="${AAKAAR_BROKER_HOST:-0.0.0.0}"
 PORT="${AAKAAR_BROKER_PORT:-9300}"
 
 # --- venv --------------------------------------------------------------------

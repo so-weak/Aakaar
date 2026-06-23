@@ -15,7 +15,7 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 
 AAKAAR_PYTHON="${AAKAAR_PYTHON:-python3}"
 APP_DIR="$ROOT/aakaar"
-HOST="${AAKAAR_API_HOST:-127.0.0.1}"
+HOST="${AAKAAR_API_HOST:-0.0.0.0}"
 PORT="${AAKAAR_API_PORT:-8000}"
 
 mkdir -p "${AAKAAR_DATA_DIR:-$APP_DIR/data}"
