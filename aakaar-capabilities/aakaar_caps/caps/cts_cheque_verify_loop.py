@@ -43,8 +43,10 @@ class _Inputs(BaseModel):
     session: str = Field(description="Browser session handle (post-login, post-Fetch).")
     delay_seconds: float = Field(default=5.0, ge=0, le=60, description="Delay between UI steps.")
     max_iterations: int = Field(default=50, ge=1, le=2000, description="Safety cap on cheques processed.")
-    reject_remark: str = Field(default="OCR account-number mismatch - manual review",
-                               description="Text typed into the Reject Remark box on a reject (<=25 chars on CTS).")
+    reject_remark: str = Field(default="MISMATCH:{extracted}",
+                               description="Reject-remark template; supports {extracted} and {truth}. "
+                               "Capped to remark_maxlen (the CTS field maxlength is 25).")
+    remark_maxlen: int = Field(default=25, ge=1, le=200, description="Max remark chars (CTS field maxlength=25).")
     threshold: float | None = Field(default=None, description="Accept threshold; default from env (see cap.value_decision).")
     report_filename: str = Field(default="cts_cheque_verify.csv", description="CSV report filename.")
     expected_length: int = Field(default=14, description="Expected account-number length for the OCR prior.")
@@ -116,12 +118,21 @@ async def _cheque_src(sess: Any, selector: str) -> str:
         return ""
 
 
+def _build_remark(template: str, extracted: str, truth: str, maxlen: int) -> str:
+    try:
+        text = template.format(extracted=(extracted or "NONE"), truth=(truth or "NONE"))
+    except (KeyError, IndexError, ValueError):
+        text = template
+    return text[:maxlen]
+
+
 async def run(ctx: CapabilityContext, inputs: dict[str, Any]) -> dict[str, Any]:
     sess = get_session(ctx.session_state, inputs["session"])
     sid = str(inputs["session"])
     delay = float(inputs.get("delay_seconds", 5.0))
     max_iter = int(inputs.get("max_iterations", 50))
-    reject_remark = str(inputs.get("reject_remark", "OCR account-number mismatch - manual review"))
+    reject_remark = str(inputs.get("reject_remark", "MISMATCH:{extracted}"))
+    remark_maxlen = int(inputs.get("remark_maxlen", 25))
     threshold = inputs.get("threshold")
     cheque_selector = str(inputs.get("cheque_selector", "img.z-image[src*='zkau/view']"))
     back_image = str(inputs.get("back_image", "image_back"))
@@ -176,9 +187,15 @@ async def run(ctx: CapabilityContext, inputs: dict[str, Any]) -> dict[str, Any]:
 
         remark = ""
         if dec["decision"] == "reject":
-            remark = reject_remark
-            await web_fill_field.run(ctx, {"session": sid, "label": remark_label, "value": remark})
+            # Reject flow: click Reject, type a proper remark, then press Enter to advance.
+            remark = _build_remark(reject_remark, ocr["account_number"], truth, remark_maxlen)
             await web_click.run(ctx, {"session": sid, "text": reject_label})
+            await settle()
+            fill = await web_fill_field.run(ctx, {"session": sid, "label": remark_label, "value": remark})
+            if fill.get("filled") and fill.get("selector"):
+                await sess.press(str(fill["selector"]), "Enter")   # Enter advances to the next cheque
+            else:
+                logger.warning("cts loop: reject remark field not found for label %r", remark_label)
             rejected += 1
         else:
             await web_click.run(ctx, {"session": sid, "text": accept_label})

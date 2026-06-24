@@ -68,6 +68,11 @@ class BrowserSession(Protocol):
     you want to click a navigation link or button by its label
     (e.g. 'Recon Upload', 'Logout') without guessing CSS selectors."""
 
+    async def press(self, selector: str, key: str) -> None: ...
+    """Focus the element matched by `selector` and press a single key
+    (e.g. 'Enter'). Used to submit a field via the keyboard — e.g.
+    confirming a reject remark with Enter to advance to the next record."""
+
     async def select(self, selector: str, value: str) -> None: ...
 
     async def set_field(self, label: str, value: str) -> None: ...

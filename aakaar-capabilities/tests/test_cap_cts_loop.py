@@ -54,19 +54,24 @@ def _page_html(truth: str) -> str:
         <td><span class="z-label">Reject Remark  : </span></td>
         <td><input id="remark" class="z-textbox" type="text" maxlength="25" value=""></td>
       </tr></table>
-      <button type="button" id="acc" class="z-button" onclick="decide('accept')">Accept</button>
-      <button type="button" id="rej" class="z-button" onclick="decide('reject')">Reject</button>
+      <button type="button" id="acc" class="z-button" onclick="acceptClick()">Accept</button>
+      <button type="button" id="rej" class="z-button" onclick="rejectClick()">Reject</button>
       <div id="popup" style="display:none"><span class="z-label">No record found!</span>
         <button type="button" class="z-button"
           onclick="document.getElementById('popup').style.display='none';window.__s.done=true">OK</button></div>
       <script>
-        window.__s = {{accepts:0, rejects:0, remark:"", done:false, idx:0, N:1}};
-        function decide(kind) {{
-          if (kind === 'accept') window.__s.accepts++;
-          else {{ window.__s.rejects++; window.__s.remark = document.getElementById('remark').value; }}
+        window.__s = {{accepts:0, rejects:0, remark:"", done:false, idx:0, N:1, rejecting:false}};
+        function advance() {{
           window.__s.idx++;
           if (window.__s.idx >= window.__s.N) document.getElementById('popup').style.display = 'block';
         }}
+        function acceptClick() {{ window.__s.accepts++; advance(); }}
+        function rejectClick() {{ window.__s.rejecting = true; }}  // does NOT advance; Enter on remark does
+        document.getElementById('remark').addEventListener('keydown', function (e) {{
+          if (e.key === 'Enter' && window.__s.rejecting) {{
+            window.__s.rejects++; window.__s.remark = this.value; window.__s.rejecting = false; advance();
+          }}
+        }});
       </script></body></html>"""
 
 

@@ -67,6 +67,9 @@ class FakeBrowserSession:
     async def click_by_text(self, text: str) -> None:
         self.calls.append(("click_by_text", {"text": text}))
 
+    async def press(self, selector: str, key: str) -> None:
+        self.calls.append(("press", {"selector": selector, "key": key}))
+
     async def select(self, selector: str, value: str) -> None:
         self.calls.append(("select", {"selector": selector, "value": value}))
 

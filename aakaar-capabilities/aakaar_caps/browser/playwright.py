@@ -182,6 +182,9 @@ class PlaywrightBrowserSession(BrowserSession):
     async def click(self, selector: str) -> None:
         await self.page.click(selector)
 
+    async def press(self, selector: str, key: str) -> None:
+        await self.page.press(selector, key)
+
     async def click_by_text(self, text: str) -> None:
         # Try the most semantic locators first — links / buttons named
         # `text` — falling back to plain text-content matching. This
