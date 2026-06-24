@@ -1,0 +1,383 @@
+{
+  "id": "",
+  "version": 0,
+  "nodes": [
+    {
+      "id": "login_ctsoutward",
+      "kind": "capability",
+      "ref": "cap.web_login",
+      "inputs": {
+        "account_alias": "ctsoutward"
+      },
+      "outputs_as": null,
+      "retry": null,
+      "target": null
+    },
+    {
+      "id": "wait_before_click_okay",
+      "kind": "control",
+      "ref": "control.wait",
+      "inputs": {
+        "seconds": 5
+      },
+      "outputs_as": null,
+      "retry": null,
+      "target": null
+    },
+    {
+      "id": "click_okay",
+      "kind": "capability",
+      "ref": "cap.web_click",
+      "inputs": {
+        "session": "${login_ctsoutward.session}",
+        "text": "OK"
+      },
+      "outputs_as": null,
+      "retry": null,
+      "target": null
+    },
+    {
+      "id": "wait_before_open_ecallback",
+      "kind": "control",
+      "ref": "control.wait",
+      "inputs": {
+        "seconds": 5
+      },
+      "outputs_as": null,
+      "retry": null,
+      "target": null
+    },
+    {
+      "id": "open_ecallback",
+      "kind": "capability",
+      "ref": "cap.web_tree_select",
+      "inputs": {
+        "session": "${login_ctsoutward.session}",
+        "path": [
+          "E-Callback Processing",
+          "Ecall Back Processing"
+        ]
+      },
+      "outputs_as": null,
+      "retry": null,
+      "target": null
+    },
+    {
+      "id": "wait_before_set_processing_date",
+      "kind": "control",
+      "ref": "control.wait",
+      "inputs": {
+        "seconds": 5
+      },
+      "outputs_as": null,
+      "retry": null,
+      "target": null
+    },
+    {
+      "id": "set_processing_date",
+      "kind": "capability",
+      "ref": "cap.web_select",
+      "inputs": {
+        "session": "${login_ctsoutward.session}",
+        "label": "Processsing Date",
+        "value": "19-JUN-2026"
+      },
+      "outputs_as": null,
+      "retry": null,
+      "target": null
+    },
+    {
+      "id": "wait_before_set_record_type",
+      "kind": "control",
+      "ref": "control.wait",
+      "inputs": {
+        "seconds": 5
+      },
+      "outputs_as": null,
+      "retry": null,
+      "target": null
+    },
+    {
+      "id": "set_record_type",
+      "kind": "capability",
+      "ref": "cap.web_select",
+      "inputs": {
+        "session": "${login_ctsoutward.session}",
+        "label": "Record Type",
+        "value": "TXN"
+      },
+      "outputs_as": null,
+      "retry": null,
+      "target": null
+    },
+    {
+      "id": "wait_before_set_core_system",
+      "kind": "control",
+      "ref": "control.wait",
+      "inputs": {
+        "seconds": 5
+      },
+      "outputs_as": null,
+      "retry": null,
+      "target": null
+    },
+    {
+      "id": "set_core_system",
+      "kind": "capability",
+      "ref": "cap.web_select",
+      "inputs": {
+        "session": "${login_ctsoutward.session}",
+        "label": "Core System",
+        "value": "FLEX"
+      },
+      "outputs_as": null,
+      "retry": null,
+      "target": null
+    },
+    {
+      "id": "wait_before_set_cycle_no",
+      "kind": "control",
+      "ref": "control.wait",
+      "inputs": {
+        "seconds": 5
+      },
+      "outputs_as": null,
+      "retry": null,
+      "target": null
+    },
+    {
+      "id": "set_cycle_no",
+      "kind": "capability",
+      "ref": "cap.web_select",
+      "inputs": {
+        "session": "${login_ctsoutward.session}",
+        "label": "Cycle No",
+        "value": "06"
+      },
+      "outputs_as": null,
+      "retry": null,
+      "target": null
+    },
+    {
+      "id": "wait_before_set_core_batch",
+      "kind": "control",
+      "ref": "control.wait",
+      "inputs": {
+        "seconds": 5
+      },
+      "outputs_as": null,
+      "retry": null,
+      "target": null
+    },
+    {
+      "id": "set_core_batch",
+      "kind": "capability",
+      "ref": "cap.web_select",
+      "inputs": {
+        "session": "${login_ctsoutward.session}",
+        "label": "Core Batch Number",
+        "value": "0000000144"
+      },
+      "outputs_as": null,
+      "retry": null,
+      "target": null
+    },
+    {
+      "id": "wait_before_screenshot_form",
+      "kind": "control",
+      "ref": "control.wait",
+      "inputs": {
+        "seconds": 5
+      },
+      "outputs_as": null,
+      "retry": null,
+      "target": null
+    },
+    {
+      "id": "screenshot_form",
+      "kind": "capability",
+      "ref": "cap.screenshot",
+      "inputs": {
+        "session": "${login_ctsoutward.session}"
+      },
+      "outputs_as": null,
+      "retry": null,
+      "target": null
+    },
+    {
+      "id": "wait_before_click_fetch",
+      "kind": "control",
+      "ref": "control.wait",
+      "inputs": {
+        "seconds": 5
+      },
+      "outputs_as": null,
+      "retry": null,
+      "target": null
+    },
+    {
+      "id": "click_fetch",
+      "kind": "capability",
+      "ref": "cap.web_click",
+      "inputs": {
+        "session": "${login_ctsoutward.session}",
+        "text": "Fetch"
+      },
+      "outputs_as": null,
+      "retry": null,
+      "target": null
+    },
+    {
+      "id": "wait_before_verify_loop",
+      "kind": "control",
+      "ref": "control.wait",
+      "inputs": {
+        "seconds": 5
+      },
+      "outputs_as": null,
+      "retry": null,
+      "target": null
+    },
+    {
+      "id": "verify_loop",
+      "kind": "capability",
+      "ref": "cap.cts_cheque_verify_loop",
+      "inputs": {
+        "session": "${login_ctsoutward.session}",
+        "delay_seconds": 5,
+        "report_filename": "cts_cheque_verify.csv"
+      },
+      "outputs_as": null,
+      "retry": null,
+      "target": null
+    },
+    {
+      "id": "wait_before_logout",
+      "kind": "control",
+      "ref": "control.wait",
+      "inputs": {
+        "seconds": 5
+      },
+      "outputs_as": null,
+      "retry": null,
+      "target": null
+    },
+    {
+      "id": "logout",
+      "kind": "capability",
+      "ref": "cap.web_click",
+      "inputs": {
+        "session": "${login_ctsoutward.session}",
+        "image": "logout"
+      },
+      "outputs_as": null,
+      "retry": null,
+      "target": null
+    },
+    {
+      "id": "close_ctsoutward",
+      "kind": "action",
+      "ref": "browser.close_session",
+      "inputs": {
+        "session": "${login_ctsoutward.session}"
+      },
+      "outputs_as": null,
+      "retry": null,
+      "target": null
+    }
+  ],
+  "edges": [
+    {
+      "from": "login_ctsoutward",
+      "to": "wait_before_click_okay"
+    },
+    {
+      "from": "wait_before_click_okay",
+      "to": "click_okay"
+    },
+    {
+      "from": "click_okay",
+      "to": "wait_before_open_ecallback"
+    },
+    {
+      "from": "wait_before_open_ecallback",
+      "to": "open_ecallback"
+    },
+    {
+      "from": "open_ecallback",
+      "to": "wait_before_set_processing_date"
+    },
+    {
+      "from": "wait_before_set_processing_date",
+      "to": "set_processing_date"
+    },
+    {
+      "from": "set_processing_date",
+      "to": "wait_before_set_record_type"
+    },
+    {
+      "from": "wait_before_set_record_type",
+      "to": "set_record_type"
+    },
+    {
+      "from": "set_record_type",
+      "to": "wait_before_set_core_system"
+    },
+    {
+      "from": "wait_before_set_core_system",
+      "to": "set_core_system"
+    },
+    {
+      "from": "set_core_system",
+      "to": "wait_before_set_cycle_no"
+    },
+    {
+      "from": "wait_before_set_cycle_no",
+      "to": "set_cycle_no"
+    },
+    {
+      "from": "set_cycle_no",
+      "to": "wait_before_set_core_batch"
+    },
+    {
+      "from": "wait_before_set_core_batch",
+      "to": "set_core_batch"
+    },
+    {
+      "from": "set_core_batch",
+      "to": "wait_before_screenshot_form"
+    },
+    {
+      "from": "wait_before_screenshot_form",
+      "to": "screenshot_form"
+    },
+    {
+      "from": "screenshot_form",
+      "to": "wait_before_click_fetch"
+    },
+    {
+      "from": "wait_before_click_fetch",
+      "to": "click_fetch"
+    },
+    {
+      "from": "click_fetch",
+      "to": "wait_before_verify_loop"
+    },
+    {
+      "from": "wait_before_verify_loop",
+      "to": "verify_loop"
+    },
+    {
+      "from": "verify_loop",
+      "to": "wait_before_logout"
+    },
+    {
+      "from": "wait_before_logout",
+      "to": "logout"
+    },
+    {
+      "from": "logout",
+      "to": "close_ctsoutward"
+    }
+  ]
+}

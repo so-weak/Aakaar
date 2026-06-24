@@ -60,10 +60,12 @@ _READ_JS = r"""
   __HELPERS__
   const want = norm(__LABEL__);
   const dir = __DIR__;
+  const wantS = want.replace(/[\s:.\-_]+$/, "");
+  const lm = (t) => { const n = norm(t); return n === want || n.replace(/[\s:.\-_]+$/, "") === wantS; };
 
-  // find the label cell/element
+  // find the label cell/element (tolerant of a trailing ':' / punctuation)
   const labelEls = Array.from(document.querySelectorAll("span.z-label, label, td, th, div"))
-    .filter((el) => visible(el) && norm(el.textContent) === want);
+    .filter((el) => visible(el) && lm(el.textContent));
   if (!labelEls.length) return { ok: false, via: "none" };
 
   function looksLikeValue(s) {

@@ -38,6 +38,8 @@ _CAP_REFS = (
     "cap.web_click", "cap.web_select", "cap.web_tree_select",
     # CTS cheque-verify flow
     "cap.web_read_field", "cap.ocr_account_number", "cap.value_decision", "cap.csv_report",
+    # CTS cheque-verify v2 (batch loop + reject remark)
+    "cap.web_fill_field", "cap.cts_cheque_verify_loop",
 )
 
 

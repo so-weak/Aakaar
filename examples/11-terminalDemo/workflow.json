@@ -1,7 +1,7 @@
 {
   "name": "terminalDemo",
-  "description": "Visible AND captured. For each curl: open a real Terminal.app window on the macOS agent 'ashu-mac' (via osascript) that runs the curl and tee's its output to a temp file on the agent (so you watch it run on-screen), wait 5 seconds, then a headless cap.shell_exec reads that temp file back so the response is also returned to the server. Two paced steps run in sequence: terminal A (httpbin.org/get), then terminal B (httpbin.org/uuid).",
-  "rationale": "Demo variant combining the visible Terminal.app approach (osascript do script) with server-side capture (tee to a temp file + read it back). Each step has a 5s control.wait: it paces the demo so an operator can watch the terminal, and it gives the asynchronous curl inside Terminal time to finish writing the file before the read node cats it. control.wait runs on the server; the osascript and read nodes run on ashu-mac. cap.shell_exec must be granted to the tenant. Bump the wait if you point a curl at a slow endpoint (the read captures whatever is in the file when it runs).",
+  "description": "Visible AND captured. For each curl: open a real Terminal.app window on the macOS agent 'ashu-mac' (via osascript) that runs the curl, tee's its output to a temp file, and drops a .done marker (so you watch it run on-screen); wait 5 seconds; then a headless cap.shell_exec waits for the .done marker and reads the temp file back so the response is also returned to the server. Two paced steps run in sequence: terminal A (httpbin.org/get), then terminal B (httpbin.org/uuid).",
+  "rationale": "Demo variant combining the visible Terminal.app approach (osascript do script) with server-side capture (tee to a temp file + read it back). The osascript do script returns immediately while the curl runs asynchronously inside Terminal, so a fixed wait can read the file before the curl finishes (observed: a 5s wait returned an empty capture). The read node therefore polls for a .done marker (up to ~40s) before cat-ing the file, while the 5s control.wait is kept purely for visible pacing. control.wait runs on the server; the osascript and read nodes run on ashu-mac. cap.shell_exec must be granted to the tenant.",
   "dag": {
     "id": "",
     "version": 0,
@@ -15,7 +15,7 @@
           "argv": [
             "osascript",
             "-e", "tell application \"Terminal\" to activate",
-            "-e", "tell application \"Terminal\" to do script \"curl -sS --max-time 30 https://httpbin.org/get | tee /tmp/aakaar_demo_a.txt\""
+            "-e", "tell application \"Terminal\" to do script \"rm -f /tmp/aakaar_demo_a.done; curl -sS --max-time 30 https://httpbin.org/get | tee /tmp/aakaar_demo_a.txt; touch /tmp/aakaar_demo_a.done\""
           ],
           "timeout_s": 45
         }
@@ -32,8 +32,8 @@
         "ref": "cap.shell_exec",
         "target": "ashu-mac",
         "inputs": {
-          "argv": ["cat", "/tmp/aakaar_demo_a.txt"],
-          "timeout_s": 30
+          "argv": ["bash", "-lc", "for i in $(seq 1 40); do [ -f /tmp/aakaar_demo_a.done ] && break; sleep 1; done; cat /tmp/aakaar_demo_a.txt"],
+          "timeout_s": 60
         }
       },
       {
@@ -45,7 +45,7 @@
           "argv": [
             "osascript",
             "-e", "tell application \"Terminal\" to activate",
-            "-e", "tell application \"Terminal\" to do script \"curl -sS --max-time 30 https://httpbin.org/uuid | tee /tmp/aakaar_demo_b.txt\""
+            "-e", "tell application \"Terminal\" to do script \"rm -f /tmp/aakaar_demo_b.done; curl -sS --max-time 30 https://httpbin.org/uuid | tee /tmp/aakaar_demo_b.txt; touch /tmp/aakaar_demo_b.done\""
           ],
           "timeout_s": 45
         }
@@ -62,8 +62,8 @@
         "ref": "cap.shell_exec",
         "target": "ashu-mac",
         "inputs": {
-          "argv": ["cat", "/tmp/aakaar_demo_b.txt"],
-          "timeout_s": 30
+          "argv": ["bash", "-lc", "for i in $(seq 1 40); do [ -f /tmp/aakaar_demo_b.done ] && break; sleep 1; done; cat /tmp/aakaar_demo_b.txt"],
+          "timeout_s": 60
         }
       }
     ],
