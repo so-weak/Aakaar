@@ -42,10 +42,9 @@ class _Inputs(BaseModel):
     model_config = ConfigDict(extra="forbid")
     session: str = Field(description="Browser session handle (post-login, post-Fetch).")
     delay_seconds: float = Field(default=5.0, ge=0, le=60, description="Delay between UI steps.")
-    max_iterations: int = Field(default=50, ge=1, le=2000, description="Safety cap on cheques processed.")
-    reject_remark: str = Field(default="MISMATCH:{extracted}",
-                               description="Reject-remark template; supports {extracted} and {truth}. "
-                               "Capped to remark_maxlen (the CTS field maxlength is 25).")
+    reject_remark: str = Field(default="aakaar acc no mismatch",
+                               description="Reject-remark text (also supports {extracted}/{truth} placeholders). "
+                               "Capped to remark_maxlen — the live CTS field maxlength is 25.")
     remark_maxlen: int = Field(default=25, ge=1, le=200, description="Max remark chars (CTS field maxlength=25).")
     threshold: float | None = Field(default=None, description="Accept threshold; default from env (see cap.value_decision).")
     report_filename: str = Field(default="cts_cheque_verify.csv", description="CSV report filename.")
@@ -66,7 +65,7 @@ class _Outputs(BaseModel):
     processed: int = Field(description="Cheques processed.")
     accepted: int = Field(description="Cheques accepted.")
     rejected: int = Field(description="Cheques rejected.")
-    stopped_reason: str = Field(description="'no_record_found' or 'max_iterations'.")
+    stopped_reason: str = Field(description="'no_record_found' (normal) or 'stalled' (portal stopped advancing).")
 
 
 SPEC = CapabilitySpec(
@@ -130,8 +129,7 @@ async def run(ctx: CapabilityContext, inputs: dict[str, Any]) -> dict[str, Any]:
     sess = get_session(ctx.session_state, inputs["session"])
     sid = str(inputs["session"])
     delay = float(inputs.get("delay_seconds", 5.0))
-    max_iter = int(inputs.get("max_iterations", 50))
-    reject_remark = str(inputs.get("reject_remark", "MISMATCH:{extracted}"))
+    reject_remark = str(inputs.get("reject_remark", "aakaar acc no mismatch"))
     remark_maxlen = int(inputs.get("remark_maxlen", 25))
     threshold = inputs.get("threshold")
     cheque_selector = str(inputs.get("cheque_selector", "img.z-image[src*='zkau/view']"))
@@ -157,10 +155,15 @@ async def run(ctx: CapabilityContext, inputs: dict[str, Any]) -> dict[str, Any]:
 
     rows: list[dict[str, Any]] = []
     accepted = rejected = 0
-    stopped = "max_iterations"
-    logger.info("cap.cts_cheque_verify_loop start run_id=%s delay=%s max=%d", ctx.run_id, delay, max_iter)
+    stopped = "no_record_found"
+    logger.info("cap.cts_cheque_verify_loop start run_id=%s delay=%s", ctx.run_id, delay)
 
-    for i in range(max_iter):
+    # No iteration cap: the loop ends when the 'No record found' popup appears.
+    # The only guard is no-progress detection — if the SAME cheque (same image URL)
+    # comes round again, the portal didn't advance, so we stop instead of hanging.
+    i = 0
+    prev_url: str | None = None
+    while True:
         if await _popup_present(sess, no_record_text):
             await click_ok()
             stopped = "no_record_found"
@@ -173,6 +176,11 @@ async def run(ctx: CapabilityContext, inputs: dict[str, Any]) -> dict[str, Any]:
         await settle()
 
         image_url = await _cheque_src(sess, cheque_selector)            # the REAL image URL (for the CSV)
+        if image_url and image_url == prev_url:
+            logger.warning("cts loop: cheque %r repeated — portal did not advance; stopping (stalled)", image_url)
+            stopped = "stalled"
+            break
+        prev_url = image_url
         shot = await screenshot.run(ctx, {"session": sid, "selector": cheque_selector})
         ocr = await ocr_account_number.run(
             ctx, {"image_uri": shot["image_uri"], "expected_length": expected_length})
@@ -213,6 +221,7 @@ async def run(ctx: CapabilityContext, inputs: dict[str, Any]) -> dict[str, Any]:
             "ocr_raw_text": (ocr.get("raw_text") or "")[:200],
         })
         logger.info("cts loop #%d: truth=%s ocr=%s -> %s", i, truth, ocr["account_number"], dec["decision"])
+        i += 1
 
         if await _popup_present(sess, no_record_text):
             await click_ok()
