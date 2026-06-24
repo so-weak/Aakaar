@@ -1,0 +1,32 @@
+{
+  "name": "Two curl terminals on ashu-mac",
+  "description": "Open two independent shell sessions on the remote agent 'ashu-mac' (each cap.shell_exec is its own subprocess, i.e. its own 'terminal'), run one curl in each, and let each command's response (exit_code/stdout/stderr) flow back to the server as that node's recorded output. The two nodes share no edge, so they run concurrently.",
+  "rationale": "Example: two parallel cap.shell_exec 'terminals' on a named remote agent. Each curl's output returns to the server automatically via the result frame and is recorded as the node output, so no explicit send-back node is needed. Swap the URLs in each argv for the calls you actually want to make.",
+  "dag": {
+    "id": "",
+    "version": 0,
+    "nodes": [
+      {
+        "id": "curl_a",
+        "kind": "capability",
+        "ref": "cap.shell_exec",
+        "target": "ashu-mac",
+        "inputs": {
+          "argv": ["curl", "-sS", "--max-time", "30", "https://httpbin.org/get"],
+          "timeout_s": 45
+        }
+      },
+      {
+        "id": "curl_b",
+        "kind": "capability",
+        "ref": "cap.shell_exec",
+        "target": "ashu-mac",
+        "inputs": {
+          "argv": ["curl", "-sS", "--max-time", "30", "https://httpbin.org/uuid"],
+          "timeout_s": 45
+        }
+      }
+    ],
+    "edges": []
+  }
+}

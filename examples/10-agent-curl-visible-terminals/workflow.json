@@ -1,0 +1,40 @@
+{
+  "name": "Two VISIBLE curl terminals on ashu-mac",
+  "description": "Open two real Terminal.app windows on the remote macOS agent 'ashu-mac' (via osascript) and run a curl in each, so an operator sitting at the Mac visibly watches the terminals run. TRADE-OFF: cap.shell_exec captures osascript's result (the Terminal tab handle), NOT the curl response. The HTTP responses are only visible on-screen in the Terminal windows, not returned to the server. For headless execution that returns both responses to the server, use examples/09-agent-curl-terminals instead.",
+  "rationale": "Visible variant. Plain cap.shell_exec runs a headless background subprocess (no window). To make a terminal VISIBLY open on the agent's desktop, we shell out to osascript, which drives Terminal.app to open a window and run the curl there. Requires the macOS agent to be running in a logged-in GUI session (the default unless AAKAAR_AGENT_HEADLESS=1).",
+  "dag": {
+    "id": "",
+    "version": 0,
+    "nodes": [
+      {
+        "id": "term_a",
+        "kind": "capability",
+        "ref": "cap.shell_exec",
+        "target": "ashu-mac",
+        "inputs": {
+          "argv": [
+            "osascript",
+            "-e", "tell application \"Terminal\" to activate",
+            "-e", "tell application \"Terminal\" to do script \"curl -sS --max-time 30 https://httpbin.org/get\""
+          ],
+          "timeout_s": 45
+        }
+      },
+      {
+        "id": "term_b",
+        "kind": "capability",
+        "ref": "cap.shell_exec",
+        "target": "ashu-mac",
+        "inputs": {
+          "argv": [
+            "osascript",
+            "-e", "tell application \"Terminal\" to activate",
+            "-e", "tell application \"Terminal\" to do script \"curl -sS --max-time 30 https://httpbin.org/uuid\""
+          ],
+          "timeout_s": 45
+        }
+      }
+    ],
+    "edges": []
+  }
+}

@@ -1,22 +1,15 @@
-"""Grant the CTS-Outward helper capabilities to the CHANAKYA tenant only.
+"""Grant cap.shell_exec to the CHANAKYA tenant.
 
-These shared caps were added for the CTS Outward (ExpressClear ZK) flows whose
-controls the generic primitives can't drive:
+cap.shell_exec runs an allow-listed argv command on a remote agent (e.g. a curl
+on ashu-mac) and captures its output. It is a headless shared cap with no
+secrets, but capabilities are grant-gated per tenant, so a workflow that uses it
+fails DAG validation (HTTP 422) until the tenant holds the grant. This makes it
+visible to CHANAKYA only; other tenants are untouched. Idempotent — safe to
+re-run.
 
-  - cap.web_click       click a control by image/icon asset, text, or selector
-                        (the icon-only Logout button).
-  - cap.web_select      choose a value in a ZK combobox / native <select> by its
-                        field label (Processing Date, Record Type, …).
-  - cap.web_tree_select expand + open a ZK tree-menu node by label path
-                        (E-Callback Processing -> Ecall Back Processing).
+    cd aakaar && .venv/bin/python -m aakaar.scripts.seed_chanakya_shell_exec
 
-Capabilities are grant-gated per tenant, so this makes them visible to CHANAKYA
-only; other tenants' planner and runs are untouched. Idempotent — safe to re-run.
-
-    cd aakaar && .venv/bin/python -m aakaar.scripts.seed_chanakya_caps
-
-Restart the API and the agent afterwards so the caps are registered, advertised,
-and surfaced to the planner.
+Restart the API afterwards so the grant is picked up by the planner.
 """
 
 from __future__ import annotations
@@ -34,11 +27,7 @@ from aakaar.db.session import EngineConfig, SessionFactory, make_engine
 from aakaar.vault import LocalVault, Vault
 
 _TENANT_SLUG = "chanakya"
-_CAP_REFS = (
-    "cap.web_click", "cap.web_select", "cap.web_tree_select",
-    # CTS cheque-verify flow
-    "cap.web_read_field", "cap.ocr_account_number", "cap.value_decision", "cap.csv_report",
-)
+_CAP_REFS = ("cap.shell_exec",)
 
 
 def _ensure_grant(session: Session, vault: Vault, *, tenant_id, created_by, cap_ref: str) -> None:
@@ -57,7 +46,7 @@ def _ensure_grant(session: Session, vault: Vault, *, tenant_id, created_by, cap_
         return
     grants_repo.create_grant(
         session,
-        vault,  # unused for the write itself: these caps declare no secrets
+        vault,  # unused for the write itself: this cap declares no secrets
         tenant_id=tenant_id,
         created_by=created_by,
         capability_ref=cap_ref,
@@ -72,7 +61,7 @@ def main() -> int:
     engine = make_engine(EngineConfig(url=settings.db_url))
     factory = SessionFactory(engine)
     vault = LocalVault(Path(settings.data_dir))
-    print(f"Granting CTS-Outward caps to {_TENANT_SLUG} against db={settings.db_url}")
+    print(f"Granting cap.shell_exec to {_TENANT_SLUG} against db={settings.db_url}")
     with factory.session() as s:
         tenant = s.scalars(select(Tenant).where(Tenant.slug == _TENANT_SLUG)).first()
         if tenant is None:
@@ -89,7 +78,7 @@ def main() -> int:
         for cap_ref in _CAP_REFS:
             _ensure_grant(s, vault, tenant_id=tenant.id, created_by=admin.id, cap_ref=cap_ref)
         s.commit()
-    print("\nDone. Restart the API + agent so the caps load, advertise, and reindex.")
+    print("\nDone. Restart the API so the grant loads.")
     return 0
 
 

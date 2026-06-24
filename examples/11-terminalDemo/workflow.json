@@ -1,0 +1,78 @@
+{
+  "name": "terminalDemo",
+  "description": "Visible AND captured. For each curl: open a real Terminal.app window on the macOS agent 'ashu-mac' (via osascript) that runs the curl and tee's its output to a temp file on the agent (so you watch it run on-screen), wait 5 seconds, then a headless cap.shell_exec reads that temp file back so the response is also returned to the server. Two paced steps run in sequence: terminal A (httpbin.org/get), then terminal B (httpbin.org/uuid).",
+  "rationale": "Demo variant combining the visible Terminal.app approach (osascript do script) with server-side capture (tee to a temp file + read it back). Each step has a 5s control.wait: it paces the demo so an operator can watch the terminal, and it gives the asynchronous curl inside Terminal time to finish writing the file before the read node cats it. control.wait runs on the server; the osascript and read nodes run on ashu-mac. cap.shell_exec must be granted to the tenant. Bump the wait if you point a curl at a slow endpoint (the read captures whatever is in the file when it runs).",
+  "dag": {
+    "id": "",
+    "version": 0,
+    "nodes": [
+      {
+        "id": "term_a",
+        "kind": "capability",
+        "ref": "cap.shell_exec",
+        "target": "ashu-mac",
+        "inputs": {
+          "argv": [
+            "osascript",
+            "-e", "tell application \"Terminal\" to activate",
+            "-e", "tell application \"Terminal\" to do script \"curl -sS --max-time 30 https://httpbin.org/get | tee /tmp/aakaar_demo_a.txt\""
+          ],
+          "timeout_s": 45
+        }
+      },
+      {
+        "id": "wait_a",
+        "kind": "control",
+        "ref": "control.wait",
+        "inputs": { "seconds": 5 }
+      },
+      {
+        "id": "read_a",
+        "kind": "capability",
+        "ref": "cap.shell_exec",
+        "target": "ashu-mac",
+        "inputs": {
+          "argv": ["cat", "/tmp/aakaar_demo_a.txt"],
+          "timeout_s": 30
+        }
+      },
+      {
+        "id": "term_b",
+        "kind": "capability",
+        "ref": "cap.shell_exec",
+        "target": "ashu-mac",
+        "inputs": {
+          "argv": [
+            "osascript",
+            "-e", "tell application \"Terminal\" to activate",
+            "-e", "tell application \"Terminal\" to do script \"curl -sS --max-time 30 https://httpbin.org/uuid | tee /tmp/aakaar_demo_b.txt\""
+          ],
+          "timeout_s": 45
+        }
+      },
+      {
+        "id": "wait_b",
+        "kind": "control",
+        "ref": "control.wait",
+        "inputs": { "seconds": 5 }
+      },
+      {
+        "id": "read_b",
+        "kind": "capability",
+        "ref": "cap.shell_exec",
+        "target": "ashu-mac",
+        "inputs": {
+          "argv": ["cat", "/tmp/aakaar_demo_b.txt"],
+          "timeout_s": 30
+        }
+      }
+    ],
+    "edges": [
+      { "from": "term_a", "to": "wait_a" },
+      { "from": "wait_a", "to": "read_a" },
+      { "from": "read_a", "to": "term_b" },
+      { "from": "term_b", "to": "wait_b" },
+      { "from": "wait_b", "to": "read_b" }
+    ]
+  }
+}
