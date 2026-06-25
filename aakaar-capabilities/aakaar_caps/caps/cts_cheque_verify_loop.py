@@ -216,7 +216,8 @@ async def run(ctx: CapabilityContext, inputs: dict[str, Any]) -> dict[str, Any]:
             "model_confidence": ocr["model_confidence"],
             "heuristic_confidence": ocr["heuristic_confidence"],
             "candidate_count": ocr["candidate_count"],
-            "match": dec["match"], "threshold_used": dec["threshold_used"],
+            "match": dec["match"], "similarity": dec["similarity"],
+            "threshold_used": dec["threshold_used"],
             "decision": dec["decision"], "remark": remark,
             "ocr_raw_text": (ocr.get("raw_text") or "")[:200],
         })

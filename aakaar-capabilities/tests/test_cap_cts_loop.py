@@ -125,7 +125,7 @@ async def test_loop_accept_then_no_record() -> None:
         s = PlaywrightBrowserSession(_id="L1", page=page, context=context)
         ctx, store = _ctx(s)
         out = await cts_cheque_verify_loop.run(ctx, {
-            "session": s.id, "delay_seconds": 0, "threshold": 0.0, "cheque_selector": "#cheque"})
+            "session": s.id, "delay_seconds": 0, "threshold": 0.8, "cheque_selector": "#cheque"})
         assert out["processed"] == 1 and out["accepted"] == 1 and out["rejected"] == 0
         assert out["stopped_reason"] == "no_record_found"
         assert (await page.evaluate("() => window.__s.accepts")) == 1
@@ -140,11 +140,13 @@ async def test_loop_accept_then_no_record() -> None:
 
 
 async def test_loop_reject_fills_remark() -> None:
-    async with _page(_page_html("99999999999999")) as (page, context):  # truth != OCR -> reject
+    # Confidence is the gate now, and the OCR of this clear cheque is high-confidence, so to
+    # exercise the REJECT branch we set a threshold the confidence cannot reach.
+    async with _page(_page_html("99999999999999")) as (page, context):
         s = PlaywrightBrowserSession(_id="L2", page=page, context=context)
         ctx, store = _ctx(s)
         out = await cts_cheque_verify_loop.run(ctx, {
-            "session": s.id, "delay_seconds": 0, "threshold": 0.0, "cheque_selector": "#cheque",
+            "session": s.id, "delay_seconds": 0, "threshold": 1.01, "cheque_selector": "#cheque",
             "reject_remark": "ACCT MISMATCH"})
         assert out["processed"] == 1 and out["rejected"] == 1 and out["accepted"] == 0
         assert (await page.evaluate("() => window.__s.remark")) == "ACCT MISMATCH"  # remark typed before Reject

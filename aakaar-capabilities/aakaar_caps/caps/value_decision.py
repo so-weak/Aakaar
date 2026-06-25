@@ -1,14 +1,15 @@
-"""cap.value_decision — accept/reject an OCR'd value against a truth + threshold.
+"""cap.value_decision — accept/reject an OCR'd value by its heuristic confidence.
 
-Compares the OCR-extracted account number to the truth value read from the page,
-gated by a confidence threshold. The threshold comes from an env var
-(``AAKAAR_OCR_ACCEPT_THRESHOLD``) unless overridden on the node — "threshold set
-in the env". Emits ``decision`` ("accept"/"reject") and ``click_text`` ("Accept"/
-"Reject") so the DAG can feed it straight into ``cap.web_click(text=...)`` — the
-DAG has no conditional branching, so the decision picks the button label here.
+The gate is the OCR **heuristic confidence**: accept iff confidence >= threshold.
+Nothing else blocks it — a confident read passes even if it isn't an exact match
+to the recorded value (OCR can drop or misread a digit). The truth comparison is
+still computed and reported (``match`` exact, ``similarity`` digit-closeness) for
+the audit trail, but it does NOT gate the decision. The threshold comes from the
+env var ``AAKAAR_OCR_ACCEPT_THRESHOLD`` unless overridden on the node. Emits
+``decision`` + ``click_text`` so the DAG can feed it into ``cap.web_click`` (no
+DAG branching). Pure logic, read-only.
 
-Decision rule: accept iff the digit strings match AND heuristic confidence >=
-threshold; otherwise reject. Pure logic — no browser, no I/O. Read-only.
+Decision rule: ``accept = confidence >= threshold``.
 """
 
 from __future__ import annotations
@@ -32,32 +33,34 @@ _DEFAULT_THRESHOLD = 0.60
 class _Inputs(BaseModel):
     model_config = ConfigDict(extra="forbid")
     extracted: str = Field(description="The OCR-extracted value (e.g. account number).")
-    truth: str = Field(description="The reference/truth value read from the page.")
-    confidence: float = Field(default=0.0, description="Heuristic confidence of the extracted value [0,1].")
+    truth: str = Field(description="The reference/truth value read from the page (for reporting only).")
+    confidence: float = Field(default=0.0,
+        description="OCR heuristic confidence [0,1] — THIS is the gate: accept iff it >= threshold.")
     threshold: float | None = Field(
         default=None,
-        description=f"Accept threshold [0,1]. If omitted, read from ${_ENV_THRESHOLD} (default {_DEFAULT_THRESHOLD}).",
+        description=(f"Minimum heuristic confidence to accept [0,1]. If omitted, read from "
+                     f"${_ENV_THRESHOLD} (default {_DEFAULT_THRESHOLD})."),
     )
     accept_label: str = Field(default="Accept", description="Button label to click when accepted.")
     reject_label: str = Field(default="Reject", description="Button label to click when rejected.")
-    digits_only: bool = Field(default=True, description="Compare only the digits of each value.")
+    digits_only: bool = Field(default=True, description="Compare only digits when reporting match/similarity.")
 
 
 class _Outputs(BaseModel):
     decision: str = Field(description="'accept' or 'reject'.")
     click_text: str = Field(description="The button label to click (accept_label / reject_label).")
-    match: bool = Field(description="Whether extracted == truth (after normalization).")
-    threshold_used: float = Field(description="The threshold actually applied.")
-    similarity: float = Field(description="1.0 if exact match else a [0,1] char-overlap score.")
+    match: bool = Field(description="Whether extracted == truth exactly (reported, not the gate).")
+    threshold_used: float = Field(description="The confidence threshold actually applied.")
+    similarity: float = Field(description="Digit similarity to the truth [0,1] (reported, not the gate).")
 
 
 SPEC = CapabilitySpec(
     ref=CAP_REF,
     description=(
-        "Decide accept vs reject for an OCR'd value against a truth value and a confidence "
-        "threshold (threshold from the AAKAAR_OCR_ACCEPT_THRESHOLD env var unless overridden). "
-        "Emits both the decision and the exact button label to click, so it can be wired into "
-        "cap.web_click(text=...). Pure logic, read-only."
+        "Decide accept vs reject for an OCR'd value by its heuristic confidence: accept iff "
+        "confidence >= threshold (threshold from AAKAAR_OCR_ACCEPT_THRESHOLD env unless overridden). "
+        "Exact match is not required and does not gate; match and digit-similarity to the truth are "
+        "reported for audit. Emits the button label to click. Pure logic, read-only."
     ),
     input_schema=_Inputs,
     output_schema=_Outputs,
@@ -72,14 +75,27 @@ def _norm(s: str, digits_only: bool) -> str:
     return re.sub(r"\D", "", s) if digits_only else s.strip().upper()
 
 
-def _similarity(a: str, b: str) -> float:
+def _levenshtein(a: str, b: str) -> int:
     if a == b:
-        return 1.0
-    if not a or not b:
+        return 0
+    if not a:
+        return len(b)
+    if not b:
+        return len(a)
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i]
+        for j, cb in enumerate(b, 1):
+            cur.append(min(prev[j] + 1, cur[-1] + 1, prev[j - 1] + (ca != cb)))
+        prev = cur
+    return prev[-1]
+
+
+def _similarity(a: str, b: str) -> float:
+    if not a and not b:
         return 0.0
-    n = min(len(a), len(b))
-    same = sum(1 for i in range(n) if a[i] == b[i])
-    return round(same / max(len(a), len(b)), 4)
+    denom = max(len(a), len(b), 1)
+    return round(1.0 - _levenshtein(a, b) / denom, 4)
 
 
 def _resolve_threshold(inp: dict[str, Any]) -> float:
@@ -103,16 +119,16 @@ async def run(ctx: CapabilityContext, inputs: dict[str, Any]) -> dict[str, Any]:
     accept_label = str(inputs.get("accept_label", "Accept"))
     reject_label = str(inputs.get("reject_label", "Reject"))
 
-    match = bool(ex) and ex == tr
-    accept = match and conf >= threshold
+    # The gate IS the heuristic confidence: confidence >= threshold -> accept.
+    accept = conf >= threshold
     decision = "accept" if accept else "reject"
     out = {
         "decision": decision,
         "click_text": accept_label if accept else reject_label,
-        "match": match,
+        "match": bool(ex) and ex == tr,
         "threshold_used": round(threshold, 4),
         "similarity": _similarity(ex, tr),
     }
-    logger.info("cap.value_decision extracted=%r truth=%r conf=%.3f thr=%.3f match=%s -> %s",
-                ex, tr, conf, threshold, match, decision)
+    logger.info("cap.value_decision conf=%.4f thr=%.4f -> %s (extracted=%r truth=%r match=%s)",
+                conf, threshold, decision, ex, tr, out["match"])
     return out

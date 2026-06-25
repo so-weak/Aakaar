@@ -25,36 +25,37 @@ CHEQUES = REPO / "docs" / "exampleCheques"
 
 
 # ----------------------------- cap.value_decision -----------------------------
-async def test_decision_accept_on_match_and_conf() -> None:
+# The gate is the heuristic confidence: accept iff confidence >= threshold.
+async def test_decision_accept_when_conf_meets_threshold() -> None:
     out = await value_decision.run(CapabilityContext(), {
-        "extracted": "50200100550851", "truth": "50200100550851",
-        "confidence": 0.8, "threshold": 0.6})
+        "extracted": "50200100550851", "truth": "50200100550851", "confidence": 0.8, "threshold": 0.6})
     assert out["decision"] == "accept" and out["click_text"] == "Accept"
     assert out["match"] is True and out["similarity"] == 1.0
 
 
-async def test_decision_reject_on_mismatch() -> None:
+async def test_decision_accepts_confident_even_if_not_exact() -> None:
+    # OCR dropped a digit (match=False), but confidence >= threshold -> MUST pass.
     out = await value_decision.run(CapabilityContext(), {
-        "extracted": "00000000000000", "truth": "50200100550851",
-        "confidence": 0.99, "threshold": 0.6})
-    assert out["decision"] == "reject" and out["click_text"] == "Reject" and out["match"] is False
+        "extracted": "5020010055081", "truth": "50200100550851", "confidence": 0.9, "threshold": 0.6})
+    assert out["match"] is False
+    assert out["decision"] == "accept"
 
 
-async def test_decision_reject_on_low_confidence() -> None:
+async def test_decision_reject_when_conf_below_threshold() -> None:
+    # Even an EXACT match is rejected if confidence is below the threshold (conf is the gate).
     out = await value_decision.run(CapabilityContext(), {
-        "extracted": "50200100550851", "truth": "50200100550851",
-        "confidence": 0.50, "threshold": 0.60})
-    assert out["decision"] == "reject" and out["match"] is True  # matched but below threshold
+        "extracted": "50200100550851", "truth": "50200100550851", "confidence": 0.4, "threshold": 0.6})
+    assert out["decision"] == "reject" and out["match"] is True
 
 
 async def test_decision_threshold_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("AAKAAR_OCR_ACCEPT_THRESHOLD", "0.90")
+    monkeypatch.setenv("AAKAAR_OCR_ACCEPT_THRESHOLD", "0.95")
     out = await value_decision.run(CapabilityContext(), {
-        "extracted": "50200100550851", "truth": "50200100550851", "confidence": 0.85})
-    assert out["threshold_used"] == 0.9 and out["decision"] == "reject"  # 0.85 < 0.90 from env
+        "extracted": "X", "truth": "Y", "confidence": 0.90})  # 0.90 < 0.95 -> reject
+    assert out["threshold_used"] == 0.95 and out["decision"] == "reject"
 
 
-async def test_decision_digits_only_strips_labels() -> None:
+async def test_decision_digits_only_reporting() -> None:
     out = await value_decision.run(CapabilityContext(), {
         "extracted": "A/c No 50200100550851", "truth": "50200100550851",
         "confidence": 0.9, "threshold": 0.6})
