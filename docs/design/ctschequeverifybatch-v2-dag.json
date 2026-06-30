@@ -1,0 +1,118 @@
+{
+  "id": "",
+  "version": 0,
+  "nodes": [
+    {
+      "id": "login_ctsoutward",
+      "kind": "capability",
+      "ref": "cap.web_login",
+      "inputs": {
+        "account_alias": "ctsoutward"
+      },
+      "outputs_as": null,
+      "retry": null,
+      "target": null
+    },
+    {
+      "id": "click_okay",
+      "kind": "capability",
+      "ref": "cap.web_click",
+      "inputs": {
+        "session": "${login_ctsoutward.session}",
+        "text": "OK"
+      },
+      "outputs_as": null,
+      "retry": null,
+      "target": null
+    },
+    {
+      "id": "open_ecallback",
+      "kind": "capability",
+      "ref": "cap.web_tree_select",
+      "inputs": {
+        "session": "${login_ctsoutward.session}",
+        "path": [
+          "E-Callback Processing",
+          "Ecall Back Processing"
+        ]
+      },
+      "outputs_as": null,
+      "retry": null,
+      "target": null
+    },
+    {
+      "id": "batch_sweep",
+      "kind": "capability",
+      "ref": "cap.cts_batch_sweep",
+      "inputs": {
+        "session": "${login_ctsoutward.session}",
+        "batches": [
+          {
+            "date": "19-JUN-2026",
+            "cycles": [
+              {
+                "cycle": "06",
+                "batches": [
+                  "0000000144",
+                  "0000000155"
+                ]
+              }
+            ]
+          }
+        ],
+        "record_type": "TXN",
+        "core_system": "FLEX",
+        "delay_seconds": 0,
+        "report_filename": "cts_cheque_verify_consolidated.csv"
+      },
+      "outputs_as": null,
+      "retry": null,
+      "target": null
+    },
+    {
+      "id": "logout",
+      "kind": "capability",
+      "ref": "cap.web_click",
+      "inputs": {
+        "session": "${login_ctsoutward.session}",
+        "image": "logout"
+      },
+      "outputs_as": null,
+      "retry": null,
+      "target": null
+    },
+    {
+      "id": "close_ctsoutward",
+      "kind": "action",
+      "ref": "browser.close_session",
+      "inputs": {
+        "session": "${login_ctsoutward.session}"
+      },
+      "outputs_as": null,
+      "retry": null,
+      "target": null
+    }
+  ],
+  "edges": [
+    {
+      "from": "login_ctsoutward",
+      "to": "click_okay"
+    },
+    {
+      "from": "click_okay",
+      "to": "open_ecallback"
+    },
+    {
+      "from": "open_ecallback",
+      "to": "batch_sweep"
+    },
+    {
+      "from": "batch_sweep",
+      "to": "logout"
+    },
+    {
+      "from": "logout",
+      "to": "close_ctsoutward"
+    }
+  ]
+}

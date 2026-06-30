@@ -44,6 +44,8 @@ _CAP_REFS = (
     "cap.cts_batch_sweep",
     # CTS back-image harvest (download all back images named by account -> zip)
     "cap.cts_back_image_harvest",
+    # CTS back-image multi-batch sweep (dates/cycles/batches -> consolidated zip)
+    "cap.cts_back_image_sweep",
 )
 
 

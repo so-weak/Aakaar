@@ -48,6 +48,8 @@ class _Inputs(BaseModel):
     remark_maxlen: int = Field(default=25, ge=1, le=200, description="Max remark chars (CTS field maxlength=25).")
     threshold: float | None = Field(default=None, description="Accept threshold; default from env (see cap.value_decision).")
     report_filename: str = Field(default="cts_cheque_verify.csv", description="CSV report filename.")
+    write_report: bool = Field(default=True,
+        description="Write the CSV here. Set False when an outer sweep consolidates rows itself.")
     expected_length: int = Field(default=14, description="Expected account-number length for the OCR prior.")
     # Selectors / labels (defaults match the CTS Outward DOM; overridable for tests/other portals).
     cheque_selector: str = Field(default="img.z-image[src*='zkau/view']", description="CSS selector of the cheque photo <img>.")
@@ -61,11 +63,12 @@ class _Inputs(BaseModel):
 
 
 class _Outputs(BaseModel):
-    report_uri: str = Field(description="Managed-storage URI of the CSV report ('' if no cheques).")
+    report_uri: str = Field(description="Managed-storage URI of the CSV report ('' if no cheques / write_report False).")
     processed: int = Field(description="Cheques processed.")
     accepted: int = Field(description="Cheques accepted.")
     rejected: int = Field(description="Cheques rejected.")
     stopped_reason: str = Field(description="'no_record_found' (normal) or 'stalled' (portal stopped advancing).")
+    rows: list[dict[str, Any]] = Field(default_factory=list, description="Per-cheque rows (for an outer sweep to consolidate).")
 
 
 SPEC = CapabilitySpec(
@@ -141,6 +144,7 @@ async def run(ctx: CapabilityContext, inputs: dict[str, Any]) -> dict[str, Any]:
     ok_label = str(inputs.get("ok_label", "OK"))
     no_record_text = str(inputs.get("no_record_text", "No record found"))
     report_filename = str(inputs.get("report_filename", "cts_cheque_verify.csv"))
+    write_report = bool(inputs.get("write_report", True))
     expected_length = int(inputs.get("expected_length", 14))
 
     async def settle() -> None:
@@ -230,10 +234,10 @@ async def run(ctx: CapabilityContext, inputs: dict[str, Any]) -> dict[str, Any]:
             break
 
     report_uri = ""
-    if rows:
+    if write_report and rows:
         report = await csv_report.run(ctx, {"filename": report_filename, "rows": rows})
         report_uri = report.get("uri", "")
     logger.info("cap.cts_cheque_verify_loop done processed=%d accepted=%d rejected=%d stop=%s uri=%s",
                 len(rows), accepted, rejected, stopped, report_uri)
-    return {"report_uri": report_uri, "processed": len(rows),
-            "accepted": accepted, "rejected": rejected, "stopped_reason": stopped}
+    return {"report_uri": report_uri, "processed": len(rows), "accepted": accepted,
+            "rejected": rejected, "stopped_reason": stopped, "rows": rows}
