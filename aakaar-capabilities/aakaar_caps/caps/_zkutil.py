@@ -8,6 +8,7 @@ identically across them (and matches cap.web_click / the login-form discovery).
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -71,6 +72,39 @@ _JS_CLICK = r"""
 """
 
 
+# Errors that mean "the page navigated / re-rendered while we were evaluating" —
+# common with ZK AU updates (clicking a tree node / Fetch re-renders the page).
+# These are transient: retry once the new execution context is ready.
+_NAV_ERRORS = (
+    "execution context was destroyed",
+    "most likely because of a navigation",
+    "navigation",
+    "target closed",
+    "frame was detached",
+    "page closed",
+    "context was destroyed",
+)
+
+
+async def safe_evaluate(sess: Any, js: str, *, retries: int = 15, delay: float = 0.3) -> Any:
+    """Run ``sess.evaluate(js)`` but transparently retry when a ZK AU navigation
+    destroys the JS execution context mid-evaluate (the new context comes back a
+    moment later). Non-navigation errors propagate immediately."""
+    last: Exception | None = None
+    for _ in range(max(1, retries)):
+        try:
+            return await sess.evaluate(js)
+        except Exception as e:  # noqa: BLE001
+            if any(k in str(e).lower() for k in _NAV_ERRORS):
+                last = e
+                await asyncio.sleep(delay)
+                continue
+            raise
+    if last is not None:
+        raise last
+    return None
+
+
 async def click_or_js(sess: Any, selector: str) -> None:
     """Click ``selector`` via Playwright; on failure, dispatch a native in-page
     click. Raises only if the element can't be found for the JS fallback either."""
@@ -78,6 +112,6 @@ async def click_or_js(sess: Any, selector: str) -> None:
         await sess.click(selector)
         return
     except Exception as exc:  # noqa: BLE001
-        ok = await sess.evaluate(_JS_CLICK.replace("__SEL__", json.dumps(selector)))
+        ok = await safe_evaluate(sess, _JS_CLICK.replace("__SEL__", json.dumps(selector)))
         if not ok:
             raise RuntimeError(f"could not click {selector!r}") from exc

@@ -15,7 +15,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from aakaar_caps.browser.state import get_session
-from aakaar_caps.caps._zkutil import JS_HELPERS
+from aakaar_caps.caps._zkutil import JS_HELPERS, safe_evaluate
 from aakaar_caps.context import CapabilityContext
 from aakaar_caps.spec import CapabilitySpec
 
@@ -102,7 +102,7 @@ async def run(ctx: CapabilityContext, inputs: dict[str, Any]) -> dict[str, Any]:
     js = (_RESOLVE_JS.replace("__HELPERS__", JS_HELPERS)
                      .replace("__LABEL__", json.dumps(label))
                      .replace("__DIR__", json.dumps(direction)))
-    res = await sess.evaluate(js)
+    res = await safe_evaluate(sess, js)
     if isinstance(res, dict) and res.get("ok"):
         selector = str(res["selector"])
         await sess.fill(selector, value)

@@ -23,7 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from aakaar_caps.browser.state import get_session
 from aakaar_caps.caps import web_click, web_read_field
-from aakaar_caps.caps._zkutil import JS_HELPERS
+from aakaar_caps.caps._zkutil import JS_HELPERS, safe_evaluate
 from aakaar_caps.context import CapabilityContext
 from aakaar_caps.spec import CapabilitySpec
 
@@ -89,7 +89,7 @@ _SRC_JS = r"""
 async def _popup(sess: Any, text: str) -> bool:
     js = _POPUP_JS.replace("__HELPERS__", JS_HELPERS).replace("__TEXT__", json.dumps(text))
     try:
-        return bool(await sess.evaluate(js))
+        return bool(await safe_evaluate(sess, js))
     except Exception:  # noqa: BLE001
         return False
 
@@ -97,7 +97,7 @@ async def _popup(sess: Any, text: str) -> bool:
 async def _src(sess: Any, selector: str) -> str:
     js = _SRC_JS.replace("__SEL__", json.dumps(selector))
     try:
-        return str(await sess.evaluate(js) or "")
+        return str(await safe_evaluate(sess, js) or "")
     except Exception:  # noqa: BLE001
         return ""
 

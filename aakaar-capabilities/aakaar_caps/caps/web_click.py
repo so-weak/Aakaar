@@ -37,6 +37,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from aakaar_caps.browser.state import get_session
+from aakaar_caps.caps._zkutil import safe_evaluate
 from aakaar_caps.context import CapabilityContext
 from aakaar_caps.spec import CapabilitySpec
 
@@ -292,7 +293,7 @@ async def run(ctx: CapabilityContext, inputs: dict[str, Any]) -> dict[str, Any]:
     deadline = time.monotonic() + (timeout_ms / 1000.0)
     resolved: dict[str, Any] | None = None
     while True:
-        result = await sess.evaluate(js)
+        result = await safe_evaluate(sess, js)
         if isinstance(result, dict) and result.get("ok"):
             resolved = result
             break
@@ -319,7 +320,7 @@ async def run(ctx: CapabilityContext, inputs: dict[str, Any]) -> dict[str, Any]:
             "cap.web_click: actionable click on %r failed (%s); falling back to JS click",
             selector, exc,
         )
-        ok = await sess.evaluate(_JS_CLICK.replace("__SELECTOR__", json.dumps(selector)))
+        ok = await safe_evaluate(sess, _JS_CLICK.replace("__SELECTOR__", json.dumps(selector)))
         if not ok:
             raise RuntimeError(
                 f"cap.web_click: matched {selector!r} but could not click it"

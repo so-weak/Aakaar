@@ -24,7 +24,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from aakaar_caps.browser.state import get_session
-from aakaar_caps.caps._zkutil import JS_HELPERS, click_or_js
+from aakaar_caps.caps._zkutil import JS_HELPERS, click_or_js, safe_evaluate
 from aakaar_caps.context import CapabilityContext
 from aakaar_caps.spec import CapabilitySpec
 
@@ -114,7 +114,7 @@ def _js(label: str) -> str:
 async def _find_row(sess: Any, label: str, deadline: float) -> dict[str, Any]:
     js = _js(label)
     while True:
-        res = await sess.evaluate(js)
+        res = await safe_evaluate(sess, js)
         if isinstance(res, dict) and res.get("ok"):
             return res
         if time.monotonic() >= deadline:

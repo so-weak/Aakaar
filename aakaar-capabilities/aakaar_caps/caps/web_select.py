@@ -28,7 +28,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from aakaar_caps.browser.state import get_session
-from aakaar_caps.caps._zkutil import JS_HELPERS, click_or_js
+from aakaar_caps.caps._zkutil import JS_HELPERS, click_or_js, safe_evaluate
 from aakaar_caps.context import CapabilityContext
 from aakaar_caps.spec import CapabilitySpec
 
@@ -173,7 +173,7 @@ async def run(ctx: CapabilityContext, inputs: dict[str, Any]) -> dict[str, Any]:
     resolve_js = _js(_RESOLVE_JS, LABEL=label)
     info: dict[str, Any] | None = None
     while True:
-        res = await sess.evaluate(resolve_js)
+        res = await safe_evaluate(sess, resolve_js)
         if isinstance(res, dict) and res.get("ok"):
             info = res
             break
@@ -194,7 +194,7 @@ async def run(ctx: CapabilityContext, inputs: dict[str, Any]) -> dict[str, Any]:
     find_js = _js(_FIND_ITEM_JS, VALUE=value, POPUP=popup_sel)
     item_sel: str | None = None
     while True:
-        res = await sess.evaluate(find_js)
+        res = await safe_evaluate(sess, find_js)
         if isinstance(res, dict) and res.get("ok"):
             item_sel = str(res["item_sel"])
             break
