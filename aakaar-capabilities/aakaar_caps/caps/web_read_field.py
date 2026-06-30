@@ -9,8 +9,10 @@ needs the framework's volatile element ids. Read-only.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import time
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -33,6 +35,8 @@ class _Inputs(BaseModel):
         description="Where the value sits relative to the label: 'below' (grid header), "
         "'beside' (next cell), 'input' (associated control), or 'auto' (try below -> beside -> input).",
     )
+    timeout_ms: int = Field(default=20000, ge=500, le=120000,
+        description="How long to wait for the labelled value to appear (ZK forms render async).")
 
 
 class _Outputs(BaseModel):
@@ -121,14 +125,19 @@ async def run(ctx: CapabilityContext, inputs: dict[str, Any]) -> dict[str, Any]:
     sess = get_session(ctx.session_state, inputs["session"])
     label = str(inputs["label"])
     direction = str(inputs.get("direction", "auto"))
+    timeout_ms = int(inputs.get("timeout_ms", 20000))
     js = (_READ_JS.replace("__HELPERS__", JS_HELPERS)
                   .replace("__LABEL__", json.dumps(label))
                   .replace("__DIR__", json.dumps(direction)))
-    res = await safe_evaluate(sess, js)
-    if isinstance(res, dict) and res.get("ok"):
-        value = str(res.get("value", ""))
-        via = str(res.get("via", "none"))
-        logger.info("cap.web_read_field ok label=%r via=%s value=%r", label, via, value)
-        return {"value": value, "via": via}
-    logger.info("cap.web_read_field: no value found for label=%r", label)
-    return {"value": "", "via": "none"}
+    deadline = time.monotonic() + timeout_ms / 1000.0
+    while True:
+        res = await safe_evaluate(sess, js)
+        if isinstance(res, dict) and res.get("ok"):
+            value = str(res.get("value", ""))
+            via = str(res.get("via", "none"))
+            logger.info("cap.web_read_field ok label=%r via=%s value=%r", label, via, value)
+            return {"value": value, "via": via}
+        if time.monotonic() >= deadline:
+            logger.info("cap.web_read_field: no value found for label=%r", label)
+            return {"value": "", "via": "none"}
+        await asyncio.sleep(0.25)

@@ -35,7 +35,7 @@ from aakaar_caps.spec import CapabilitySpec
 logger = logging.getLogger(__name__)
 CAP_REF = "cap.web_select"
 
-_DEFAULT_TIMEOUT_MS = 15000
+_DEFAULT_TIMEOUT_MS = 30000   # ZK forms can take a while to render after a navigation
 _POLL_INTERVAL_S = 0.25
 
 

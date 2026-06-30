@@ -8,8 +8,10 @@ text, so no volatile element ids. Side-effecting (it types).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import time
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -30,6 +32,8 @@ class _Inputs(BaseModel):
     value: str = Field(description="Text to type into the resolved input.")
     direction: str = Field(default="auto",
         description="Where the input sits vs the label: 'beside', 'below', 'input', or 'auto'.")
+    timeout_ms: int = Field(default=20000, ge=500, le=120000,
+        description="How long to wait for the input to appear (ZK forms render async).")
 
 
 class _Outputs(BaseModel):
@@ -99,14 +103,19 @@ async def run(ctx: CapabilityContext, inputs: dict[str, Any]) -> dict[str, Any]:
     label = str(inputs["label"])
     value = str(inputs["value"])
     direction = str(inputs.get("direction", "auto"))
+    timeout_ms = int(inputs.get("timeout_ms", 20000))
     js = (_RESOLVE_JS.replace("__HELPERS__", JS_HELPERS)
                      .replace("__LABEL__", json.dumps(label))
                      .replace("__DIR__", json.dumps(direction)))
-    res = await safe_evaluate(sess, js)
-    if isinstance(res, dict) and res.get("ok"):
-        selector = str(res["selector"])
-        await sess.fill(selector, value)
-        logger.info("cap.web_fill_field ok label=%r selector=%s", label, selector)
-        return {"filled": True, "selector": selector}
-    logger.info("cap.web_fill_field: no input found for label=%r", label)
-    return {"filled": False, "selector": ""}
+    deadline = time.monotonic() + timeout_ms / 1000.0
+    while True:
+        res = await safe_evaluate(sess, js)
+        if isinstance(res, dict) and res.get("ok"):
+            selector = str(res["selector"])
+            await sess.fill(selector, value)
+            logger.info("cap.web_fill_field ok label=%r selector=%s", label, selector)
+            return {"filled": True, "selector": selector}
+        if time.monotonic() >= deadline:
+            logger.info("cap.web_fill_field: no input found for label=%r", label)
+            return {"filled": False, "selector": ""}
+        await asyncio.sleep(0.25)
