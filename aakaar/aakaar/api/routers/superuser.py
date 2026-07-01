@@ -41,12 +41,14 @@ from aakaar.db.models import (
     Run,
     RunEvent,
     RunMode,
+    RunStatus,
     User,
     UserRole,
     Workflow,
     WorkflowVersion,
 )
 from aakaar.interpreter import RunOrchestrator
+from aakaar.interpreter.controls import RunControlConflict, RunNotActive
 from aakaar.planner import CapabilityIndex
 from aakaar.shared.dag.types import Dag
 from aakaar.vault import Vault
@@ -201,6 +203,100 @@ def get_any_run(
         events=events,
         pending_prompts=pending,
     )
+
+
+_TERMINAL_STATUSES = (RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.CANCELLED)
+
+
+def _run_response(run: Run) -> RunResponse:
+    return RunResponse(
+        id=run.id,
+        tenant_id=run.tenant_id,
+        workflow_id=run.workflow_id,
+        workflow_version=run.workflow_version,
+        started_by=run.started_by,
+        status=run.status,
+        mode=run.mode or RunMode.LIVE,
+        started_at=run.started_at,
+        ended_at=run.ended_at,
+        outputs=run.outputs or {},
+        error=run.error,
+    )
+
+
+def _get_any_active_run(session: Session, run_id: uuid.UUID) -> Run:
+    """Load any tenant's run for a lifecycle action, rejecting a finished one.
+    Skips the tenant filter — the superuser operates the whole platform."""
+    run = session.get(Run, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    if run.status in _TERMINAL_STATUSES:
+        raise HTTPException(status_code=409, detail="run already finished")
+    return run
+
+
+@router.post("/runs/{run_id}/pause", response_model=RunResponse)
+async def pause_any_run(
+    run_id: uuid.UUID,
+    session: Annotated[Session, Depends(get_session)],
+    orchestrator: Annotated[RunOrchestrator, Depends(get_orchestrator)],
+) -> RunResponse:
+    """Cross-tenant operator pause: in-flight nodes finish, no new DAG layer
+    starts. Mirrors POST /runs/{id}/pause but without the tenant/owner check
+    so a superuser can intervene on any tenant's run from the console."""
+    run = _get_any_active_run(session, run_id)
+    try:
+        orchestrator.pause_run(run_id=run_id)
+    except RunNotActive:
+        raise HTTPException(
+            status_code=409, detail="run is not active on this server"
+        ) from None
+    except RunControlConflict as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    session.expire(run)  # orchestrator persisted PAUSED in its own session
+    return _run_response(run)
+
+
+@router.post("/runs/{run_id}/resume", response_model=RunResponse)
+async def resume_any_run(
+    run_id: uuid.UUID,
+    session: Annotated[Session, Depends(get_session)],
+    orchestrator: Annotated[RunOrchestrator, Depends(get_orchestrator)],
+) -> RunResponse:
+    """Cross-tenant release of an operator pause. A run waiting on a
+    human.prompt is not operator-paused and is unaffected."""
+    run = _get_any_active_run(session, run_id)
+    try:
+        orchestrator.resume_run(run_id=run_id)
+    except RunNotActive:
+        raise HTTPException(
+            status_code=409, detail="run is not active on this server"
+        ) from None
+    except RunControlConflict as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    session.expire(run)
+    return _run_response(run)
+
+
+@router.post("/runs/{run_id}/cancel", response_model=RunResponse)
+async def cancel_any_run(
+    run_id: uuid.UUID,
+    session: Annotated[Session, Depends(get_session)],
+    orchestrator: Annotated[RunOrchestrator, Depends(get_orchestrator)],
+) -> RunResponse:
+    """Cross-tenant cooperative cancel: in-flight nodes finish (long waits and
+    pending prompts are interrupted), then the run unwinds to CANCELLED. The
+    response may still show a pre-terminal status; poll the run for the final
+    state."""
+    run = _get_any_active_run(session, run_id)
+    try:
+        await orchestrator.cancel_run(run_id=run_id)
+    except RunNotActive:
+        raise HTTPException(
+            status_code=409, detail="run is not active on this server"
+        ) from None
+    session.expire(run)
+    return _run_response(run)
 
 
 @router.get("/workflows/{workflow_id}", response_model=WorkflowResponse)

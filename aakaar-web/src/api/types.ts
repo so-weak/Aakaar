@@ -231,6 +231,9 @@ export interface ChatSession {
   saved_version: number | null;
   draft_dag: Dag | null;
   draft_rationale: string;
+  // Prefill for the composer when a refine session is first opened (latest
+  // prior instruction, or the workflow's rationale). Empty otherwise.
+  composer_seed: string;
   is_dirty: boolean;
   created_at: string;
   updated_at: string;
@@ -263,7 +266,15 @@ export interface Run {
   started_at: string;
   ended_at: string | null;
   outputs: Record<string, Record<string, unknown>>;
-  error: { type: string; message: string } | null;
+  // `step` is the id of the node that failed; `ref` is its capability ref —
+  // both optional so a timeline can show "Failed at step: login" without
+  // scanning the event log. Null/absent on older runs or non-node errors.
+  error: {
+    type: string;
+    message: string;
+    step?: string | null;
+    ref?: string | null;
+  } | null;
 }
 
 export interface RunEvent {

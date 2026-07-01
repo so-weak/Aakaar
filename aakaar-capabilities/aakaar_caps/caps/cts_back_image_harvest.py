@@ -142,10 +142,6 @@ async def run(ctx: CapabilityContext, inputs: dict[str, Any]) -> dict[str, Any]:
 
     while True:
         if await _popup(sess, no_record_text):
-            try:
-                await web_click.run(ctx, {"session": sid, "text": ok_label})
-            except Exception:  # noqa: BLE001
-                pass
             stopped = "no_record_found"
             break
 
@@ -188,6 +184,16 @@ async def run(ctx: CapabilityContext, inputs: dict[str, Any]) -> dict[str, Any]:
 
         await web_click.run(ctx, {"session": sid, "image": next_image})  # Next Instrument
         await settle()
+
+    # Dismiss the terminal "No record found" popup with OK so the criteria form
+    # reappears for the next batch (an outer sweep refills it). Harmless no-op if
+    # the loop ended without a popup up (e.g. a wrap).
+    if await _popup(sess, no_record_text):
+        try:
+            await web_click.run(ctx, {"session": sid, "text": ok_label})
+            await settle()
+        except Exception:  # noqa: BLE001
+            pass
 
     zip_uri = ""
     if write_zip and images:

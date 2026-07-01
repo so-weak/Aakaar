@@ -138,6 +138,31 @@ def get_latest_version(
     return get_version(session, tenant_id, workflow_id, workflow.latest_version)
 
 
+def latest_meaningful_rationale(
+    session: Session, tenant_id: uuid.UUID, workflow_id: uuid.UUID
+) -> str:
+    """Newest non-placeholder version rationale for a workflow.
+
+    Used to seed the chat composer when a workflow is opened for refinement
+    but has no prior chat instruction to echo. Skips the "visual dag edit"
+    placeholder written by hand-edits so the seed is actually descriptive.
+    """
+    rationales = session.scalars(
+        select(WorkflowVersion.rationale)
+        .where(
+            WorkflowVersion.tenant_id == tenant_id,
+            WorkflowVersion.workflow_id == workflow_id,
+        )
+        .order_by(WorkflowVersion.version.desc())
+    )
+    placeholders = {"visual dag edit"}
+    for rationale in rationales:
+        text = (rationale or "").strip()
+        if text and text.lower() not in placeholders:
+            return text
+    return ""
+
+
 def delete_workflow(
     session: Session, tenant_id: uuid.UUID, workflow_id: uuid.UUID
 ) -> bool:

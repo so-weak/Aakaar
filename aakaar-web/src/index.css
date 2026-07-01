@@ -53,6 +53,32 @@
     color: var(--selection-fg);
   }
 
+  /* Global keyboard-focus affordance. :focus-visible fires for keyboard / AT
+   * focus but not plain mouse clicks, so pointer users see no ring while
+   * keyboard users get a consistent, token-driven accent outline on every
+   * interactive element. Component-level :focus rings (.btn-primary, .input)
+   * still win on specificity — this is the baseline, not an override, and it
+   * stays theme-faithful (no hard-coded colour). */
+  :focus-visible {
+    outline: 2px solid rgb(var(--accent-300) / 0.7);
+    outline-offset: 2px;
+  }
+
+  /* Honour "reduce motion": collapse animations/transitions and disable
+   * smooth-scroll so the auto-follow transcript never yanks the viewport for
+   * users who asked for calm. The !important here is the standard a11y reset
+   * pattern (it only touches motion) — unrelated to the rejected theme layer. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+
   ::-webkit-scrollbar {
     width: 10px;
     height: 10px;

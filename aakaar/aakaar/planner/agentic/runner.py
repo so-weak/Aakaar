@@ -207,6 +207,58 @@ class PlannerToolRunner:
         meta = await self._page_meta()
         return {"ok": True, **meta}
 
+    async def click(
+        self, *, text: str | None = None, selector: str | None = None
+    ) -> dict[str, Any]:
+        """Click an element on the current page and return a fresh inspect
+        snapshot. The loop uses this to traverse "after clicking X, do Y"
+        flows — clicking + re-inspecting reveals post-click field labels so
+        the model never has to ask the user.
+
+        Exactly one of `text` / `selector` is required. `text` goes through
+        the same matcher as `browser.click_by_text`; `selector` is for when
+        the model already extracted an exact selector from `inspect_page`.
+        """
+        if self._session is None:
+            return {"error": "no planning session"}
+        if not text and not selector:
+            return {"error": "click requires either text or selector"}
+        if text and selector:
+            return {"error": "click accepts text OR selector, not both"}
+        kind = "selector" if selector else "text"
+        target = selector or text
+        logger.info("agentic.click %s=%r", kind, target)
+        try:
+            if selector:
+                await self._session.click(selector)
+            else:
+                assert text is not None
+                await self._session.click_by_text(text)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("agentic.click failed %s=%r: %s", kind, target, e)
+            return {
+                "error": f"click failed: {type(e).__name__}: {e}",
+                "click_target": {kind: target},
+            }
+        # Give SPA route handlers / modals a moment to attach before the
+        # follow-up inspect. 500ms covers the common case (modal show, AJAX
+        # render, route change); slower pages stay readable with a spinner.
+        with suppress(Exception):
+            await self._session.evaluate("new Promise((r) => setTimeout(r, 500))")
+        snapshot = await self.inspect_page()
+        # Tag the snapshot so the model knows this is the *result* of a
+        # click, not a fresh navigation — keeps it oriented mid-loop.
+        if isinstance(snapshot, dict) and "error" not in snapshot:
+            snapshot = {
+                **snapshot,
+                "clicked": {kind: target},
+                "_note": (
+                    "Snapshot taken AFTER the click above. Use the new "
+                    "`interactive` list to find the field the user asked about."
+                ),
+            }
+        return snapshot
+
     async def inspect_page(self) -> dict[str, Any]:
         if self._session is None:
             return {"error": "no planning session"}

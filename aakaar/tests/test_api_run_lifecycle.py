@@ -20,6 +20,7 @@ from aakaar.shared.dag.types import Dag, Edge, Node, NodeKind
 from tests._api_helpers import (
     auth_headers,
     login,
+    seed_superuser,
     seed_tenant_admin,
     seed_tenant_user,
 )
@@ -356,3 +357,52 @@ def test_lifecycle_requires_starter_or_admin(
             ).all()
         )
     assert {"run.start", "run.pause", "run.resume"} <= actions
+
+
+# ---------- superuser cross-tenant controls ---------------------------------
+
+
+def test_superuser_can_pause_resume_cancel_any_run(
+    deps: AppDependencies, client: TestClient
+) -> None:
+    """A platform superuser can drive another tenant's run's lifecycle from
+    the operator console — no owner/tenant check, unlike the tenant routes."""
+    _, _, token = _seed(deps, client)
+    wf_id = _save_workflow(client, token, _two_layer_prompt_dag())
+    run_id = _start_run(client, token, wf_id)
+    _wait_for_prompt(client, token, run_id, "p1")
+
+    seed_superuser(deps, email="root@ops.test", password="rootpass1")
+    su = login(client, email="root@ops.test", password="rootpass1")
+
+    # Pause as superuser → 200 + paused; a second pause conflicts.
+    r = client.post(f"/superuser/runs/{run_id}/pause", headers=auth_headers(su))
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "paused"
+    assert client.post(f"/superuser/runs/{run_id}/pause", headers=auth_headers(su)).status_code == 409
+
+    # Resume, then cancel — both cross-tenant.
+    assert client.post(f"/superuser/runs/{run_id}/resume", headers=auth_headers(su)).status_code == 200
+    assert client.post(f"/superuser/runs/{run_id}/cancel", headers=auth_headers(su)).status_code == 200
+    _wait_for_status(client, token, run_id, {"cancelled"})
+
+    # Controlling a finished run is a conflict.
+    assert client.post(f"/superuser/runs/{run_id}/cancel", headers=auth_headers(su)).status_code == 409
+
+
+def test_superuser_run_control_requires_superuser_and_real_run(
+    deps: AppDependencies, client: TestClient
+) -> None:
+    """Non-superusers are rejected; an unknown run is 404."""
+    _, admin_token, _ = _seed(deps, client)
+    seed_superuser(deps, email="root2@ops.test", password="rootpass1")
+    su = login(client, email="root2@ops.test", password="rootpass1")
+
+    # Tenant admin is not a superuser → blocked by the router dependency.
+    assert client.post(
+        f"/superuser/runs/{uuid.uuid4()}/pause", headers=auth_headers(admin_token)
+    ).status_code == 403
+    # Superuser, but the run doesn't exist → 404.
+    assert client.post(
+        f"/superuser/runs/{uuid.uuid4()}/cancel", headers=auth_headers(su)
+    ).status_code == 404

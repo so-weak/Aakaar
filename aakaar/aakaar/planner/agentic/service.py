@@ -50,13 +50,20 @@ logger = logging.getLogger(__name__)
 _AGENTIC_SYSTEM_NOTE = """\
 # Agentic mode
 
-You have browser tools (navigate, inspect_page, login_with_grant) plus
-`done(...)` to finalize. Use them to figure out what the workflow should
-do, then call `done` ONCE with a complete plan.
+You have browser tools (navigate, inspect_page, click, login_with_grant)
+plus `done(...)` to finalize. Use them to figure out what the workflow
+should do, then call `done` ONCE with a complete plan.
 
 Rules:
 - Inspect a page BEFORE picking selectors for it. The selectors you
   emit in the final DAG must match what the page actually has.
+- When the request depends on what appears AFTER a click ("after clicking
+  Continue, fill the date"), use the `click` tool to click and re-inspect
+  in one step, then read the post-click fields — don't ask the user what
+  they're called. Only click NON-destructive controls at plan time (OK,
+  Cancel, Continue, Next, Back, Show, View, tabs, accordions); never click
+  Submit, Pay, Send, Delete, Confirm, or Logout while planning — those
+  belong in the final DAG at execute time.
 - If the user mentions a specific page ("recon upload page",
   "settings page"), navigate to that page AND immediately call
   `inspect_page` on it before emitting selectors. Each navigate
@@ -392,4 +399,11 @@ class AgenticPlannerService:
         if call.name == "inspect_page":
             n = payload.get("interactive_count_total", 0)
             return f"inspected {payload.get('url') or '?'} — {n} interactive elements"
+        if call.name == "click":
+            clicked = payload.get("clicked") or call.arguments
+            n = payload.get("interactive_count_total", 0)
+            return (
+                f"click({json.dumps(clicked)[:120]}) → re-inspected "
+                f"{payload.get('url') or '?'} — {n} interactive elements"
+            )
         return f"{call.name}: {len(json.dumps(payload))} bytes"

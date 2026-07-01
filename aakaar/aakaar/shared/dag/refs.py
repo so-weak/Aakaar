@@ -21,6 +21,13 @@ from typing import Any
 
 REF_PATTERN = re.compile(r"^\$\{([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)\}$")
 
+# Reserved alias for the run-level inputs namespace. `${inputs.key}` resolves
+# to the value of `key` in the JSON `inputs` passed at run start, so one seeded
+# workflow can be re-run forever with different inputs and no planner. It is not
+# a node: the validator skips upstream/output-field checks for it and the
+# executor seeds it into the run env before the first layer.
+INPUTS_ALIAS = "inputs"
+
 
 class RefError(ValueError):
     """Raised when a ref string is malformed."""

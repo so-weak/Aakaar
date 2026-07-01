@@ -16,7 +16,7 @@ from aakaar.shared.dag.types import Dag, Edge, Node, NodeKind
 from aakaar.shared.registry import build_default_registry
 
 
-def _ctx(*, registry, object_store=None, vault=None) -> RunContext:
+def _ctx(*, registry, object_store=None, vault=None, inputs=None) -> RunContext:
     tenant_id = uuid.uuid4()
     run_id = uuid.uuid4()
     activity_ctx = ActivityContext(
@@ -26,7 +26,12 @@ def _ctx(*, registry, object_store=None, vault=None) -> RunContext:
         object_store=object_store,  # type: ignore[arg-type]
         vault=vault,  # type: ignore[arg-type]
     )
-    return RunContext(run_id=run_id, tenant_id=tenant_id, activity_ctx=activity_ctx)
+    return RunContext(
+        run_id=run_id,
+        tenant_id=tenant_id,
+        activity_ctx=activity_ctx,
+        inputs=inputs or {},
+    )
 
 
 @pytest.mark.asyncio
@@ -63,6 +68,43 @@ async def test_linear_run_succeeds() -> None:
     assert outcome.status == "succeeded"
     assert outcome.outputs["open"] == {"session": "S"}
     assert calls == [("nav", {"session": "S", "url": "https://x"})]
+
+
+@pytest.mark.asyncio
+async def test_run_inputs_namespace_resolves() -> None:
+    """A node input referencing `${inputs.key}` resolves from the run's JSON
+    inputs, so one seeded workflow can be re-run with different values."""
+    registry = build_default_registry()
+    activities = ActivityRegistry()
+    calls: list[dict] = []
+
+    async def fake_navigate(_actx, inputs):
+        calls.append(inputs)
+        return {}
+
+    activities.register("browser.open_session", lambda _a, _i: _async_return({"session": "S"}))
+    activities.register("browser.navigate", fake_navigate)
+
+    dag = Dag(
+        nodes=[
+            Node(id="open", kind=NodeKind.ACTION, ref="browser.open_session"),
+            Node(
+                id="go",
+                kind=NodeKind.ACTION,
+                ref="browser.navigate",
+                inputs={"session": "${open.session}", "url": "${inputs.target_url}"},
+            ),
+        ],
+        edges=[Edge.model_validate({"from": "open", "to": "go"})],
+    )
+    executor = LocalExecutor(
+        activities=activities, recorder=InMemoryEventRecorder(), signals=SignalHub()
+    )
+    outcome = await executor.execute(
+        dag, _ctx(registry=registry, inputs={"target_url": "https://seeded.example"})
+    )
+    assert outcome.status == "succeeded"
+    assert calls == [{"session": "S", "url": "https://seeded.example"}]
 
 
 @pytest.mark.asyncio
@@ -118,6 +160,10 @@ async def test_failed_node_aborts_run() -> None:
     outcome = await executor.execute(dag, _ctx(registry=build_default_registry()))
     assert outcome.status == "failed"
     assert outcome.error and "kaboom" in outcome.error["message"]
+    # The terminal error names the failing node + its capability ref so the
+    # UI can show "Failed at step: bad" without scanning the event log.
+    assert outcome.error["step"] == "bad"
+    assert outcome.error["ref"] == "browser.navigate"
 
 
 @pytest.mark.asyncio

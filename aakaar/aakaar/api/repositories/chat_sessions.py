@@ -70,6 +70,32 @@ def list_messages(
     )
 
 
+def latest_user_message_for_workflow(
+    session_db: Session,
+    *,
+    tenant_id: uuid.UUID,
+    user_id: uuid.UUID,
+    workflow_id: uuid.UUID,
+) -> str:
+    """Most recent user-authored instruction across this user's refine
+    sessions for a workflow. Used to seed the composer when a fresh
+    "Refine: <name>" session is opened so the user picks up where they left
+    off instead of staring at a blank box."""
+    row = session_db.scalars(
+        select(ChatMessage.text)
+        .join(ChatSession, ChatMessage.session_id == ChatSession.id)
+        .where(
+            ChatSession.tenant_id == tenant_id,
+            ChatSession.user_id == user_id,
+            ChatSession.workflow_id == workflow_id,
+            ChatMessage.role == "user",
+        )
+        .order_by(ChatMessage.at.desc(), ChatMessage.sequence.desc())
+        .limit(1)
+    ).first()
+    return row or ""
+
+
 # ---------- append + update ---------------------------------------------------
 
 
@@ -140,6 +166,20 @@ def update_draft_from_response(
     if response.get("kind") == "dag" and response.get("dag") is not None:
         session.draft_dag = response["dag"]
         session.draft_rationale = response.get("rationale") or ""
+    session_db.flush()
+
+
+def update_draft_from_dag(
+    session_db: Session,
+    *,
+    session: ChatSession,
+    dag: dict[str, Any],
+) -> None:
+    """Overwrite the session's draft with a client-edited DAG (the Advanced
+    JSON editor). The DAG has already been validated as a `Dag` at the HTTP
+    boundary, so it always carries a `nodes` list. Dirty state is recomputed
+    lazily at serialize time, so no flag needs flipping here."""
+    session.draft_dag = dag
     session_db.flush()
 
 

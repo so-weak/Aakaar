@@ -70,6 +70,15 @@ export const superuser = {
   listAllRuns: (opts: { active?: boolean } = {}) =>
     request<Run[]>(`/superuser/runs${opts.active ? "?active=true" : ""}`),
   getRunDetail: (id: string) => request<RunDetail>(`/superuser/runs/${id}`),
+  // Cross-tenant run lifecycle for the operator console. Mirror the tenant-level
+  // runs.pause/resume/cancel but skip the owner check. cancel is cooperative —
+  // the returned status may still be pre-terminal, so keep polling.
+  pauseRun: (id: string) =>
+    request<Run>(`/superuser/runs/${id}/pause`, { method: "POST" }),
+  resumeRun: (id: string) =>
+    request<Run>(`/superuser/runs/${id}/resume`, { method: "POST" }),
+  cancelRun: (id: string) =>
+    request<Run>(`/superuser/runs/${id}/cancel`, { method: "POST" }),
   getWorkflow: (id: string) =>
     request<Workflow>(`/superuser/workflows/${id}`),
   getWorkflowVersion: (id: string, version: number) =>
@@ -354,20 +363,34 @@ export const chat = {
 // ---------- chat sessions ------------------------------------------------
 
 export const chatSessions = {
-  create: (input: { title?: string }) =>
+  // `workflow_id` opens a "Refine: <name>" session pre-loaded with that
+  // workflow's latest version (owner-only); the returned session carries a
+  // `composer_seed` to prefill the message box.
+  create: (input: { title?: string; workflow_id?: string }) =>
     request<ChatSession>("/chat/sessions", { method: "POST", body: input }),
   list: () => request<ChatSessionSummary[]>("/chat/sessions"),
   get: (id: string) => request<ChatSession>(`/chat/sessions/${id}`),
   remove: (id: string) =>
     request<void>(`/chat/sessions/${id}`, { method: "DELETE" }),
-  send: (id: string, input: { message: string }) =>
+  // `signal` lets the caller abort an in-flight planner turn (the composer's
+  // Stop button wires an AbortController here). The fetch rejects with a
+  // DOMException("AbortError"), which the caller swallows rather than surfacing.
+  send: (id: string, input: { message: string }, signal?: AbortSignal) =>
     request<ChatSession>(`/chat/sessions/${id}/messages`, {
       method: "POST",
       body: input,
+      signal,
     }),
   save: (id: string, input: { name?: string; description?: string; confirm?: boolean }) =>
     request<Workflow>(`/chat/sessions/${id}/save`, {
       method: "POST",
       body: input,
+    }),
+  // Push a hand-edited draft DAG back to the session (Advanced JSON editor).
+  // The DAG is validated server-side; a malformed graph is rejected (422).
+  updateDraft: (id: string, dag: Dag) =>
+    request<ChatSession>(`/chat/sessions/${id}/draft`, {
+      method: "PUT",
+      body: dag,
     }),
 };

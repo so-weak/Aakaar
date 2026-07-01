@@ -95,6 +95,35 @@ def _serialize_message(m: ChatMessage) -> ChatMessageResponse:
     )
 
 
+def _composer_seed(
+    db: Session,
+    *,
+    tenant_id: uuid.UUID,
+    sess: ChatSession,
+    messages: list[ChatMessage],
+) -> str:
+    """Text to prefill the composer when a refine session is first opened.
+
+    Only fires for a workflow-bound session that has no turns yet: prefer the
+    user's most recent instruction across their refine sessions, else fall
+    back to the workflow's newest meaningful rationale. Empty otherwise so
+    ordinary and in-progress sessions start blank.
+    """
+    if sess.workflow_id is None or messages:
+        return ""
+    seed = sessions_repo.latest_user_message_for_workflow(
+        db,
+        tenant_id=tenant_id,
+        user_id=sess.user_id,
+        workflow_id=sess.workflow_id,
+    )
+    if not seed:
+        seed = workflows_repo.latest_meaningful_rationale(
+            db, tenant_id, sess.workflow_id
+        )
+    return seed
+
+
 def _serialize_session(
     db: Session,
     *,
@@ -116,6 +145,9 @@ def _serialize_session(
         saved_version=sess.saved_version,
         draft_dag=draft,
         draft_rationale=sess.draft_rationale,
+        composer_seed=_composer_seed(
+            db, tenant_id=tenant_id, sess=sess, messages=messages
+        ),
         is_dirty=is_dirty,
         created_at=sess.created_at,
         updated_at=sess.updated_at,
@@ -147,10 +179,41 @@ def create_session(
     user: Annotated[User, Depends(require_tenant_user)],
     db: Annotated[Session, Depends(get_session)],
 ) -> ChatSessionResponse:
+    """Open a chat session.
+
+    With `workflow_id`, open a "Refine: <name>" session bound to that
+    workflow and pre-loaded with its latest version's draft DAG + rationale,
+    so edits refine the existing Sutra instead of starting from scratch.
+    Refine is owner-only.
+    """
     assert user.tenant_id is not None
+
+    title = body.title
+    if body.workflow_id is not None:
+        workflow = workflows_repo.get_workflow(db, user.tenant_id, body.workflow_id)
+        if workflow is None:
+            raise HTTPException(status_code=404, detail="workflow not found")
+        if workflow.created_by != user.id:
+            raise HTTPException(
+                status_code=403, detail="only the workflow's owner can refine it"
+            )
+        if not title:
+            title = f"Refine: {workflow.name}"
+
     sess = sessions_repo.create_session(
-        db, tenant_id=user.tenant_id, user_id=user.id, title=body.title
+        db, tenant_id=user.tenant_id, user_id=user.id, title=title
     )
+
+    if body.workflow_id is not None:
+        latest = workflows_repo.get_latest_version(
+            db, user.tenant_id, body.workflow_id
+        )
+        sess.workflow_id = body.workflow_id
+        if latest is not None:
+            sess.saved_version = latest.version
+            sess.draft_dag = latest.dag
+            sess.draft_rationale = latest.rationale
+
     db.commit()
     return _serialize_session(db, tenant_id=user.tenant_id, sess=sess, messages=[])
 
@@ -346,6 +409,35 @@ def _planner_response_payload(resp: object) -> dict[str, Any]:
         "needed": list(resp.needed),
         "explanation": resp.explanation,
     }
+
+
+# ---------- edit the draft directly -------------------------------------------
+
+
+@router.put("/{session_id}/draft", response_model=ChatSessionResponse)
+def update_draft(
+    session_id: uuid.UUID,
+    body: Dag,
+    user: Annotated[User, Depends(require_tenant_user)],
+    db: Annotated[Session, Depends(get_session)],
+) -> ChatSessionResponse:
+    """Replace the session's draft DAG with a client-edited one (the Advanced
+    JSON editor). The body is validated as a `Dag` at the HTTP boundary, so a
+    malformed graph is rejected with 422 before it can corrupt the draft.
+    Owner-scoped; dirty state is recomputed in the response.
+    """
+    assert user.tenant_id is not None
+    sess = sessions_repo.get_session(
+        db, tenant_id=user.tenant_id, session_id=session_id
+    )
+    if sess is None or sess.user_id != user.id:
+        raise HTTPException(status_code=404, detail="session not found")
+
+    sessions_repo.update_draft_from_dag(
+        db, session=sess, dag=body.model_dump(by_alias=True)
+    )
+    db.commit()
+    return _serialize_session(db, tenant_id=user.tenant_id, sess=sess)
 
 
 # ---------- save (create or update workflow) ---------------------------------

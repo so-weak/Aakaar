@@ -427,6 +427,7 @@ class RunOrchestrator:
             self._update_status(run_id=run_id, status=RunStatus.RUNNING)
 
         mode = self._load_mode(run_id)
+        inputs = self._load_inputs(run_id)
         activity_ctx = ActivityContext(
             tenant_id=tenant_id,
             run_id=run_id,
@@ -444,6 +445,7 @@ class RunOrchestrator:
             run_target=run_target,
             controls=handle,
             mode=mode,
+            inputs=inputs,
             resume=resume,
         )
         try:
@@ -505,6 +507,17 @@ class RunOrchestrator:
             end=True,
         )
         return outcome
+
+    def _load_inputs(self, run_id: uuid.UUID) -> dict[str, Any]:
+        """Read the run's JSON `inputs` from the DB so the executor can seed the
+        `${inputs.*}` namespace. Set once at run creation and immutable, so a
+        single read at drive start is authoritative for the whole run (including
+        resumes). Empty dict if the row or column is absent."""
+        with self.session_factory.session() as s:
+            run = s.get(Run, run_id)
+            if run is None:
+                return {}
+            return dict(run.inputs or {})
 
     def _load_mode(self, run_id: uuid.UUID) -> str:
         """Read the run's execution mode ('live' | 'dry_run') from the DB.

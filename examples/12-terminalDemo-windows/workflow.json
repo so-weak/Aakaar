@@ -1,0 +1,82 @@
+{
+  "name": "terminalDemoWindows",
+  "description": "Windows port of terminalDemo. Visible AND captured. For each curl: open a real PowerShell console window on a Windows agent (via Start-Process) that runs curl.exe, tee's the output to a temp file under %TEMP%, and drops a .done marker (so you watch it on-screen); wait 5 seconds; then a headless cap.shell_exec polls for the .done marker and Get-Content's the temp file back so the response is returned to the server. Two paced steps run in sequence: window A (httpbin.org/get), then window B (httpbin.org/uuid). REQUIRES: a Windows agent enrolled and connected -- set every node's `target` to that agent's alias (placeholder 'windows-agent' below). curl.exe ships with Windows 10 1803+/11/Server 2019+; the agent must run in an interactive desktop session for the window to be visible.",
+  "rationale": "cap.shell_exec is OS-agnostic (asyncio.create_subprocess_exec over argv), so the capability itself runs on Windows unchanged; only the commands differ from the macOS terminalDemo. Start-Process powershell -NoExit opens a visible console window (the osascript/Terminal.app analogue); Tee-Object writes to the temp file and the screen at once; curl.exe forces the real curl binary (bare 'curl' is a PowerShell alias for Invoke-WebRequest). The visible node uses a backslash %TEMP% path (no quotes, to avoid nesting inside Start-Process -ArgumentList); the read node uses Join-Path so it needs no backslashes. The read polls for a .done marker (up to ~40s) because Start-Process returns immediately while the curl runs asynchronously in the new window, so the 5s control.wait alone can read the file before curl finishes -- the wait is kept for visible pacing.",
+  "dag": {
+    "id": "",
+    "version": 0,
+    "nodes": [
+      {
+        "id": "term_a",
+        "kind": "capability",
+        "ref": "cap.shell_exec",
+        "target": "windows-agent",
+        "inputs": {
+          "argv": [
+            "powershell", "-NoProfile", "-Command",
+            "Start-Process powershell -ArgumentList '-NoExit','-Command','curl.exe -sS --max-time 30 https://httpbin.org/get | Tee-Object -FilePath $env:TEMP\\aakaar_demo_a.txt; New-Item -ItemType File -Force $env:TEMP\\aakaar_demo_a.done | Out-Null'"
+          ],
+          "timeout_s": 45
+        }
+      },
+      {
+        "id": "wait_a",
+        "kind": "control",
+        "ref": "control.wait",
+        "inputs": { "seconds": 5 }
+      },
+      {
+        "id": "read_a",
+        "kind": "capability",
+        "ref": "cap.shell_exec",
+        "target": "windows-agent",
+        "inputs": {
+          "argv": [
+            "powershell", "-NoProfile", "-Command",
+            "for($i=0;$i -lt 40;$i++){ if(Test-Path (Join-Path $env:TEMP 'aakaar_demo_a.done')){ break }; Start-Sleep -Seconds 1 }; Get-Content -Raw (Join-Path $env:TEMP 'aakaar_demo_a.txt')"
+          ],
+          "timeout_s": 60
+        }
+      },
+      {
+        "id": "term_b",
+        "kind": "capability",
+        "ref": "cap.shell_exec",
+        "target": "windows-agent",
+        "inputs": {
+          "argv": [
+            "powershell", "-NoProfile", "-Command",
+            "Start-Process powershell -ArgumentList '-NoExit','-Command','curl.exe -sS --max-time 30 https://httpbin.org/uuid | Tee-Object -FilePath $env:TEMP\\aakaar_demo_b.txt; New-Item -ItemType File -Force $env:TEMP\\aakaar_demo_b.done | Out-Null'"
+          ],
+          "timeout_s": 45
+        }
+      },
+      {
+        "id": "wait_b",
+        "kind": "control",
+        "ref": "control.wait",
+        "inputs": { "seconds": 5 }
+      },
+      {
+        "id": "read_b",
+        "kind": "capability",
+        "ref": "cap.shell_exec",
+        "target": "windows-agent",
+        "inputs": {
+          "argv": [
+            "powershell", "-NoProfile", "-Command",
+            "for($i=0;$i -lt 40;$i++){ if(Test-Path (Join-Path $env:TEMP 'aakaar_demo_b.done')){ break }; Start-Sleep -Seconds 1 }; Get-Content -Raw (Join-Path $env:TEMP 'aakaar_demo_b.txt')"
+          ],
+          "timeout_s": 60
+        }
+      }
+    ],
+    "edges": [
+      { "from": "term_a", "to": "wait_a" },
+      { "from": "wait_a", "to": "read_a" },
+      { "from": "read_a", "to": "term_b" },
+      { "from": "term_b", "to": "wait_b" },
+      { "from": "wait_b", "to": "read_b" }
+    ]
+  }
+}

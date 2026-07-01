@@ -288,6 +288,10 @@ class ChatResponse(BaseModel):
 class ChatSessionCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     title: str | None = Field(default=None, max_length=255)
+    workflow_id: uuid.UUID | None = Field(default=None)
+    """When set, open a "refine" session pre-loaded with that workflow's
+    latest version (owner-only). The composer is seeded from prior chat or
+    the workflow's rationale."""
 
 
 class ChatMessageResponse(BaseModel):
@@ -310,6 +314,10 @@ class ChatSessionResponse(BaseModel):
     saved_version: int | None
     draft_dag: Dag | None
     draft_rationale: str
+    composer_seed: str = ""
+    """Prefill for the message composer when a refine session is first
+    opened (latest prior instruction, or the workflow's rationale).
+    Empty for ordinary sessions and once the conversation has started."""
     is_dirty: bool
     """True iff `draft_dag` differs from the saved workflow version (or no
     workflow has been saved yet but a draft exists)."""

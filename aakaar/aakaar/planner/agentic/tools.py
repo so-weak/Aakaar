@@ -60,6 +60,46 @@ NAVIGATE_TOOL = {
 }
 
 
+CLICK_TOOL = {
+    "name": "click",
+    "description": (
+        "Click an element on the *current* page to reveal what happens next, "
+        "then return a fresh snapshot (same shape as inspect_page) so you can "
+        "see fields, buttons, or modals that only appear after the click. Use "
+        "this when the request talks about something AFTER a click ('after "
+        "clicking Continue, enter the date') — clicking + re-inspecting is how "
+        "you discover field labels that aren't on the landing page, so you "
+        "never have to ask the user. SAFE plan-time clicks: OK, Cancel, "
+        "Continue, Next, Back, Show, View, Refresh, Search, Filter, accordions/"
+        "disclosure toggles, and tab switchers. DO NOT click Submit, Pay, Send, "
+        "Place Order, Delete, Confirm, Logout, or anything that commits a "
+        "transaction or destroys state — those belong only in the final DAG at "
+        "execute time. Prefer `text` over `selector`; the runner uses the same "
+        "robust label matcher as `browser.click_by_text`."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "text": {
+                "type": "string",
+                "description": (
+                    "Visible label / button caption / link text to click. "
+                    "Case-insensitive. Preferred input."
+                ),
+            },
+            "selector": {
+                "type": "string",
+                "description": (
+                    "CSS selector — only when you already have an exact one "
+                    "from a prior inspect_page result."
+                ),
+            },
+        },
+        "additionalProperties": False,
+    },
+}
+
+
 LOGIN_TOOL = {
     "name": "login_with_grant",
     "description": (
@@ -119,7 +159,7 @@ DONE_TOOL = {
 
 
 def all_tool_schemas() -> list[dict[str, Any]]:
-    return [INSPECT_PAGE_TOOL, NAVIGATE_TOOL, LOGIN_TOOL, DONE_TOOL]
+    return [INSPECT_PAGE_TOOL, NAVIGATE_TOOL, CLICK_TOOL, LOGIN_TOOL, DONE_TOOL]
 
 
 # ---------- dispatch ----------------------------------------------------------
@@ -144,6 +184,16 @@ async def dispatch(
         if not isinstance(url, str) or not url:
             return ToolResult(name=name, payload={"error": "url is required"})
         return ToolResult(name=name, payload=await runner.navigate(url))
+    if name == "click":
+        text = args.get("text")
+        selector = args.get("selector")
+        return ToolResult(
+            name=name,
+            payload=await runner.click(
+                text=text if isinstance(text, str) and text else None,
+                selector=selector if isinstance(selector, str) and selector else None,
+            ),
+        )
     if name == "login_with_grant":
         login_url = args.get("login_url")
         if not isinstance(login_url, str) or not login_url:

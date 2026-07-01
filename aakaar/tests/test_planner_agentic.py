@@ -512,3 +512,61 @@ async def test_login_aborts_on_captcha(tmp_path: Path) -> None:
     assert isinstance(resp, DagResponse)
     # No actual fill happened — captcha aborted plan-time login.
     assert all(c[0] != "fill" for c in sess.calls)
+
+
+@pytest.mark.asyncio
+async def test_click_tool_clicks_by_text_and_reinspects(tmp_path: Path) -> None:
+    """The `click` plan-time tool clicks a safe label and returns a fresh
+    inspect snapshot so the loop can read post-click fields."""
+    sess = FakeBrowserSession(
+        evaluate_responses={
+            "interactive": {
+                "url": "https://example.com/wizard",
+                "title": "Wizard",
+                "visible_text": "step 2",
+                "interactive": [],
+                "interactive_truncated": False,
+                "interactive_count_total": 3,
+            }
+        }
+    )
+    pool = FakeBrowserPool(next_sessions=[sess])
+
+    llm = FakeLLMClient()
+    llm.tool_steps.extend(
+        [
+            ToolStep(
+                tool_calls=[
+                    ToolCall(id="c1", name="click", arguments={"text": "Continue"}),
+                ],
+                final_content=None,
+            ),
+            ToolStep(
+                tool_calls=[
+                    ToolCall(
+                        id="c2",
+                        name="done",
+                        arguments={
+                            "kind": "dag",
+                            "rationale": "clicked continue then done",
+                            "dag": _good_dag(),
+                        },
+                    ),
+                ],
+                final_content=None,
+            ),
+        ]
+    )
+
+    service = _service(llm=llm, pool=pool, vault=LocalVault(tmp_path / "vault"))
+    resp = await service.plan(
+        user_message="after clicking Continue, capture the page",
+        tenant_id=uuid.uuid4(),
+        granted_capabilities=set(),
+        granted_capability_grants={},
+    )
+    assert isinstance(resp, DagResponse)
+    # The runner clicked by visible text and then re-inspected the page.
+    assert ("click_by_text", {"text": "Continue"}) in sess.calls
+    kinds = [c[0] for c in sess.calls]
+    assert kinds.index("click_by_text") < kinds.index("evaluate")

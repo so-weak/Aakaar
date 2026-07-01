@@ -38,6 +38,7 @@ from aakaar.interpreter.human_tasks import HumanTaskStore
 from aakaar.interpreter.refs import resolve_inputs
 from aakaar.interpreter.signals import PendingPrompt, SignalHub
 from aakaar.interpreter.topology import topological_layers
+from aakaar.shared.dag.refs import INPUTS_ALIAS
 from aakaar.shared.dag.types import Dag, Node, NodeKind
 
 logger = logging.getLogger(__name__)
@@ -65,6 +66,11 @@ class RunContext:
     but short-circuits side-effecting capabilities to a simulated marker instead
     of performing the real effect. Read-only entries still run. Set from
     `runs.mode` by the orchestrator."""
+    inputs: dict[str, Any] = field(default_factory=dict)
+    """The JSON `inputs` supplied at run start. Seeded into the run env under
+    the reserved `inputs` alias so node inputs can reference `${inputs.key}` —
+    letting one seeded workflow be re-run forever with different values and no
+    planner. Immutable for the run; re-seeded verbatim on resume."""
     resume: ResumeState | None = None
     """When set, the run is being re-driven after a restart from a checkpoint:
     the executor skips every layer before `resume.next_layer_index`, seeds env
@@ -143,6 +149,11 @@ class LocalExecutor:
             resume_from = resume.next_layer_index
             completed_ids = resume.completed_ids
         alias_to_id = self._alias_index(dag)
+        # Seed the run-level inputs namespace so `${inputs.key}` resolves. It is
+        # not a node, so it has no events, never "completes", and is re-seeded
+        # verbatim on resume (inputs are immutable for the run).
+        alias_to_id[INPUTS_ALIAS] = INPUTS_ALIAS
+        env[INPUTS_ALIAS] = dict(ctx.inputs)
         layers = list(topological_layers(dag))
         logger.info(
             "execute run_id=%s nodes=%d layers=%d mode=%s resume_from=%d",
@@ -202,11 +213,20 @@ class LocalExecutor:
         except Exception as e:
             logger.exception("execute run_id=%s failed: %s", ctx.run_id, e)
             await self.signals.cancel_all_for(ctx.run_id)
+            error: dict[str, Any] = {"type": type(e).__name__, "message": str(e)[:500]}
+            # Surface which node/ref failed (tagged in `_run_node`) so the run
+            # row carries "Failed at step: <node>" for the UI/timeline.
+            step = getattr(e, "aakaar_failed_node_id", None)
+            ref = getattr(e, "aakaar_failed_node_ref", None)
+            if step is not None:
+                error["step"] = step
+            if ref is not None:
+                error["ref"] = ref
             return RunOutcome(
                 run_id=ctx.run_id,
                 status="failed",
                 outputs=env,
-                error={"type": type(e).__name__, "message": str(e)[:500]},
+                error=error,
             )
 
     # --- internals ---------------------------------------------------------
@@ -353,6 +373,13 @@ class LocalExecutor:
                     type(e).__name__,
                     e,
                 )
+                # Tag the failing node/ref onto the exception so the run's
+                # terminal error can name the step ("Failed at step: login")
+                # without the caller scanning the event log. Guarded so an
+                # outer re-raise never overwrites the innermost failing node.
+                if not hasattr(e, "aakaar_failed_node_id"):
+                    e.aakaar_failed_node_id = node.id  # type: ignore[attr-defined]
+                    e.aakaar_failed_node_ref = node.ref  # type: ignore[attr-defined]
                 raise
             finally:
                 # Best-effort live screenshot — runs whether the node

@@ -20,7 +20,7 @@ from typing import Protocol
 
 from pydantic import BaseModel
 
-from aakaar.shared.dag.refs import Ref, parse_refs
+from aakaar.shared.dag.refs import INPUTS_ALIAS, Ref, parse_refs
 from aakaar.shared.dag.types import Dag, Edge, Node, NodeKind
 
 
@@ -263,6 +263,11 @@ def validate_dag(
     for node in dag.nodes:
         ancestors = _ancestors_of(node.id, idx)
         for ref_path, ref in parse_refs(node.inputs):
+            if ref.alias == INPUTS_ALIAS:
+                # Run-level inputs namespace: supplied at run start, always
+                # available, and not produced by any node — so it needs no
+                # upstream edge and no output-field check.
+                continue
             if ref.alias not in idx.alias_to_id:
                 raise ValidationError(
                     f"node {node.id!r} input{_path_str(ref_path)} references unknown alias "
@@ -322,6 +327,8 @@ def _check_ref_heads(node: Node, idx: _DagIndex, registry: RegistryLike) -> None
     """Validate that every ${alias.head} refers to a real output field on the
     source node's ref. Deeper paths are runtime-resolved."""
     for ref_path, ref in parse_refs(node.inputs):
+        if ref.alias == INPUTS_ALIAS:
+            continue  # run-inputs fields aren't registry-declared outputs
         if not ref.path:
             continue
         src_id = idx.alias_to_id[ref.alias]

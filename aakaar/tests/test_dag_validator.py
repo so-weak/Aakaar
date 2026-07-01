@@ -100,6 +100,25 @@ def test_ref_to_self_rejected() -> None:
         validate_dag(dag)
 
 
+def test_run_inputs_alias_is_reserved() -> None:
+    # `${inputs.key}` is the run-level inputs namespace: no upstream node, no
+    # edge, and it validates without a registry check on its fields.
+    dag = Dag(
+        nodes=[_node("a", inputs={"url": "${inputs.target_url}"})],
+    )
+    validate_dag(dag)
+
+
+def test_unknown_alias_still_rejected_alongside_inputs() -> None:
+    # Reserving `inputs` must not make every alias valid — a genuine typo
+    # still fails.
+    dag = Dag(
+        nodes=[_node("a", inputs={"url": "${ghost.x}"})],
+    )
+    with pytest.raises(ValidationError, match="unknown alias"):
+        validate_dag(dag)
+
+
 # ---------- registry-aware checks -----------------------------------------
 
 
