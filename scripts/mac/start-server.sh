@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Start the Aakaar API server (FastAPI/uvicorn) in the background on :8000.
 # First run bootstraps the venv, installs Playwright Chromium, and runs DB
-# migrations; later runs are fast. Stop it with scripts/stop-server.sh.
+# migrations; later runs are fast. Stop it with scripts/mac/stop-server.sh.
 #
 # Env knobs:
 #   AAKAAR_API_HOST=0.0.0.0     bind address                       [127.0.0.1]

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stop the Aakaar web console started by scripts/start-client.sh.
+# Stop the Aakaar web console started by scripts/mac/start-client.sh.
 # SIGTERM the recorded pid (escalate to SIGKILL), then free :5173 as a fallback
 # to catch the Vite/esbuild child processes npm spawns.
 set -euo pipefail

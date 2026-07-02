@@ -24,7 +24,7 @@ TARGET_EMAILS="${TARGET_EMAILS:-soubhik@super pracharya@aakar.test}"
 
 if [ ! -x "$PY" ]; then
   echo "error: server venv not found at $PY" >&2
-  echo "       run scripts/start-server.sh once to create it, or set AAKAAR_PYTHON." >&2
+  echo "       run scripts/mac/start-server.sh once to create it, or set AAKAAR_PYTHON." >&2
   exit 1
 fi
 if [ ! -f "$DB" ]; then

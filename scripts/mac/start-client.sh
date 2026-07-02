@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Start the Aakaar web console (aakaar-web, Vite dev server) in the background
-# on :5173. First run installs node_modules. Stop it with scripts/stop-client.sh.
+# on :5173. First run installs node_modules. Stop it with scripts/mac/stop-client.sh.
 #
 # Env knobs:
 #   AAKAAR_WEB_HOST=0.0.0.0   expose Vite on the LAN   [vite default: localhost]

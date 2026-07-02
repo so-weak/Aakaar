@@ -2,7 +2,7 @@
 # Start the Aakaar remote-execution agent in the background. The agent dials OUT
 # to the server (or broker) and has NO listening port — run it on the machine you
 # want Aakaar to drive, pointed at a server running elsewhere. Stop it with
-# scripts/stop-agent.sh.
+# scripts/mac/stop-agent.sh.
 #
 # REQUIRED (env, or aakaar-agent/.env):
 #   AAKAAR_AGENT_KEY=<id>.<secret>   enrollment key from the server's Agents page
@@ -32,7 +32,7 @@ if [ -z "$KEY" ]; then
   log_err "AAKAAR_AGENT_KEY is not set — the agent needs an enrollment key to connect."
   log_err "Enroll an agent on the server (Agents page or POST /agents/enroll) to get an"
   log_err "'<id>.<secret>' key, then run:"
-  log_err "  AAKAAR_AGENT_SERVER=ws://YOUR-SERVER:8000 AAKAAR_AGENT_KEY=<id>.<secret> scripts/start-agent.sh"
+  log_err "  AAKAAR_AGENT_SERVER=ws://YOUR-SERVER:8000 AAKAAR_AGENT_KEY=<id>.<secret> scripts/mac/start-agent.sh"
   exit 1
 fi
 

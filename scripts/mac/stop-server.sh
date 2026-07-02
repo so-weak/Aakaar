@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stop the Aakaar API server started by scripts/start-server.sh.
+# Stop the Aakaar API server started by scripts/mac/start-server.sh.
 # SIGTERM the recorded pid (escalate to SIGKILL), then free :8000 as a fallback
 # to catch any uvicorn --reload child processes.
 set -euo pipefail

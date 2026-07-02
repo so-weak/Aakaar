@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stop the Aakaar remote-execution agent started by scripts/start-agent.sh.
+# Stop the Aakaar remote-execution agent started by scripts/mac/start-agent.sh.
 # The agent has NO listening port, so we SIGTERM the recorded pid (escalate to
 # SIGKILL), then kill any leftover agent process from this checkout as a fallback.
 set -euo pipefail

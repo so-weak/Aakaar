@@ -46,5 +46,5 @@ supervise_start broker "$PORT" -- .venv/bin/aakaar-broker
 log_info "Broker: ws://$HOST:$PORT   (master: /ws/master, agents: /ws/agents)"
 log_info "Token saved to $RUN_DIR/broker.token"
 log_info "Point the server at it with either:"
-log_info "  AAKAAR_USE_LOCAL_BROKER=1 scripts/start-server.sh"
+log_info "  AAKAAR_USE_LOCAL_BROKER=1 scripts/mac/start-server.sh"
 log_info "  — or set in aakaar/.env:  AAKAAR_BROKER_URL=ws://$HOST:$PORT  and  AAKAAR_BROKER_TOKEN=<token>"

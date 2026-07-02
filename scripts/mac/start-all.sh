@@ -11,4 +11,4 @@ AAKAAR_USE_LOCAL_BROKER="${AAKAAR_USE_LOCAL_BROKER:-1}" "$DIR/start-server.sh"
 "$DIR/start-client.sh"
 
 echo
-echo "Stack up. Stop everything with scripts/stop-all.sh"
+echo "Stack up. Stop everything with scripts/mac/stop-all.sh"

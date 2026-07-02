@@ -12,10 +12,12 @@
 #   scripts/.run/<svc>.log   combined stdout+stderr (appended across restarts)
 #   scripts/.run/broker.token persisted broker secret (so server + broker match)
 
-# Resolve repo root from this file's location (scripts/ -> repo root).
-SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT="$(dirname "$SCRIPTS_DIR")"
-RUN_DIR="$SCRIPTS_DIR/.run"
+# Resolve repo root from this file's location (scripts/mac/ -> repo root).
+# RUN_DIR stays at the shared scripts/.run (one level up), so the .gitignore
+# there covers it and the broker token is shared across platform folders.
+SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # scripts/mac
+ROOT="$(dirname "$(dirname "$SCRIPTS_DIR")")"                 # repo root
+RUN_DIR="$(dirname "$SCRIPTS_DIR")/.run"                      # scripts/.run (shared)
 mkdir -p "$RUN_DIR"
 
 # ── logging ──────────────────────────────────────────────────────────────────
@@ -97,12 +99,12 @@ supervise_start() {
   pidf="$(pidfile "$name")"; logf="$(logfile "$name")"
 
   if service_running "$name"; then
-    log_warn "$name already running (pid $(cat "$pidf")); leaving it. Stop it with scripts/stop-$name.sh"
+    log_warn "$name already running (pid $(cat "$pidf")); leaving it. Stop it with scripts/mac/stop-$name.sh"
     return 0
   fi
   if [ -n "$port" ] && port_in_use "$port"; then
     log_warn "port $port already in use (pid(s) $(pids_on_port "$port")); not starting $name."
-    log_warn "If that's a stale instance, run scripts/stop-$name.sh first."
+    log_warn "If that's a stale instance, run scripts/mac/stop-$name.sh first."
     return 0
   fi
 

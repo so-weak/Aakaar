@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stop the Aakaar rendezvous broker started by scripts/start-broker.sh.
+# Stop the Aakaar rendezvous broker started by scripts/mac/start-broker.sh.
 # SIGTERM the recorded pid (escalate to SIGKILL), then free :9300 as a fallback.
 # The persisted scripts/.run/broker.token is left in place so a later restart
 # keeps the same secret (and the server stays paired).
