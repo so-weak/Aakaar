@@ -15,6 +15,7 @@ includes the offending node id / ref in the error so the planner can repair.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -239,23 +240,58 @@ def validate_dag(
 ) -> None:
     """Validate a DAG. Raises ValidationError on the first problem.
 
+    Thin wrapper over `validate_dag_collect` that preserves the historical
+    raise-on-first-error contract for callers that want a single exception.
+
     Layer 1 (always): structural integrity — unique ids, valid edges, no cycles,
                       and every ref points to an upstream node.
     Layer 2 (registry): every node ref exists; inputs match schemas; every
                         ${alias.head} resolves to a declared output field.
     Layer 3 (tenant): every capability node has been granted to this tenant.
     """
-    if not dag.nodes:
-        raise ValidationError("DAG must contain at least one node")
+    errors = validate_dag_collect(
+        dag,
+        registry=registry,
+        granted_capabilities=granted_capabilities,
+    )
+    if errors:
+        raise ValidationError(errors[0])
 
-    idx = _build_index(dag)
-    _topological_order(idx)  # raises if there's a cycle
+
+def validate_dag_collect(
+    dag: Dag,
+    *,
+    registry: RegistryLike | None = None,
+    granted_capabilities: set[str] | None = None,
+) -> list[str]:
+    """Validate a DAG and return EVERY problem found (empty list == valid).
+
+    Same layered checks as `validate_dag`, but instead of raising on the first
+    failure it collects all of them so the planner's repair loop can feed the
+    whole set back in one round (instead of the old one-error-per-round
+    whack-a-mole that exhausted the repair budget).
+
+    Structural blockers (empty DAG, duplicate ids, bad edges, cycles) make
+    per-node analysis meaningless, so those still short-circuit: the single
+    structural error is returned alone.
+    """
+    if not dag.nodes:
+        return ["DAG must contain at least one node"]
+
+    # Structural layer — one blocker is enough to stop; the rest is noise.
+    try:
+        idx = _build_index(dag)
+        _topological_order(idx)  # raises if there's a cycle
+    except ValidationError as e:
+        return [str(e)]
+
+    errors: list[str] = []
 
     # Placement: control nodes (human.prompt, control.wait) coordinate with the
     # server (signals, timers) and must never be shipped to a remote agent.
     for node in dag.nodes:
         if node.kind is NodeKind.CONTROL and node.target not in (None, "server"):
-            raise ValidationError(
+            errors.append(
                 f"node {node.id!r} is a control node and cannot run on a remote "
                 f"target ({node.target!r}); control flow stays on the server"
             )
@@ -269,61 +305,70 @@ def validate_dag(
                 # upstream edge and no output-field check.
                 continue
             if ref.alias not in idx.alias_to_id:
-                raise ValidationError(
+                errors.append(
                     f"node {node.id!r} input{_path_str(ref_path)} references unknown alias "
                     f"{ref.alias!r}"
                 )
+                continue
             src_id = idx.alias_to_id[ref.alias]
             if src_id == node.id:
-                raise ValidationError(
+                errors.append(
                     f"node {node.id!r} input{_path_str(ref_path)} references itself"
                 )
+                continue
             if src_id not in ancestors:
-                raise ValidationError(
+                errors.append(
                     f"node {node.id!r} input{_path_str(ref_path)} references {ref.alias!r} "
                     f"which is not upstream (no edge path)"
                 )
 
     if registry is not None:
-        _validate_registry(dag, idx, registry)
+        _collect_registry_errors(dag, idx, registry, errors)
 
     if granted_capabilities is not None:
-        _validate_grants(dag, granted_capabilities)
+        _collect_grant_errors(dag, granted_capabilities, errors)
+
+    return errors
 
 
-def _validate_registry(dag: Dag, idx: _DagIndex, registry: RegistryLike) -> None:
+def _collect_registry_errors(
+    dag: Dag, idx: _DagIndex, registry: RegistryLike, errors: list[str]
+) -> None:
     for node in dag.nodes:
         defn = registry.get(node.ref)
         if defn is None:
-            raise ValidationError(f"node {node.id!r} ref {node.ref!r} is not in the registry")
+            errors.append(f"node {node.id!r} ref {node.ref!r} is not in the registry")
+            continue
         if defn.kind is not node.kind:
-            raise ValidationError(
+            errors.append(
                 f"node {node.id!r} declares kind {node.kind.value!r} but ref {node.ref!r} "
                 f"is registered as {defn.kind.value!r}"
             )
-        _check_inputs_shape(node, defn)
-        _check_ref_heads(node, idx, registry)
+        _collect_inputs_shape(node, defn, errors)
+        _collect_ref_heads(node, idx, registry, errors)
 
 
-def _check_inputs_shape(node: Node, defn: DefinitionLike) -> None:
+def _collect_inputs_shape(node: Node, defn: DefinitionLike, errors: list[str]) -> None:
     """Field-name-level shape check. Skips type validation of values bound to
     refs, since their concrete type is only known at runtime."""
     schema = defn.input_schema
     fields = schema.model_fields
     for key in node.inputs:
         if key not in fields:
-            raise ValidationError(
+            errors.append(
                 f"node {node.id!r} ({node.ref!r}) has unknown input {key!r}; "
                 f"valid inputs: {sorted(fields)}"
             )
     for fname, finfo in fields.items():
         if finfo.is_required() and fname not in node.inputs:
-            raise ValidationError(
+            errors.append(
                 f"node {node.id!r} ({node.ref!r}) is missing required input {fname!r}"
             )
 
 
-def _check_ref_heads(node: Node, idx: _DagIndex, registry: RegistryLike) -> None:
+def _collect_ref_heads(
+    node: Node, idx: _DagIndex, registry: RegistryLike, errors: list[str]
+) -> None:
     """Validate that every ${alias.head} refers to a real output field on the
     source node's ref. Deeper paths are runtime-resolved."""
     for ref_path, ref in parse_refs(node.inputs):
@@ -331,6 +376,8 @@ def _check_ref_heads(node: Node, idx: _DagIndex, registry: RegistryLike) -> None
             continue  # run-inputs fields aren't registry-declared outputs
         if not ref.path:
             continue
+        if ref.alias not in idx.alias_to_id:
+            continue  # unknown-alias already reported by the wiring pass
         src_id = idx.alias_to_id[ref.alias]
         src_node = idx.by_id[src_id]
         src_defn = registry.get(src_node.ref)
@@ -338,17 +385,17 @@ def _check_ref_heads(node: Node, idx: _DagIndex, registry: RegistryLike) -> None
             continue  # already reported by ref-existence check
         out_fields = src_defn.output_schema.model_fields
         if ref.head not in out_fields:
-            raise ValidationError(
+            errors.append(
                 f"node {node.id!r} input{_path_str(ref_path)} references "
                 f"{ref.alias}.{ref.head!r} but {src_node.ref!r} only declares outputs "
                 f"{sorted(out_fields)}"
             )
 
 
-def _validate_grants(dag: Dag, granted: set[str]) -> None:
+def _collect_grant_errors(dag: Dag, granted: set[str], errors: list[str]) -> None:
     for node in dag.nodes:
         if node.kind is NodeKind.CAPABILITY and node.ref not in granted:
-            raise ValidationError(
+            errors.append(
                 f"node {node.id!r} uses capability {node.ref!r} which is not granted to this "
                 f"tenant"
             )
@@ -363,7 +410,144 @@ def _path_str(path: tuple[str | int, ...]) -> str:
     return "".join(parts)
 
 
-__all__ = ["DefinitionLike", "RegistryLike", "ValidationError", "validate_dag"]
+# ---------- human/LLM-friendly explanations --------------------------------
+
+
+# Errors that mean "this capability isn't granted" — the planner special-cases
+# them to short-circuit into a `kind="missing"` result instead of burning
+# repair attempts on something the LLM can't fix by editing the DAG.
+UNGRANTED_MARKER = "is not granted to this tenant"
+
+_UNKNOWN_ALIAS_RE = re.compile(r"references unknown alias '([^']+)'")
+_UNKNOWN_REF_RE = re.compile(r"ref '([^']+)' is not in the registry")
+_MISSING_INPUT_RE = re.compile(r"is missing required input '([^']+)'")
+_UNKNOWN_INPUT_RE = re.compile(r"has unknown input '([^']+)'; valid inputs: (\[[^\]]*\])")
+_DANGLING_REF_RE = re.compile(r"references '([^']+)' which is not upstream")
+
+
+def explain_dag_errors(
+    errors: list[str],
+    *,
+    known_refs: list[str] | None = None,
+    known_aliases: list[str] | None = None,
+    sample_inputs: dict[str, str] | None = None,
+) -> list[str]:
+    """Turn raw validation error strings into actionable, LLM-friendly hints.
+
+    Pure function: given the terse error strings from `validate_dag_collect`,
+    it appends a concrete "how to fix" clause to each, using optional context:
+
+      - `known_refs`     — every registered ref; an unknown-ref error gets a
+                           did-you-mean via difflib.
+      - `known_aliases`  — the DAG's node ids / aliases; an unknown-alias or a
+                           dangling-`${ref}` error gets a did-you-mean +
+                           "add an edge" instruction.
+      - `sample_inputs`  — field name → sample value; a missing-required-input
+                           error names the field and offers a paste-ready value.
+
+    All context is optional; with none supplied it still emits generic but
+    useful guidance and never invents refs/values. Order and count of the
+    input errors are preserved (one hint per error).
+    """
+    refs = known_refs or []
+    aliases = known_aliases or []
+    samples = sample_inputs or {}
+    hints: list[str] = []
+    for err in errors:
+        hints.append(_explain_one(err, refs, aliases, samples))
+    return hints
+
+
+def _explain_one(
+    err: str,
+    known_refs: list[str],
+    known_aliases: list[str],
+    sample_inputs: dict[str, str],
+) -> str:
+    m = _UNKNOWN_REF_RE.search(err)
+    if m:
+        bad = m.group(1)
+        guess = _closest(bad, known_refs)
+        if guess:
+            return f"{err} — FIX: there is no ref '{bad}'; did you mean '{guess}'? Use it verbatim."
+        return (
+            f"{err} — FIX: '{bad}' is not a real ref. Use ONLY refs listed under "
+            "'Available capabilities', 'Available action primitives', or "
+            "'Available control nodes'. Do not invent refs."
+        )
+
+    m = _UNKNOWN_ALIAS_RE.search(err)
+    if m:
+        bad = m.group(1)
+        guess = _closest(bad, known_aliases)
+        if guess:
+            return (
+                f"{err} — FIX: no node has id/alias '{bad}'; did you mean "
+                f"'{guess}'? Reference it as ${{{guess}.<field>}}."
+            )
+        return (
+            f"{err} — FIX: '{bad}' is not a node id or an outputs_as alias in this "
+            "DAG. Reference only nodes that exist, or add the producing node."
+        )
+
+    m = _MISSING_INPUT_RE.search(err)
+    if m:
+        fname = m.group(1)
+        sample = sample_inputs.get(fname)
+        if sample is not None:
+            return f'{err} — FIX: add input {fname!r}, e.g. "{fname}": {sample}'
+        return f"{err} — FIX: add a value for the required input {fname!r} to this node's inputs."
+
+    m = _UNKNOWN_INPUT_RE.search(err)
+    if m:
+        bad = m.group(1)
+        valid = m.group(2)
+        return (
+            f"{err} — FIX: remove the input {bad!r} — it is not a field on this ref. "
+            f"Use only these inputs: {valid}."
+        )
+
+    m = _DANGLING_REF_RE.search(err)
+    if m:
+        producer = m.group(1)
+        return (
+            f"{err} — FIX: nothing connects '{producer}' to this node, so its output "
+            f"may not be ready. Add an edge {{\"from\": \"{producer}\", \"to\": <this node>}} "
+            "so it runs first."
+        )
+
+    if "references itself" in err:
+        return f"{err} — FIX: a node can only read outputs of earlier nodes; point this at a different node."
+
+    if UNGRANTED_MARKER in err:
+        return (
+            f"{err} — FIX: this capability is not granted to the tenant. Ask an admin to "
+            "add the grant, or use a granted capability instead."
+        )
+
+    if "is a control node and cannot run on a remote target" in err:
+        return f"{err} — FIX: remove the `target` from this control node (control flow stays on the server)."
+
+    # No pattern matched — return the error unchanged so nothing is lost.
+    return err
+
+
+def _closest(word: str, candidates: list[str]) -> str | None:
+    import difflib
+
+    matches = difflib.get_close_matches(word, candidates, n=1, cutoff=0.5)
+    return matches[0] if matches else None
+
+
+__all__ = [
+    "DefinitionLike",
+    "RegistryLike",
+    "UNGRANTED_MARKER",
+    "ValidationError",
+    "explain_dag_errors",
+    "validate_dag",
+    "validate_dag_collect",
+]
 
 
 # Re-imported for forward-ref typing

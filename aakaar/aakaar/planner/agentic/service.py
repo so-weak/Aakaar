@@ -327,6 +327,17 @@ class AgenticPlannerService:
             return ClarifyResponse(questions=[f"unknown done kind: {kind!r}"])
 
         raw_dag = call.arguments.get("dag")
+        # Some models pass the DAG as a JSON STRING instead of an object — the
+        # tool-arg serialization round-trips inconsistently. Parse it before
+        # validating so a perfectly good plan isn't wrongly rejected as
+        # "no dag object".
+        if isinstance(raw_dag, str):
+            try:
+                raw_dag = json.loads(raw_dag)
+            except json.JSONDecodeError as e:
+                return ClarifyResponse(
+                    questions=[f"done(kind='dag') passed a dag string that isn't valid JSON: {e}"]
+                )
         if not isinstance(raw_dag, dict):
             return ClarifyResponse(
                 questions=["done(kind='dag') was called without a dag object"]

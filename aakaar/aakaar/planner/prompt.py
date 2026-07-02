@@ -58,6 +58,11 @@ class PromptBuilder:
     Surfaced in the prompt so the planner can derive site URLs from the
     grant's login_url base instead of hallucinating hostnames like
     'hdfc-admin'. Only safe defaults flow through here — never secrets."""
+    pruning_window: int = 20
+    """Rolling history window: only the last N chat-history turns go into the
+    prompt. Keeps long chats cheap and focused. The default is deliberately
+    generous so short conversations (the common case) send their full history
+    unchanged; it only bites once a chat grows past N turns."""
 
     def build_messages(
         self,
@@ -70,7 +75,17 @@ class PromptBuilder:
         system = self._system_prompt(current_dag=current_dag)
         messages: list[LLMMessage] = [LLMMessage(role=Role.SYSTEM, content=system)]
         if chat_history:
-            messages.extend(chat_history)
+            # Rolling-window prune: keep only the last `pruning_window` turns so
+            # a long conversation doesn't inflate every prompt. A window <= 0
+            # disables history entirely; the default is generous enough that
+            # short chats are unaffected.
+            if self.pruning_window <= 0:
+                pruned_history: list[LLMMessage] = []
+            elif len(chat_history) > self.pruning_window:
+                pruned_history = chat_history[-self.pruning_window:]
+            else:
+                pruned_history = chat_history
+            messages.extend(pruned_history)
         messages.append(LLMMessage(role=Role.USER, content=user_message))
         if repair_errors:
             messages.append(
@@ -95,6 +110,7 @@ class PromptBuilder:
         sections = [
             _HEADER,
             _RULES,
+            _NATURAL_WORKFLOW_RULES,
             _RESPONSE_ENVELOPE,
             _DAG_SHAPE,
             "# Available capabilities (granted to this tenant)",
@@ -164,6 +180,18 @@ _RULES = """\
   - `clarify` — one or more specific questions to disambiguate the request. Prefer this when in doubt.
   - `missing` — capability refs that would unblock the request, plus an explanation. List refs that don't exist yet too; staff use these signals to author new capabilities.
 - Always set a brief `rationale` (one or two sentences for the chat UI)."""
+
+
+_NATURAL_WORKFLOW_RULES = """\
+# Natural-language workflow guidance
+
+- The user describes the OUTCOME in ordinary language; you translate it into a DAG. Never require the user to name capabilities, refs, JSON, selectors, or coordinates in chat.
+- DETERMINISTIC STEP ORDER — produce the SAME node ids and the SAME chain order every time for an equivalent request. Order steps by real data/state dependencies: acquire a session or data first, then transform, then act, then clean up (e.g. close the session). A step that consumes `${A.field}` must come after A, wired by an edge.
+- Stateful steps run in a STRICT LINEAR CHAIN, not a fan-out: any nodes that mutate the same browser session (navigate, click, fill, set_field, upload) must be chained one-after-another with explicit edges — sharing `${login.session}` alone is NOT enough ordering. Only stateless producers (`time.now`, `file.read_local`) may fan in.
+- CLEANUP LAST — if you open a browser session, always close it (`browser.close_session`) as the final step, chained after the last action that used the session, so a run never leaks a session even on the happy path.
+- ERROR HANDLING — set a `retry` policy (`max_attempts`, `backoff_ms`) on steps that hit flaky external systems (network fetches, downloads, uploads) so a transient failure self-heals instead of aborting the run. Do NOT retry `human.prompt` or `control.wait` — pausing for a human or sleeping is never a transient failure. When a step needs a human decision or a secret the user must type at run time (OTP, confirm), insert a `human.prompt` (with the right `expects`) between the producing step and the consumer, and feed `${prompt.response}` forward.
+- ALIASES — use `outputs_as` to give a produced bundle a short, stable name (e.g. `outputs_as: "session"` on `browser.open_session`, then `${session.session}` downstream) ONLY when it makes the DAG clearer. `outputs_as` must be a single short string or null — never a dict/list. Each alias must be unique across the DAG; downstream nodes reference the WHOLE value (`${alias.field}`), never a stringified copy.
+- Use the node-id conventions from the hard rules so equivalent semantic steps share ids across DAGs (dashboards and DAG-diffs depend on it)."""
 
 
 _RESPONSE_ENVELOPE = """\

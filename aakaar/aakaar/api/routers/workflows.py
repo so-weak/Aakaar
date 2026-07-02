@@ -24,6 +24,9 @@ from aakaar.api.repositories import grants as grants_repo
 from aakaar.api.repositories import workflows as workflows_repo
 from aakaar.api.schemas import (
     ApprovalPendingResponse,
+    PlanPreviewRequest,
+    PlanPreviewResponse,
+    PlanStepResponse,
     WorkflowCreateRequest,
     WorkflowResponse,
     WorkflowUpdateRequest,
@@ -35,6 +38,7 @@ from aakaar.db.models import (
     Workflow,
     WorkflowVersion,
 )
+from aakaar.planner.preview import PlanPreview, summarize_dag
 from aakaar.services.audit import AuditRecorder
 from aakaar.services.governance import GatedAction, GovernanceService, workflow_is_gated
 from aakaar.shared.dag import ValidationError, validate_dag
@@ -44,6 +48,43 @@ from aakaar.shared.registry import Registry
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/workflows", tags=["workflows"])
 _governance = GovernanceService()
+
+
+def _to_preview_response(preview: PlanPreview) -> PlanPreviewResponse:
+    return PlanPreviewResponse(
+        steps=[
+            PlanStepResponse(
+                order=s.order,
+                node_id=s.node_id,
+                ref=s.ref,
+                kind=s.kind,
+                summary=s.summary,
+                risk=s.risk,
+                requires_human=s.requires_human,
+                in_cleanup=s.in_cleanup,
+            )
+            for s in preview.steps
+        ],
+        risk_counts=preview.risk_counts,
+        highest_risk=preview.highest_risk,
+        requires_human=preview.requires_human,
+        needs_confirmation=preview.needs_confirmation,
+    )
+
+
+@router.post("/preview", response_model=PlanPreviewResponse)
+def preview_dag(
+    body: PlanPreviewRequest,
+    user: Annotated[User, Depends(require_tenant_user)],
+    registry: Annotated[Registry, Depends(get_registry)],
+) -> PlanPreviewResponse:
+    """Return a plain-English, ordered preview of `body.dag` with per-step risk
+    flags. Read-only, deterministic, and stateless — the UI calls this for the
+    current draft DAG after chat returns it (and before offering Run), so the
+    operator sees what will happen (and which steps write or pause for a human)
+    up front. Does not persist or validate against grants; a draft that would
+    fail validation still previews."""
+    return _to_preview_response(summarize_dag(body.dag, registry))
 
 
 def _validate_dag_for_tenant(

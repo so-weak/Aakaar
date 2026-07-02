@@ -36,6 +36,12 @@ export interface ChatStrings {
   loadingWorkspace: string;
   loadingChats: string;
   noActiveChat: string;
+  runHintNoPlan: string;
+  runHintSaveRun: string;
+  runHintRun: string;
+  transcriptAria: string;
+  composerLabel: string;
+  planSummary: string; // "{n} steps · {e} connections"
 
   // empty / starters -----------------------------------------------------
   startersHeading: string;
@@ -184,6 +190,12 @@ const en: ChatStrings = {
   loadingWorkspace: "Loading workspace…",
   loadingChats: "Loading chats…",
   noActiveChat: "No active chat.",
+  runHintNoPlan: "Build a plan first",
+  runHintSaveRun: "Save the latest changes and run",
+  runHintRun: "Run this workflow",
+  transcriptAria: "Chat transcript",
+  composerLabel: "Message the planner",
+  planSummary: "{n} steps · {e} connections",
 
   startersHeading: "What would you like to automate?",
   startersIntro:
@@ -352,6 +364,12 @@ const hiLatn: ChatStrings = {
   loadingWorkspace: "Workspace lod ho raha hai…",
   loadingChats: "Samvada lod ho rahe hain…",
   noActiveChat: "Koi sakriya Samvada nahin.",
+  runHintNoPlan: "Pehle ek Yantra banaayein",
+  runHintSaveRun: "Naye badlav sahejkar chalaayein",
+  runHintRun: "Is Sutra ko chalaayein",
+  transcriptAria: "Samvada prati-lipi",
+  composerLabel: "Planner ko sandesh likhein",
+  planSummary: "{n} charan · {e} sambandh",
 
   startersHeading: "Aap kya automate karna chahenge?",
   startersIntro:
@@ -519,6 +537,12 @@ const hiDeva: ChatStrings = {
   loadingWorkspace: "वर्कस्पेस लोड हो रहा है…",
   loadingChats: "संवाद लोड हो रहे हैं…",
   noActiveChat: "कोई सक्रिय संवाद नहीं।",
+  runHintNoPlan: "पहले एक यंत्र बनाएँ",
+  runHintSaveRun: "नए बदलाव सहेजकर चलाएँ",
+  runHintRun: "इस सूत्र को चलाएँ",
+  transcriptAria: "संवाद प्रतिलिपि",
+  composerLabel: "प्लानर को संदेश लिखें",
+  planSummary: "{n} चरण · {e} संबंध",
 
   startersHeading: "आप क्या स्वचालित करना चाहेंगे?",
   startersIntro:
@@ -686,6 +710,12 @@ const bn: ChatStrings = {
   loadingWorkspace: "ওয়ার্কস্পেস লোড হচ্ছে…",
   loadingChats: "সংবাদ লোড হচ্ছে…",
   noActiveChat: "কোনো সক্রিয় সংবাদ নেই।",
+  runHintNoPlan: "প্রথমে একটি যন্ত্র তৈরি করুন",
+  runHintSaveRun: "নতুন পরিবর্তন সংরক্ষণ করে চালান",
+  runHintRun: "এই সূত্র চালান",
+  transcriptAria: "সংবাদ প্রতিলিপি",
+  composerLabel: "পরিকল্পককে বার্তা লিখুন",
+  planSummary: "{n} ধাপ · {e} সংযোগ",
 
   startersHeading: "আপনি কী স্বয়ংক্রিয় করতে চান?",
   startersIntro:
@@ -853,6 +883,12 @@ const ta: ChatStrings = {
   loadingWorkspace: "பணியிடம் ஏற்றப்படுகிறது…",
   loadingChats: "சம்வாதங்கள் ஏற்றப்படுகின்றன…",
   noActiveChat: "செயலில் சம்வாதம் இல்லை.",
+  runHintNoPlan: "முதலில் ஒரு யந்திரத்தை உருவாக்குங்கள்",
+  runHintSaveRun: "புதிய மாற்றங்களைச் சேமித்து இயக்குங்கள்",
+  runHintRun: "இந்தச் சூத்திரத்தை இயக்குங்கள்",
+  transcriptAria: "சம்வாத பிரதி",
+  composerLabel: "திட்டமிடுபவருக்குச் செய்தி எழுதுங்கள்",
+  planSummary: "{n} படிகள் · {e} இணைப்புகள்",
 
   startersHeading: "எதைத் தானியக்கமாக்க விரும்புகிறீர்கள்?",
   startersIntro:
@@ -1020,6 +1056,12 @@ const kn: ChatStrings = {
   loadingWorkspace: "ಕಾರ್ಯಸ್ಥಳ ಲೋಡ್ ಆಗುತ್ತಿದೆ…",
   loadingChats: "ಸಂವಾದಗಳು ಲೋಡ್ ಆಗುತ್ತಿವೆ…",
   noActiveChat: "ಸಕ್ರಿಯ ಸಂವಾದ ಇಲ್ಲ.",
+  runHintNoPlan: "ಮೊದಲು ಒಂದು ಯಂತ್ರ ರಚಿಸಿ",
+  runHintSaveRun: "ಹೊಸ ಬದಲಾವಣೆಗಳನ್ನು ಉಳಿಸಿ ಚಲಾಯಿಸಿ",
+  runHintRun: "ಈ ಸೂತ್ರವನ್ನು ಚಲಾಯಿಸಿ",
+  transcriptAria: "ಸಂವಾದ ಪ್ರತಿಲಿಪಿ",
+  composerLabel: "ಯೋಜಕನಿಗೆ ಸಂದೇಶ ಬರೆಯಿರಿ",
+  planSummary: "{n} ಹಂತಗಳು · {e} ಸಂಪರ್ಕಗಳು",
 
   startersHeading: "ನೀವು ಏನನ್ನು ಸ್ವಯಂಚಾಲನೆ ಮಾಡಲು ಬಯಸುತ್ತೀರಿ?",
   startersIntro:

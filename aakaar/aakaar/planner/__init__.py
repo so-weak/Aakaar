@@ -7,6 +7,12 @@ from aakaar.planner.llm import (
     PlannerCompletion,
     Role,
 )
+from aakaar.planner.preview import (
+    PlanPreview,
+    PlanStep,
+    RiskTier,
+    summarize_dag,
+)
 from aakaar.planner.prompt import PromptBuilder
 from aakaar.planner.service import PlannerError, PlannerService
 
@@ -17,9 +23,13 @@ __all__ = [
     "FakeLLMClient",
     "LLMClient",
     "LLMMessage",
+    "PlanPreview",
+    "PlanStep",
     "PlannerCompletion",
     "PlannerError",
     "PlannerService",
     "PromptBuilder",
+    "RiskTier",
     "Role",
+    "summarize_dag",
 ]

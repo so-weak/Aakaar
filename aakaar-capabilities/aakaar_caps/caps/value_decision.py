@@ -27,7 +27,7 @@ from aakaar_caps.spec import CapabilitySpec
 logger = logging.getLogger(__name__)
 CAP_REF = "cap.value_decision"
 _ENV_THRESHOLD = "AAKAAR_OCR_ACCEPT_THRESHOLD"
-_DEFAULT_THRESHOLD = 0.60
+_DEFAULT_THRESHOLD = 0.50
 
 
 class _Inputs(BaseModel):

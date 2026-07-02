@@ -160,7 +160,7 @@ export function ChatComposer({
   return (
     <div>
       <label id={labelId} htmlFor={`${listboxId}-input`} className="sr-only">
-        Message the planner
+        {cs.composerLabel}
       </label>
 
       {showPalette ? (

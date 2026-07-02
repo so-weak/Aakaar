@@ -55,7 +55,7 @@ import { LiveDagViewer, deriveNodeStatuses } from "@/components/LiveDagViewer";
 import { LiveScreenPanel } from "@/components/LiveScreenPanel";
 import { useAuth } from "@/auth/AuthContext";
 import { useRunEvents } from "@/hooks/useRunEvents";
-import { useLabels } from "@/i18n/LanguageProvider";
+import { useLabels, useRunStatusLabel } from "@/i18n/LanguageProvider";
 import { fmt, useChatStrings } from "@/i18n/chatStrings";
 import type { ChatStrings } from "@/i18n/chatStrings";
 import { formatISTTime } from "@/lib/datetime";
@@ -558,10 +558,10 @@ function SessionWorkspace({
               disabled={!hasRunnableDraft || save.isPending || startRun.isPending}
               title={
                 !hasRunnableDraft
-                  ? "Build a plan first"
+                  ? cs.runHintNoPlan
                   : session.is_dirty || session.workflow_id == null
-                    ? "Save the latest changes and run"
-                    : "Run this workflow"
+                    ? cs.runHintSaveRun
+                    : cs.runHintRun
               }
             >
               <Play size={13} /> {labels.runYajna}
@@ -596,7 +596,7 @@ function SessionWorkspace({
                 role="log"
                 aria-live="polite"
                 aria-relevant="additions"
-                aria-label={`${labels.samvada} transcript`}
+                aria-label={cs.transcriptAria}
               >
                 {session.messages.map((m, idx) =>
                   m.role === "user" ? (
@@ -918,6 +918,7 @@ function ActivityStrip({
   onOpenLive: () => void;
 }) {
   const cs = useChatStrings();
+  const runStatusLabel = useRunStatusLabel();
   const running = runStatus != null && !isTerminalStatus(runStatus);
 
   if (sending) {
@@ -959,7 +960,11 @@ function ActivityStrip({
                   total,
                 })
               : fmt(cs.runningCount, { n: done, total })
-            : fmt(cs.runState, { status: runStatus ?? "", n: done, total })}
+            : fmt(cs.runState, {
+                status: runStatus ? runStatusLabel(runStatus) : "",
+                n: done,
+                total,
+              })}
         </span>
         <span className="shrink-0 opacity-70">{cs.openLive}</span>
       </button>
@@ -1005,6 +1010,7 @@ function ActivityDock({
   runEvents: RunEvent[];
 }) {
   const labels = useLabels();
+  const runStatusLabel = useRunStatusLabel();
   const activeTab: DockTab = tab === "live" && !hasLive ? "plan" : tab;
 
   return (
@@ -1072,7 +1078,7 @@ function ActivityDock({
             <div className="flex items-center gap-2 border-b border-ink-800/70 px-4 py-2.5 text-[11px] text-ink-400">
               <span className="panel-title">{labels.pratyaksha}</span>
               {runStatus ? (
-                <span className="font-mono">· {runStatus}</span>
+                <span className="font-mono">· {runStatusLabel(runStatus)}</span>
               ) : null}
             </div>
             <div className="relative min-h-0 flex-1">
@@ -1781,8 +1787,7 @@ function SaveDialog({
     >
       <div className="rounded-md border border-ink-800 bg-ink-900/40 px-3 py-2 font-mono text-[10px] text-ink-400">
         <div className="font-semibold text-ink-300">
-          {nodeCount} node{nodeCount === 1 ? "" : "s"}, {edgeCount} edge
-          {edgeCount === 1 ? "" : "s"}
+          {fmt(cs.planSummary, { n: nodeCount, e: edgeCount })}
         </div>
         {session.draft_rationale ? (
           <div className="mt-1.5 border-t border-ink-800/60 pt-1.5 italic leading-relaxed text-ink-400">

@@ -258,6 +258,42 @@ class WorkflowVersionResponse(BaseModel):
     created_at: datetime
 
 
+# ---------- plan preview --------------------------------------------------
+
+
+class PlanStepResponse(BaseModel):
+    """One human-readable step in a plan preview."""
+
+    order: int
+    node_id: str
+    ref: str
+    kind: str
+    summary: str
+    risk: str  # "read" | "write" | "high_risk"
+    requires_human: bool
+    in_cleanup: bool
+
+
+class PlanPreviewResponse(BaseModel):
+    """Plain-English, ordered view of a DAG plus a risk rollup, shown before a
+    run so the operator can confirm what will happen (and which steps write or
+    pause for a human) up front."""
+
+    steps: list[PlanStepResponse] = Field(default_factory=list)
+    risk_counts: dict[str, int] = Field(default_factory=dict)
+    highest_risk: str = "read"
+    requires_human: bool = False
+    needs_confirmation: bool = False
+
+
+class PlanPreviewRequest(BaseModel):
+    """Wrap a DAG for the preview endpoint. Uses the same DAG schema the
+    workflow create/validate path already accepts."""
+
+    model_config = ConfigDict(extra="forbid")
+    dag: Dag
+
+
 # ---------- chat (planner) ------------------------------------------------
 
 

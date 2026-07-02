@@ -4,7 +4,16 @@ from __future__ import annotations
 
 import pytest
 
-from aakaar.shared.dag import Dag, Edge, Node, NodeKind, ValidationError, validate_dag
+from aakaar.shared.dag import (
+    Dag,
+    Edge,
+    Node,
+    NodeKind,
+    ValidationError,
+    explain_dag_errors,
+    validate_dag,
+    validate_dag_collect,
+)
 from aakaar.shared.registry import build_default_registry
 
 # ---------- helpers --------------------------------------------------------
@@ -244,3 +253,89 @@ def test_capability_grant_required() -> None:
         validate_dag(dag, registry=reg, granted_capabilities=set())
 
     validate_dag(dag, registry=reg, granted_capabilities={"cap.test_login"})
+
+
+# ---------- collect-all + hints -------------------------------------------
+
+
+def test_validate_dag_collect_returns_all_problems() -> None:
+    reg = build_default_registry()
+    dag = Dag(
+        nodes=[
+            # missing required `url`
+            Node(id="go", kind=NodeKind.ACTION, ref="browser.navigate", inputs={"session": "s"}),
+            # unknown input `bogus`
+            Node(
+                id="dl",
+                kind=NodeKind.ACTION,
+                ref="browser.download",
+                inputs={"session": "s", "bogus": "x"},
+            ),
+        ]
+    )
+    errors = validate_dag_collect(dag, registry=reg)
+    assert any("missing required input 'url'" in e for e in errors)
+    assert any("unknown input 'bogus'" in e for e in errors)
+    # Both surfaced together in a single pass.
+    assert len(errors) >= 2
+
+
+def test_validate_dag_collect_valid_returns_empty() -> None:
+    reg = build_default_registry()
+    dag = Dag(
+        nodes=[
+            Node(id="open", kind=NodeKind.ACTION, ref="browser.open_session"),
+            Node(
+                id="go",
+                kind=NodeKind.ACTION,
+                ref="browser.navigate",
+                inputs={"session": "${open.session}", "url": "https://x"},
+            ),
+        ],
+        edges=[_edge("open", "go")],
+    )
+    assert validate_dag_collect(dag, registry=reg) == []
+
+
+def test_validate_dag_collect_structural_short_circuits() -> None:
+    # A cycle makes per-node analysis meaningless — only the structural error
+    # comes back, alone.
+    dag = Dag(
+        nodes=[_node("a"), _node("b")],
+        edges=[_edge("a", "b"), _edge("b", "a")],
+    )
+    errors = validate_dag_collect(dag)
+    assert len(errors) == 1
+    assert "cycle" in errors[0]
+
+
+def test_explain_dag_errors_suggests_nearest_ref() -> None:
+    hints = explain_dag_errors(
+        ["node 'a' ref 'browser.navgate' is not in the registry"],
+        known_refs=["browser.navigate", "browser.open_session"],
+    )
+    assert "FIX" in hints[0]
+    assert "browser.navigate" in hints[0]
+
+
+def test_explain_dag_errors_names_missing_input_with_sample() -> None:
+    hints = explain_dag_errors(
+        ["node 'go' ('browser.navigate') is missing required input 'url'"],
+        sample_inputs={"url": '"https://example.com"'},
+    )
+    assert "url" in hints[0]
+    assert "https://example.com" in hints[0]
+
+
+def test_explain_dag_errors_dangling_ref_names_producer() -> None:
+    hints = explain_dag_errors(
+        ["node 'b' input.session references 'open' which is not upstream (no edge path)"],
+    )
+    assert "open" in hints[0]
+    assert "edge" in hints[0].lower()
+
+
+def test_explain_dag_errors_passthrough_for_unknown_shape() -> None:
+    # An error the enricher doesn't recognize is returned verbatim (nothing lost).
+    hints = explain_dag_errors(["some totally novel error"])
+    assert hints == ["some totally novel error"]

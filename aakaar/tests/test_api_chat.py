@@ -129,9 +129,9 @@ def test_chat_rejects_dag_using_ungranted_capability(
     bad_dag = Dag(
         nodes=[Node(id="login", kind=NodeKind.CAPABILITY, ref="cap.requires_grant")]
     )
-    fake_llm.replies.extend(
-        [PlannerCompletion(kind="dag", dag=bad_dag) for _ in range(3)]
-    )
+    # Only ONE reply is needed now: an ungranted-only DAG short-circuits to a
+    # `missing` result on the first attempt rather than exhausting the budget.
+    fake_llm.replies.append(PlannerCompletion(kind="dag", dag=bad_dag))
 
     seed_tenant_admin(
         deps, slug="acme", name="Acme", admin_email="a@a.test", admin_password="adminpass1"
@@ -143,6 +143,10 @@ def test_chat_rejects_dag_using_ungranted_capability(
         headers=auth_headers(token),
         json={"message": "x"},
     )
-    # Planner exhausts repair budget; API surfaces 502.
-    assert r.status_code == 502
-    assert "not granted" in r.json()["detail"]
+    # The planner no longer 502s on an ungranted cap — it returns a helpful
+    # `missing` response naming the capability that needs a grant.
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["kind"] == "missing"
+    assert body["needed"] == ["cap.requires_grant"]
+    assert "cap.requires_grant" in body["explanation"]

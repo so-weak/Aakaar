@@ -150,6 +150,86 @@ async def test_happy_path_navigate_inspect_done_emits_dag(tmp_path: Path) -> Non
 
 
 @pytest.mark.asyncio
+async def test_done_accepts_stringified_dag(tmp_path: Path) -> None:
+    """Some models pass the DAG to `done` as a JSON STRING instead of an
+    object. The service must json.loads it before validating, rather than
+    wrongly returning a clarify ("called without a dag object")."""
+    import json
+
+    sess = FakeBrowserSession(
+        evaluate_responses={
+            "interactive": {
+                "url": "https://example.com",
+                "title": "Example",
+                "visible_text": "hello",
+                "interactive": [],
+                "interactive_truncated": False,
+                "interactive_count_total": 0,
+            },
+        }
+    )
+    pool = FakeBrowserPool(next_sessions=[sess])
+
+    llm = FakeLLMClient()
+    llm.tool_steps.append(
+        ToolStep(
+            tool_calls=[
+                ToolCall(
+                    id="c1",
+                    name="done",
+                    arguments={
+                        "kind": "dag",
+                        "rationale": "stringified dag",
+                        # dag passed as a JSON string, not an object.
+                        "dag": json.dumps(_good_dag()),
+                    },
+                )
+            ],
+            final_content=None,
+        )
+    )
+
+    service = _service(llm=llm, pool=pool, vault=LocalVault(tmp_path / "vault"))
+    resp = await service.plan(
+        user_message="Open example.com",
+        tenant_id=uuid.uuid4(),
+        granted_capabilities=set(),
+        granted_capability_grants={},
+    )
+    assert isinstance(resp, DagResponse)
+    assert resp.rationale == "stringified dag"
+    assert len(resp.dag.nodes) == 2
+
+
+@pytest.mark.asyncio
+async def test_done_stringified_dag_that_isnt_json_clarifies(tmp_path: Path) -> None:
+    """A dag string that isn't valid JSON degrades to a clarify — not a crash."""
+    pool = FakeBrowserPool(next_sessions=[FakeBrowserSession()])
+    llm = FakeLLMClient()
+    llm.tool_steps.append(
+        ToolStep(
+            tool_calls=[
+                ToolCall(
+                    id="c1",
+                    name="done",
+                    arguments={"kind": "dag", "rationale": "oops", "dag": "not json {{"},
+                )
+            ],
+            final_content=None,
+        )
+    )
+    service = _service(llm=llm, pool=pool, vault=LocalVault(tmp_path / "vault"))
+    resp = await service.plan(
+        user_message="x",
+        tenant_id=uuid.uuid4(),
+        granted_capabilities=set(),
+        granted_capability_grants={},
+    )
+    assert isinstance(resp, ClarifyResponse)
+    assert resp.questions
+
+
+@pytest.mark.asyncio
 async def test_iteration_cap_returns_clarify(tmp_path: Path) -> None:
     """Loop never sees done; we hit the cap and return clarify."""
     sess = FakeBrowserSession(

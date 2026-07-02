@@ -44,6 +44,31 @@ from aakaar.shared.dag import ValidationError
 logger = logging.getLogger(__name__)
 _DEFAULT_LLM_MODEL = "gpt-5.4-mini"
 
+# Compact reminder of the envelope shape, fed back on a malformed completion so
+# the model knows EXACTLY what to produce instead of a generic "invalid" nudge.
+_ENVELOPE_HINT = (
+    '{"kind": "dag"|"clarify"|"missing", "rationale": "...", '
+    '"dag": {...}|null, "questions": [...], "needed": [...], "explanation": "..."} '
+    "(exactly one branch populated per `kind`; no markdown, no code fences)."
+)
+
+
+def _summarize_pydantic_errors(exc: PydanticValidationError) -> str:
+    """Turn pydantic's error list into a short, model-actionable sentence
+    naming the offending fields and what was wrong — a much stronger repair
+    signal than the raw multi-line dump."""
+    try:
+        parts: list[str] = []
+        for err in exc.errors()[:5]:
+            loc = ".".join(str(p) for p in err.get("loc", ())) or "(root)"
+            msg = err.get("msg", "invalid")
+            parts.append(f"{loc}: {msg}")
+        if not parts:
+            return "The JSON did not match the expected schema."
+        return "Problems: " + "; ".join(parts) + "."
+    except Exception:  # pragma: no cover - defensive; never let repair hint crash
+        return "The JSON did not match the expected schema."
+
 
 def _to_message_params(
     messages: list[LLMMessage],
@@ -105,17 +130,27 @@ class OpenAILLMClient(LLMClient):
             )
         content = response.choices[0].message.content
         if not content:
-            logger.error("OpenAI returned an empty completion")
-            raise RuntimeError("OpenAI returned an empty completion")
+            # Empty content is repairable too — surface as a ValidationError so
+            # the planner's repair loop feeds a concrete instruction back rather
+            # than 502-ing on the first empty reply.
+            logger.warning("OpenAI returned an empty completion")
+            raise ValidationError(
+                "Your previous reply was empty. Respond with a single JSON object "
+                f"conforming to the response schema: {_ENVELOPE_HINT}"
+            )
         try:
             return PlannerCompletion.model_validate_json(content)
         except PydanticValidationError as e:
             # Surface as a DAG-layer ValidationError so the planner's repair
-            # loop (`PlannerService.plan`) sees it, feeds the error back to
-            # the model, and gets another chance to produce well-formed JSON.
+            # loop (`PlannerService.plan`) sees it, feeds a SPECIFIC error back
+            # to the model, and gets another chance to produce well-formed JSON.
+            # The concrete pydantic errors + a reminder of the exact envelope
+            # shape are a far stronger repair signal than a generic "invalid".
             logger.warning("PlannerCompletion JSON validation failed: %s", e)
             raise ValidationError(
-                f"PlannerCompletion JSON did not match the expected envelope: {e}"
+                "Your previous reply was not a valid PlannerCompletion. "
+                f"{_summarize_pydantic_errors(e)} "
+                f"Return ONLY a single JSON object matching: {_ENVELOPE_HINT}"
             ) from e
 
     def complete_with_tools(
